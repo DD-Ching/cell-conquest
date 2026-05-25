@@ -244,10 +244,19 @@ export function spawnDrone(originX, originY, owner, target) {
   });
 }
 
-/** Does the drone's stored target still exist? */
+/** Does the drone's stored target still WARRANT a strike?
+ *  A "gone" target is one that's: removed (turret destroyed, fleet wiped),
+ *  no longer hostile (node captured by an ally of the drone),
+ *  or already worthless (node bombed down to ~0 units — another drone got it). */
 function droneTargetExists(drone) {
   if (drone.targetKind === 'turret') return state.turrets.some(t => t.id === drone.targetId);
-  if (drone.targetKind === 'node')   return drone.targetId < state.nodes.length;
+  if (drone.targetKind === 'node') {
+    if (drone.targetId >= state.nodes.length) return false;
+    const n = state.nodes[drone.targetId];
+    if (n.owner === drone.owner) return false;     // we already own it
+    if (n.units < 1) return false;                  // someone else cleaned it out
+    return true;
+  }
   if (drone.targetKind === 'fleet')  return state.fleets.some(f => f._id === drone.targetId);
   return false;
 }

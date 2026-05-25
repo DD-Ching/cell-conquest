@@ -256,37 +256,62 @@ export function aiTick(owner, dt) {
       const nb = state.nodes[nbId];
       if (nb.owner !== owner && nb.owner !== 'neutral') enemyNeighbors++;
     }
+    const degree = state.adj.get(node.id).size;
+    const isCentral = degree >= 3;
+    // Central hubs (degree >= 3) MUST keep a minimum garrison — losing one
+    // splits our territory. This is the lesson from the recorded loss: AI
+    // drained its central hub for attacks and got counter-punched.
+    const centralFloor = isCentral ? node.capacity * 0.40 : 0;
     // Saturated node — sitting on units is wasted regen, so dump most of them.
     if (node.units >= node.capacity * 0.95) {
-      const garrison = 6 + enemyNeighbors * 4;
-      return Math.max(0, node.units - garrison);
+      const garrison = 6 + enemyNeighbors * 4 + (isCentral ? 18 : 0);
+      return Math.max(0, node.units - Math.max(garrison, centralFloor));
     }
     const reserveRatio = 0.15 + enemyNeighbors * 0.18;
     const reserveAbs = 5 + enemyNeighbors * 9;
-    return Math.max(0, node.units * (1 - reserveRatio) - reserveAbs);
+    const normalAvail = node.units * (1 - reserveRatio) - reserveAbs;
+    return Math.max(0, Math.min(normalAvail, node.units - centralFloor));
   }
 
-  // Phase 1: proactive defense
+  // Phase 1: defensive — react to active incoming AND adjacent-enemy STOCKPILES.
+  // The stockpile signal is critical: when the player is massing 100+ units in
+  // a hub next to ours, we need to reinforce BEFORE the wave launches, not after.
   for (const my of myNodes) {
+    const degree = state.adj.get(my.id).size;
+    const isCentral = degree >= 3;
     const inc = incomingTo(my.id);
-    if (inc.hostile <= 5) continue;
-    const projected = my.units + inc.friendly + my.regenRate * 5 - inc.hostile;
-    const dangerThresh = Math.max(5, my.capacity * 0.20);
-    if (projected < dangerThresh) {
-      let donor = null, donorScore = 0;
-      for (const nbId of state.adj.get(my.id)) {
-        const nb = state.nodes[nbId];
-        if (nb.owner !== owner) continue;
-        const surplus = attackerAvail(nb);
-        if (surplus < 10) continue;
-        if (surplus > donorScore) { donorScore = surplus; donor = nb; }
-      }
-      if (donor) {
-        const need = Math.ceil(inc.hostile - projected + 8);
-        const send = Math.min(Math.floor(donorScore), need);
-        if (send >= 5) { sendFleet(donor, my, send); return; }
-      }
+
+    // Sum of units in adjacent enemy hubs (the wave that's *about* to be launched).
+    let adjEnemyStockpile = 0;
+    for (const nbId of state.adj.get(my.id)) {
+      const nb = state.nodes[nbId];
+      if (nb.owner !== owner && nb.owner !== 'neutral') adjEnemyStockpile += nb.units;
     }
+
+    const projected = my.units + inc.friendly + my.regenRate * 5 - inc.hostile;
+    // Central hubs need a beefy garrison; outposts can run leaner.
+    const minGarrison = isCentral ? my.capacity * 0.50 : Math.max(5, my.capacity * 0.25);
+    const beingStockpiledAgainst = adjEnemyStockpile > my.units * 1.5 && adjEnemyStockpile > 30;
+
+    const needs = projected < minGarrison || beingStockpiledAgainst || inc.hostile > 5;
+    if (!needs) continue;
+
+    let donor = null, donorScore = 0;
+    for (const nbId of state.adj.get(my.id)) {
+      const nb = state.nodes[nbId];
+      if (nb.owner !== owner) continue;
+      const surplus = attackerAvail(nb);
+      if (surplus < 10) continue;
+      if (surplus > donorScore) { donorScore = surplus; donor = nb; }
+    }
+    if (!donor) continue;
+    const need = Math.max(
+      inc.hostile > 0 ? Math.ceil(inc.hostile - projected + 8) : 0,
+      Math.ceil(minGarrison - my.units),
+      Math.ceil(adjEnemyStockpile * 0.45 - my.units),
+    );
+    const send = Math.min(Math.floor(donorScore), Math.max(5, need));
+    if (send >= 5) { sendFleet(donor, my, send); return; }
   }
 
   // Phase 2: coordinated attack

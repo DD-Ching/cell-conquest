@@ -7,7 +7,7 @@ import {
   WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR,
   NET_PICK_R, NET_LEVEL_MAX, ARTILLERY_INTERVAL, ARTILLERY_AOE,
 } from './config.js';
-import { COLOR, GLOW, FACTIONS } from './factions.js';
+import { COLOR, GLOW, FACTIONS, factionStats } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { findPath, nodeAt, roadAt } from './world.js';
 import { getEdge, TURRET_RANGES } from './engineering.js';
@@ -22,13 +22,32 @@ import {
 export function buildHUD() {
   const hud = document.getElementById('hud');
   if (!hud) return;
-  hud.innerHTML = '';
+  hud.innerHTML = '<div class="hud-header">Forces</div>';
   for (const f of FACTIONS) {
+    if (f.id === 'neutral') continue;     // neutral isn't a competing force
+    const stats = factionStats[f.id];
+    const strength = stats ? stats.strength : 1.0;
+    // Strength is 0.85-1.20; map onto 0..100% bar with 1.0 as midpoint marker.
+    const fillPct = Math.max(0, Math.min(100, ((strength - 0.5) / 1.0) * 100));
+    const isPlayer = f.id === 'player';
+    const tag = isPlayer ? 'BASE' : (
+      strength >= 1.15 ? 'STRONG'
+      : strength >= 1.00 ? 'STEADY'
+      : 'WEAK'
+    );
     const row = document.createElement('div');
+    row.className = 'faction-row';
+    row.style.color = f.color;
     row.innerHTML = `
-      <span class="swatch" style="background:${f.color}"></span><span style="color:${f.color}">${f.name}</span>
-      &nbsp; <span id="${f.id}-units">0</span><span class="label">u</span>
-      &nbsp; <span id="${f.id}-nodes">0</span><span class="label">n</span>
+      <span class="swatch" style="background:${f.color}"></span>
+      <span class="name" style="color:${f.color}">${f.name}</span>
+      <span class="stats">
+        <span class="u" id="${f.id}-units">0</span><span class="lbl">u</span>
+        <span class="n" id="${f.id}-nodes">0</span><span class="lbl">n</span>
+      </span>
+      <div class="strength-row" title="${isPlayer ? 'You (baseline)' : `Strength: ${strength.toFixed(2)} — ${tag}`}">
+        <div class="fill" style="width:${fillPct}%; color:${f.color}"></div>
+      </div>
     `;
     hud.appendChild(row);
   }

@@ -128,9 +128,17 @@ function checkVictory() {
 function endGame(win, sub) {
   state.gameOver = true;
   const m = document.getElementById('message');
-  document.getElementById('msg-title').textContent = win ? 'Victory' : 'Defeat';
-  document.getElementById('msg-title').style.color = win ? '#5cb3ff' : '#ff6678';
+  const title = document.getElementById('msg-title');
+  title.textContent = win ? 'Victory' : 'Defeat';
+  // Use the warm-toned accent palette for both — feels consistent with the rest of the UI.
+  title.style.color = win ? '#ffd066' : '#ff6678';
+  title.style.textShadow = win
+    ? '0 0 24px rgba(255, 200, 90, 0.55)'
+    : '0 0 24px rgba(255, 100, 110, 0.55)';
   document.getElementById('msg-sub').textContent = sub;
+  // Force the CSS entrance animation to replay on every show
+  m.style.display = 'none';
+  void m.offsetHeight;        // trigger reflow
   m.style.display = 'block';
 }
 

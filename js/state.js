@@ -26,6 +26,8 @@ export const state = {
   particles: [],
   dust: [],                  // atmospheric Mars dust (was 'snowflakes')
   tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
+  turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
+  placeMode: null,           // {type:'antiair'|'factory'|'net', byOwner:'player'} when player is choosing placement
   roads: [],
   adj: new Map(),
   edgeData: new Map(),       // ekey(a,b) -> { blockage }

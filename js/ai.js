@@ -7,7 +7,7 @@ import { state } from './state.js';
 import { FLEET_SPEED, NN_OWNERS } from './config.js';
 import { dist } from './util.js';
 import { sendFleet } from './fleets.js';
-import { orderBuild } from './engineering.js';
+import { placeTurretAt } from './engineering.js';
 import { nnDecide, nnActionFor, isNNReady } from './nn.js';
 
 export function aiTick(owner, dt) {
@@ -34,15 +34,31 @@ export function aiTick(owner, dt) {
   const myNodes = state.nodes.filter(n => n.owner === owner);
   if (myNodes.length === 0) return;
 
-  // ---- Engineering: occasional build orders on hub nodes ----
-  if (Math.random() < 0.12 && myNodes.length >= 3) {
+  // ---- Engineering: occasional turret placement near hub nodes, offset toward enemy ----
+  if (Math.random() < 0.12 && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
     for (const n of byHub) {
       if (n.units < 30) continue;
-      const has = (t) => n.buildings.some(b => b.type === t);
-      if (!has('antiair')) { if (orderBuild(n, 'antiair', owner)) return; }
-      else if (!has('factory')) { if (orderBuild(n, 'factory', owner)) return; }
-      else if (!has('net')) { if (orderBuild(n, 'net', owner)) return; }
+      const nearbyTurrets = state.turrets.filter(t =>
+        t.owner === owner && Math.hypot(t.x - n.x, t.y - n.y) < 120);
+      const has = (type) => nearbyTurrets.some(t => t.type === type);
+      // Direction toward nearest enemy node (so turrets land between us and threat)
+      let toward = null, towardDist = Infinity;
+      for (const en of state.nodes) {
+        if (en.owner === owner || en.owner === 'neutral') continue;
+        const d = dist(n, en);
+        if (d < towardDist) { towardDist = d; toward = en; }
+      }
+      const off = (() => {
+        if (!toward) return { dx: 50, dy: 0 };
+        const dx = toward.x - n.x, dy = toward.y - n.y;
+        const len = Math.hypot(dx, dy) || 1;
+        return { dx: (dx / len) * 70, dy: (dy / len) * 70 };
+      })();
+      const tx = n.x + off.dx, ty = n.y + off.dy;
+      if (!has('antiair')) { if (placeTurretAt(tx, ty, 'antiair', owner)) return; }
+      else if (!has('factory')) { if (placeTurretAt(n.x - off.dx * 0.5, n.y - off.dy * 0.5, 'factory', owner)) return; }
+      else if (!has('net')) { if (placeTurretAt(tx * 0.8 + n.x * 0.2, ty * 0.8 + n.y * 0.2, 'net', owner)) return; }
     }
   }
 

@@ -170,18 +170,16 @@ export function render() {
     ctx.stroke();
   }
 
-  // AA radius rings (active only)
-  for (const n of state.nodes) {
-    for (const b of n.buildings || []) {
-      if (b.type !== 'antiair' || !b.active) continue;
-      ctx.strokeStyle = COLOR[n.owner] + '30';
-      ctx.lineWidth = 1 / zoom;
-      ctx.setLineDash([6 / zoom, 6 / zoom]);
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, AA_RADIUS, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+  // AA radius rings (active anti-air turrets)
+  for (const t of state.turrets) {
+    if (t.type !== 'antiair' || !t.active) continue;
+    ctx.strokeStyle = COLOR[t.owner] + '30';
+    ctx.lineWidth = 1 / zoom;
+    ctx.setLineDash([6 / zoom, 6 / zoom]);
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, AA_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // Nodes
@@ -239,40 +237,6 @@ export function render() {
     ctx.textBaseline = 'middle';
     ctx.fillText(Math.floor(n.units), n.x, n.y);
 
-    // Building icons + progress + HP bars
-    if (n.buildings && n.buildings.length) {
-      const r = n.size + 8;
-      let slotI = 0;
-      const slotAngle = (i) => -Math.PI / 2 + (i - (n.buildings.length - 1) / 2) * 0.55;
-      for (const b of n.buildings) {
-        const ang = slotAngle(slotI);
-        const bx = n.x + Math.cos(ang) * r;
-        const by = n.y + Math.sin(ang) * r;
-        const iconR = 5.5;
-        ctx.fillStyle = b.active ? COLOR[n.owner] : 'rgba(120,120,120,0.7)';
-        ctx.beginPath(); ctx.arc(bx, by, iconR, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${10 / zoom}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const glyph = b.type === 'antiair' ? 'A' : b.type === 'factory' ? 'F' : 'N';
-        ctx.fillText(glyph, bx, by);
-        if (!b.active) {
-          ctx.strokeStyle = '#ffd066';
-          ctx.lineWidth = 1.5 / zoom;
-          ctx.beginPath();
-          ctx.arc(bx, by, iconR + 1.5, -Math.PI / 2, -Math.PI / 2 + b.progress * Math.PI * 2);
-          ctx.stroke();
-        }
-        if (b.active && b.hp < b.hpMax) {
-          const bw = 12, frac = b.hp / b.hpMax;
-          ctx.fillStyle = 'rgba(20,20,20,0.6)';
-          ctx.fillRect(bx - bw / 2, by + iconR + 2, bw, 2);
-          ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
-          ctx.fillRect(bx - bw / 2, by + iconR + 2, bw * frac, 2);
-        }
-        slotI++;
-      }
-    }
     if (n.engineers > 0) {
       const ex = n.x - n.size - 4;
       const ey = n.y + n.size + 4;
@@ -290,16 +254,76 @@ export function render() {
     }
   }
 
-  // Fleet ships (troops + engineers — drones rendered next)
+  // Turrets (world-coord buildings: A / F / N)
+  for (const t of state.turrets) {
+    const iconR = 8;
+    ctx.fillStyle = t.active ? COLOR[t.owner] : 'rgba(120,120,120,0.75)';
+    ctx.beginPath(); ctx.arc(t.x, t.y, iconR, 0, Math.PI * 2); ctx.fill();
+    // Inner dark
+    ctx.fillStyle = 'rgba(10,5,2,0.45)';
+    ctx.beginPath(); ctx.arc(t.x, t.y, iconR - 2.5, 0, Math.PI * 2); ctx.fill();
+    // Glyph
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${12 / zoom}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const glyph = t.type === 'antiair' ? 'A' : t.type === 'factory' ? 'F' : 'N';
+    ctx.fillText(glyph, t.x, t.y);
+    // Progress arc while building
+    if (!t.active) {
+      ctx.strokeStyle = '#ffd066';
+      ctx.lineWidth = 1.6 / zoom;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, iconR + 2, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
+      ctx.stroke();
+    }
+    // HP bar (only if damaged)
+    if (t.active && t.hp < t.hpMax) {
+      const bw = 18, frac = t.hp / t.hpMax;
+      ctx.fillStyle = 'rgba(20,20,20,0.6)';
+      ctx.fillRect(t.x - bw / 2, t.y + iconR + 2, bw, 2);
+      ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
+      ctx.fillRect(t.x - bw / 2, t.y + iconR + 2, bw * frac, 2);
+    }
+  }
+
+  // Placement preview (player choosing where to place a turret)
+  if (state.placeMode) {
+    const wx = state.mousePos.x, wy = state.mousePos.y;
+    ctx.fillStyle = 'rgba(255, 220, 130, 0.6)';
+    ctx.beginPath(); ctx.arc(wx, wy, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${12 / zoom}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const glyph = state.placeMode.type === 'antiair' ? 'A' : state.placeMode.type === 'factory' ? 'F' : 'N';
+    ctx.fillText(glyph, wx, wy);
+    if (state.placeMode.type === 'antiair') {
+      ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
+      ctx.lineWidth = 1 / zoom;
+      ctx.setLineDash([5 / zoom, 5 / zoom]);
+      ctx.beginPath();
+      ctx.arc(wx, wy, AA_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Engineer fleet rendering — deploy variant also rendered here
+  // Fleet ships (troops + engineers / deploy — drones rendered next)
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
-    if (!f.path || f.segIdx >= f.path.length - 1) continue;
-    const segB = state.nodes[f.path[f.segIdx + 1]];
-    const angle = Math.atan2(segB.y - f.y, segB.x - f.x);
+    let angle = 0;
+    if (f.kind === 'deploy' && f.offroad) {
+      angle = Math.atan2(f.finalY - f.y, f.finalX - f.x);
+    } else if (f.path && f.segIdx < f.path.length - 1) {
+      const segB = state.nodes[f.path[f.segIdx + 1]];
+      angle = Math.atan2(segB.y - f.y, segB.x - f.x);
+    } else if (!f.path) {
+      continue;
+    }
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.rotate(angle);
-    if (f.kind === 'engineer') {
+    if (f.kind === 'engineer' || f.kind === 'deploy') {
       ctx.fillStyle = '#ffd066';
       ctx.fillRect(-5, -4, 10, 8);
       ctx.fillStyle = COLOR[f.owner];
@@ -319,7 +343,7 @@ export function render() {
     ctx.fillStyle = COLOR[f.owner];
     ctx.font = `bold ${13 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    if (f.kind === 'engineer') ctx.fillText('⚙', f.x, f.y - 14 / zoom);
+    if (f.kind === 'engineer' || f.kind === 'deploy') ctx.fillText('⚙', f.x, f.y - 14 / zoom);
     else ctx.fillText(Math.floor(f.units), f.x, f.y - 14 / zoom);
   }
 

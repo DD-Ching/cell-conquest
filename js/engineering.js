@@ -1,10 +1,11 @@
 // =====================================================
-// Battle engineering — roads, blockage, engineers,
-// buildings (anti-air, drone factory, drone net),
-// drones (straight-line suicide attack).
+// Battle engineering — Mars tower-defense flavour.
 //
-// NB: this is a separate "subsystem" sitting alongside
-// the existing fleet/node model — minimal coupling.
+// Buildings ("turrets") live at WORLD coordinates, not on nodes.
+// Engineer fleets are dispatched from an owned node, travel by road
+// to the closest road anchor, then walk off-road straight to the
+// turret's world point at reduced speed. Construction proceeds while
+// an engineer is on-site. Drones target enemy turrets first.
 // =====================================================
 import { state } from './state.js';
 import { dist } from './util.js';
@@ -19,126 +20,144 @@ import {
   BLOCKAGE_DECAY, BLOCKAGE_PER_WRECK,
 } from './config.js';
 
-// ---- Engineer speed re-exported so fleets.js can use it ----
 export { ENG_SPEED } from './config.js';
 
-// ---- Edge keys ----
+// ---- Edges ----
 export function ekey(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
 export function getEdge(a, b) { return state.edgeData.get(ekey(a, b)); }
-
-/** Edge speed multiplier (0.2..1.0) based on blockage. */
 export function edgeSpeedMul(a, b) {
   const e = getEdge(a, b);
   if (!e) return 1.0;
   return Math.max(0.2, 1.0 - e.blockage);
 }
 
-/** Reset engineering state for a new game. */
+// ---- Reset ----
 export function resetEngineering() {
   state.edgeData.clear();
   for (const r of state.roads) state.edgeData.set(ekey(r.a, r.b), { blockage: 0 });
+  state.turrets = [];
+  state.placeMode = null;
   for (const n of state.nodes) {
-    n.buildings = [];     // {type, progress(0..1), hp, hpMax, active, prodCooldown, total}
     n.engineers = 0;
     n.flashBuild = 0;
   }
 }
 
+// ---- Build specs ----
 const BUILD_SPECS = {
   antiair: { time: AA_BUILD_TIME, hp: AA_HP },
   factory: { time: DF_BUILD_TIME, hp: DF_HP },
   net:     { time: NET_BUILD_TIME, hp: NET_HP },
 };
 
-function nearestOwnSource(targetNode, owner, minUnits) {
-  let best = null, bestDist = Infinity;
-  for (const n of state.nodes) {
-    if (n.owner !== owner || n.id === targetNode.id) continue;
-    if (n.units < minUnits) continue;
-    const d = dist(n, targetNode);
-    if (d < bestDist) { bestDist = d; best = n; }
-  }
-  return best;
-}
+let nextTurretId = 1;
 
-/** Place a construction site on target and dispatch an engineer from nearest own node. */
-export function orderBuild(targetNode, type, byOwner) {
+/** Place a turret at world point (x,y). Finds nearest own road anchor and
+ *  dispatches an engineer that walks the roads then off-roads to (x,y). */
+export function placeTurretAt(x, y, type, byOwner) {
   const spec = BUILD_SPECS[type];
   if (!spec) return false;
-  if (targetNode.owner !== byOwner) return false;
-  if (targetNode.buildings.some(b => b.type === type)) return false;
-  const src = nearestOwnSource(targetNode, byOwner, ENG_COST + 5);
-  if (!src) return false;
-  targetNode.buildings.push({
-    type, progress: 0, hp: spec.hp, hpMax: spec.hp,
-    active: false, prodCooldown: 0, total: spec.time,
-  });
-  return dispatchEngineer(src, targetNode, byOwner);
-}
-
-export function dispatchEngineer(source, target, owner) {
-  const path = findPath(source.id, target.id, owner);
-  if (!path || path.length < 2) return false;
+  // Find nearest own node with enough units (engineer source)
+  let source = null, srcDist = Infinity;
+  for (const n of state.nodes) {
+    if (n.owner !== byOwner) continue;
+    if (n.units < ENG_COST + 5) continue;
+    const d = Math.hypot(n.x - x, n.y - y);
+    if (d < srcDist) { srcDist = d; source = n; }
+  }
+  if (!source) return false;
+  // Anchor: nearest OWN node to the target world point — engineer walks roads to here, then off-road.
+  let anchor = source, anchorDist = Math.hypot(source.x - x, source.y - y);
+  for (const n of state.nodes) {
+    if (n.owner !== byOwner) continue;
+    const d = Math.hypot(n.x - x, n.y - y);
+    if (d < anchorDist) { anchorDist = d; anchor = n; }
+  }
+  const path = (source.id === anchor.id) ? [source.id] : findPath(source.id, anchor.id, byOwner);
+  if (!path || path.length < 1) return false;
+  // Create turret site (inactive, progress 0)
+  const turret = {
+    id: nextTurretId++,
+    owner: byOwner, type, x, y,
+    hp: spec.hp, hpMax: spec.hp,
+    progress: 0, active: false,
+    total: spec.time, prodCooldown: 0,
+    engineers: 0,
+  };
+  state.turrets.push(turret);
   source.units -= ENG_COST;
   state.fleets.push({
-    kind: 'engineer', owner, units: 1, path,
+    kind: 'deploy', owner: byOwner, units: 1, path,
     segIdx: 0, segTraveled: 0,
     x: source.x, y: source.y,
     hp: ENG_HP,
+    finalX: x, finalY: y,
+    targetTurretId: turret.id,
+    offroad: false,
   });
   return true;
 }
 
-export function engineerArrived(f, target) {
-  if (target.owner !== f.owner) return;        // wrong owner — engineer wasted
-  target.engineers = (target.engineers || 0) + 1;
+/** Called by fleet sim when an engineer finishes its road path and starts the off-road leg. */
+export function engineerEnterOffroad(f) {
+  f.offroad = true;
 }
 
-export function spawnDrone(factoryNode, targetNode) {
+/** Called by fleet sim when an engineer arrives at its turret site. */
+export function engineerArrivedAtTurret(f) {
+  const t = state.turrets.find(t => t.id === f.targetTurretId);
+  if (!t || t.owner !== f.owner) return;
+  t.engineers += 1;
+}
+
+// ---- Drone ----
+export function spawnDrone(originX, originY, owner, target) {
   state.fleets.push({
-    kind: 'drone', owner: factoryNode.owner, units: 1,
-    x: factoryNode.x, y: factoryNode.y,
-    tx: targetNode.x, ty: targetNode.y,
-    targetNodeId: targetNode.id,
+    kind: 'drone', owner, units: 1,
+    x: originX, y: originY,
+    tx: target.x, ty: target.y,
+    targetKind: target.kind,            // 'turret' | 'node'
+    targetId:   target.id,
     hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
   });
 }
 
-function droneHit(drone, target) {
-  // Net protection on host node
+function droneHit(drone) {
+  // Resolve drone target by id and kind
+  let target;
+  if (drone.targetKind === 'turret') target = state.turrets.find(t => t.id === drone.targetId);
+  else                                target = state.nodes[drone.targetId];
+  if (!target) return;
+  // Net protection: any active 'net' turret within its small range of the impact point
   let mult = 1.0;
-  const netB = target.buildings.find(b => b.type === 'net' && b.active);
-  if (netB) {
+  let netT = null;
+  for (const t of state.turrets) {
+    if (t.type !== 'net' || !t.active || t.owner !== target.owner) continue;
+    const d = Math.hypot(t.x - drone.x, t.y - drone.y);
+    if (d <= AA_RADIUS * 0.7) { netT = t; break; }
+  }
+  if (netT) {
     mult = NET_DAMAGE_MULT;
-    netB.hp -= drone.damage * 0.4;
-    if (netB.hp <= 0) target.buildings.splice(target.buildings.indexOf(netB), 1);
+    netT.hp -= drone.damage * 0.4;
   }
   const dmg = drone.damage * mult;
-  // Priority: damage a building (prefer in-progress site = high-value)
-  const inProg = target.buildings.find(b => !b.active);
-  const anyBld = inProg || target.buildings.find(b => b.type !== 'net');
-  if (anyBld) {
-    anyBld.hp -= dmg;
-    if (anyBld.hp <= 0) {
-      target.buildings.splice(target.buildings.indexOf(anyBld), 1);
-      if (!anyBld.active) target.engineers = Math.max(0, (target.engineers || 0) - 1);
-    }
+  if (drone.targetKind === 'turret') {
+    target.hp -= dmg;
   } else {
     target.units = Math.max(0, target.units - dmg * 0.3);
     if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
   }
-  target.flash = Math.max(target.flash, 0.6);
-
-  // Wreckage on a random adjacent road
-  const nbrs = [...(state.adj.get(target.id) || [])];
-  if (nbrs.length) {
-    const j = nbrs[Math.floor(Math.random() * nbrs.length)];
-    const e = getEdge(target.id, j);
-    if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
+  // Wreckage on a random adjacent road (only for node targets)
+  if (drone.targetKind === 'node') {
+    const nbrs = [...(state.adj.get(target.id) || [])];
+    if (nbrs.length) {
+      const j = nbrs[Math.floor(Math.random() * nbrs.length)];
+      const e = getEdge(target.id, j);
+      if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
+    }
   }
 }
 
-/** Update drone fleet straight-line motion, AA damage already pre-applied. */
 export function updateDrones(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
@@ -155,9 +174,8 @@ export function updateDrones(dt) {
     }
     const dx = f.tx - f.x, dy = f.ty - f.y;
     const d = Math.hypot(dx, dy);
-    if (d < 14) {
-      const target = state.nodes[f.targetNodeId];
-      if (target) droneHit(f, target);
+    if (d < 12) {
+      droneHit(f);
       for (let k = 0; k < 12; k++) {
         const a = Math.random() * Math.PI * 2;
         const sp = 60 + Math.random() * 60;
@@ -174,32 +192,26 @@ export function updateDrones(dt) {
   }
 }
 
-/** Anti-air buildings fire at enemy drones in range. Damage stacks across overlapping
- *  AA — visualized as tracer beams. Multiple overlapping AAs → multiple beams per
- *  drone per second, making the saturation interception math visible to the player. */
+// ---- Anti-air (now world-coord turret-based) ----
 export function updateAntiAir(dt) {
   const tracerRate = 5;        // beams/sec per AA when a drone is in its range
-  for (const n of state.nodes) {
-    for (const b of n.buildings) {
-      if (b.type !== 'antiair' || !b.active) continue;
-      for (const f of state.fleets) {
-        if (f.kind !== 'drone' || f.owner === n.owner) continue;
-        const d = Math.hypot(f.x - n.x, f.y - n.y);
-        if (d > AA_RADIUS) continue;
-        f.hp -= AA_DPS * dt;
-        // Probabilistic tracer (independent per AA; overlapping → more beams)
-        if (Math.random() < tracerRate * dt) {
-          state.tracers.push({
-            x1: n.x, y1: n.y, x2: f.x, y2: f.y,
-            age: 0, maxAge: 0.18, color: COLOR[n.owner],
-          });
-        }
+  for (const t of state.turrets) {
+    if (t.type !== 'antiair' || !t.active) continue;
+    for (const f of state.fleets) {
+      if (f.kind !== 'drone' || f.owner === t.owner) continue;
+      const d = Math.hypot(f.x - t.x, f.y - t.y);
+      if (d > AA_RADIUS) continue;
+      f.hp -= AA_DPS * dt;
+      if (Math.random() < tracerRate * dt) {
+        state.tracers.push({
+          x1: t.x, y1: t.y, x2: f.x, y2: f.y,
+          age: 0, maxAge: 0.18, color: COLOR[t.owner],
+        });
       }
     }
   }
 }
 
-/** Tracer fade. Called from main loop. */
 export function updateTracers(dt) {
   for (let i = state.tracers.length - 1; i >= 0; i--) {
     state.tracers[i].age += dt;
@@ -207,44 +219,57 @@ export function updateTracers(dt) {
   }
 }
 
-/** Construction progress, factory drone production, blockage decay. */
+// ---- Buildings tick: construction, factory production, decay, dead-turret cleanup ----
 export function updateBuildings(dt) {
-  for (const n of state.nodes) {
-    // Engineers progress the first incomplete site at this node
-    if (n.engineers > 0) {
-      const site = n.buildings.find(b => !b.active);
-      if (site) {
-        site.progress += n.engineers * dt / site.total;
-        if (site.progress >= 1.0) {
-          site.progress = 1.0; site.active = true; n.flashBuild = 1;
-        }
-      } else {
-        // Idle engineers clear adjacent blockage
-        for (const j of state.adj.get(n.id) || []) {
-          const e = getEdge(n.id, j);
-          if (e && e.blockage > 0) {
-            e.blockage = Math.max(0, e.blockage - ENG_CLEAR_RATE * dt * n.engineers);
+  // Per-turret update
+  for (let i = state.turrets.length - 1; i >= 0; i--) {
+    const t = state.turrets[i];
+    if (t.hp <= 0) { state.turrets.splice(i, 1); continue; }
+    // Construction
+    if (!t.active) {
+      if (t.engineers > 0) {
+        t.progress += t.engineers * dt / t.total;
+        if (t.progress >= 1.0) { t.progress = 1.0; t.active = true; }
+      }
+    } else {
+      // Factory: produce drones, targeting enemy turrets first then nodes
+      if (t.type === 'factory') {
+        t.prodCooldown -= dt;
+        if (t.prodCooldown <= 0) {
+          t.prodCooldown = DF_PRODUCTION_T;
+          let best = null, bestScore = -Infinity;
+          // Enemy turrets first (high priority — they threaten our drones)
+          for (const et of state.turrets) {
+            if (et.owner === t.owner) continue;
+            const d = Math.hypot(et.x - t.x, et.y - t.y);
+            let score = 1500 / (d + 200);
+            if (et.type === 'antiair') score *= 1.5;
+            if (!et.active) score *= 2.0;
+            if (score > bestScore) { bestScore = score; best = { kind: 'turret', id: et.id, x: et.x, y: et.y }; }
           }
+          // Otherwise nodes
+          if (!best) {
+            for (const en of state.nodes) {
+              if (en.owner === t.owner || en.owner === 'neutral') continue;
+              const d = dist(t, en);
+              let score = 800 / (d + 200);
+              if (score > bestScore) { bestScore = score; best = { kind: 'node', id: en.id, x: en.x, y: en.y }; }
+            }
+          }
+          if (best) spawnDrone(t.x, t.y, t.owner, best);
         }
       }
     }
-    // Drone factory production
-    for (const b of n.buildings) {
-      if (b.type !== 'factory' || !b.active) continue;
-      b.prodCooldown -= dt;
-      if (b.prodCooldown > 0) continue;
-      b.prodCooldown = DF_PRODUCTION_T;
-      const targets = state.nodes.filter(en => en.owner !== n.owner && en.owner !== 'neutral');
-      if (!targets.length) continue;
-      let best = null, bestScore = -Infinity;
-      for (const en of targets) {
-        const d = dist(n, en);
-        let score = 800 / (d + 200);
-        if (en.buildings.some(b => !b.active)) score *= 3;
-        if (en.buildings.some(b => b.type === 'antiair' && b.active)) score *= 0.3;
-        if (score > bestScore) { bestScore = score; best = en; }
+  }
+  // Idle engineers (stationed at a node with no incomplete site nearby) clear blockage
+  for (const n of state.nodes) {
+    if (n.engineers > 0) {
+      for (const j of state.adj.get(n.id) || []) {
+        const e = getEdge(n.id, j);
+        if (e && e.blockage > 0) {
+          e.blockage = Math.max(0, e.blockage - ENG_CLEAR_RATE * dt * n.engineers);
+        }
       }
-      if (best) spawnDrone(n, best);
     }
     if (n.flashBuild > 0) n.flashBuild -= dt * 1.5;
   }

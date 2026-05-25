@@ -7,7 +7,9 @@ import { FLEET_SPEED } from './config.js';
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
 import { findPath } from './world.js';
-import { ENG_SPEED, edgeSpeedMul, engineerArrived } from './engineering.js';
+import { ENG_SPEED, edgeSpeedMul, engineerArrivedAtTurret } from './engineering.js';
+
+const OFFROAD_SPEED_MUL = 0.4;
 
 /** Try to dispatch a troop fleet (own-territory path). Returns true on success. */
 export function sendFleet(from, to, amount) {
@@ -30,12 +32,28 @@ export function sendFleet(from, to, amount) {
   return true;
 }
 
-/** Advance path-based fleets (troops + engineers). Drones are handled separately. */
+/** Advance path-based fleets (troops + deploy-engineers). Drones in engineering.js. */
 export function simulateFleets(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
-    if (f.kind === 'drone') continue;            // drones updated in engineering.js
-    const baseSpeed = (f.kind === 'engineer') ? ENG_SPEED : FLEET_SPEED;
+    if (f.kind === 'drone') continue;
+
+    // Deploy engineers may run off-road after the path ends.
+    if (f.kind === 'deploy' && f.offroad) {
+      const dx = f.finalX - f.x, dy = f.finalY - f.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 4) {
+        engineerArrivedAtTurret(f);
+        state.fleets.splice(i, 1);
+        continue;
+      }
+      const step = ENG_SPEED * OFFROAD_SPEED_MUL * dt;
+      f.x += (dx / d) * step;
+      f.y += (dy / d) * step;
+      continue;
+    }
+
+    const baseSpeed = (f.kind === 'engineer' || f.kind === 'deploy') ? ENG_SPEED : FLEET_SPEED;
     let segMul = 1.0;
     if (f.segIdx < f.path.length - 1) {
       segMul = edgeSpeedMul(f.path[f.segIdx], f.path[f.segIdx + 1]);
@@ -50,11 +68,16 @@ export function simulateFleets(dt) {
     }
 
     if (f.segIdx >= f.path.length - 1) {
-      const target = state.nodes[f.path[f.path.length - 1]];
-      if (target) {
-        if (f.kind === 'engineer') engineerArrived(f, target);
-        else arriveAt({ owner: f.owner, units: Math.floor(f.units) }, target);
+      // Road portion done.
+      if (f.kind === 'deploy') {
+        // Begin off-road leg toward the world-coord turret site.
+        const anchor = state.nodes[f.path[f.path.length - 1]];
+        f.x = anchor.x; f.y = anchor.y;
+        f.offroad = true;
+        continue;          // process again next tick
       }
+      const target = state.nodes[f.path[f.path.length - 1]];
+      if (target) arriveAt({ owner: f.owner, units: Math.floor(f.units) }, target);
       state.fleets.splice(i, 1);
       continue;
     }

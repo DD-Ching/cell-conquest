@@ -14,7 +14,7 @@ import {
 } from './world.js';
 import { sendFleet, simulateFleets } from './fleets.js';
 import {
-  resetEngineering, orderBuild,
+  resetEngineering, placeTurretAt,
   updateDrones, updateAntiAir, updateBuildings, updateTracers,
 } from './engineering.js';
 import { aiTick } from './ai.js';
@@ -213,6 +213,14 @@ function attachInput() {
     state.mouseScreen = { x: e.clientX, y: e.clientY };
     const wx = e.clientX / state.zoom + state.cameraX;
     const wy = e.clientY / state.zoom + state.cameraY;
+
+    // Placement mode: clicking confirms turret placement.
+    if (state.placeMode) {
+      const ok = placeTurretAt(wx, wy, state.placeMode.type, state.placeMode.byOwner);
+      if (ok) state.placeMode = null;
+      return;
+    }
+
     const n = nodeAt(wx, wy);
     state.drag = {
       startX: wx, startY: wy, x: wx, y: wy,
@@ -304,7 +312,7 @@ function attachInput() {
     if (k === 's' || k === 'arrowdown')  { state.panKeys.down = true; e.preventDefault(); }
     if (k === 'a' || k === 'arrowleft')  { state.panKeys.left = true; e.preventDefault(); }
     if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
-    if (e.key === 'Escape') state.selectedIds.clear();
+    if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; }
     if (k === 'r') newGame();
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
@@ -322,17 +330,10 @@ function attachInput() {
       const i = SPEEDS.indexOf(state.timeScale);
       state.timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
     }
-    // Build orders on selected own node: Q=Anti-Air, F=Factory, N=Net
+    // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net. Click world to place.
     if (k === 'q' || k === 'f' || k === 'n') {
       const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory' : 'net';
-      for (const id of state.selectedIds) {
-        const n = state.nodes[id];
-        if (n && n.owner === 'player') {
-          const ok = orderBuild(n, type, 'player');
-          if (ok) n.flash = Math.max(n.flash, 0.4);
-          break;
-        }
-      }
+      state.placeMode = { type, byOwner: 'player' };
     }
   });
 

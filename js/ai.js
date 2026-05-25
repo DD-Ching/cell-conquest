@@ -124,11 +124,12 @@ export function aiTick(owner, dt) {
     return false;
   }
 
-  // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam.
-  // The AI now follows the same script.
-  const AA_TARGET      = 4;                       // 4-AA wall in front of each hub
-  const TANK_TARGET    = 2;                       // 2 tanks for siege + flank
-  const FACTORY_TARGET = antiTurtle ? 6 : 4;      // drone spam goal per hub
+  // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam,
+  // plus long-range artillery for AOE counter-pressure against enemy clusters.
+  const AA_TARGET       = 4;                      // 4-AA wall in front of each hub
+  const TANK_TARGET     = 2;                      // 2 tanks for siege + flank
+  const FACTORY_TARGET  = antiTurtle ? 6 : 4;     // drone spam goal per hub
+  const ARTILLERY_TARGET = antiTurtle ? 2 : 1;    // 1-2 cannons at deep rear
 
   // Position helpers — spread AAs across the front arc to form a WALL (not a circle).
   // Drones flying toward the hub get sieved by overlapping radars from multiple angles.
@@ -161,6 +162,14 @@ export function aiTick(owner, dt) {
     return { x: n.x - dirX * back + px * side,
              y: n.y - dirY * back + py * side };
   }
+  function artillerySpot(n, dirX, dirY, idx) {
+    // Deep rear — artillery's range is so long it can fire from way back behind the hub.
+    const px = -dirY, py = dirX;
+    const back = 120 + idx * 35;
+    const side = (idx % 2 === 0 ? 1 : -1) * (idx * 30);
+    return { x: n.x - dirX * back + px * side,
+             y: n.y - dirY * back + py * side };
+  }
 
   if (Math.random() < buildChance && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
@@ -190,6 +199,9 @@ export function aiTick(owner, dt) {
       const ownFactoriesNear = state.turrets.filter(t =>
         t.owner === owner && t.type === 'factory' &&
         Math.hypot(t.x - n.x, t.y - n.y) < 180);
+      const ownArtilleryNear = state.turrets.filter(t =>
+        t.owner === owner && t.type === 'artillery' &&
+        Math.hypot(t.x - n.x, t.y - n.y) < 250);
       // Hub under our AA umbrella?
       const aaCoversThisHub = state.turrets.some(t =>
         t.owner === owner && t.type === 'antiair' &&
@@ -212,6 +224,13 @@ export function aiTick(owner, dt) {
       if (aaCoversThisHub && ownAAsNear.length >= 2 && ownFactoriesNear.length < FACTORY_TARGET) {
         const spot = factorySpot(n, dirX, dirY, ownFactoriesNear.length);
         if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'factory', owner)) return;
+      }
+
+      // ---- 4) ARTILLERY — deep rear AOE pressure ----
+      // Long range so it can stay way back. Random AOE counters dense enemy clusters.
+      if (aaCoversThisHub && ownAAsNear.length >= 2 && ownArtilleryNear.length < ARTILLERY_TARGET) {
+        const spot = artillerySpot(n, dirX, dirY, ownArtilleryNear.length);
+        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'artillery', owner)) return;
       }
     }
   }

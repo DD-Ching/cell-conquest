@@ -5,7 +5,7 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR,
-  NET_PICK_R, NET_LEVEL_MAX,
+  NET_PICK_R, NET_LEVEL_MAX, ARTILLERY_INTERVAL, ARTILLERY_AOE,
 } from './config.js';
 import { COLOR, GLOW, FACTIONS } from './factions.js';
 import { dist, formatTime } from './util.js';
@@ -13,7 +13,7 @@ import { findPath, nodeAt, roadAt } from './world.js';
 import { getEdge, TURRET_RANGES } from './engineering.js';
 import {
   drawRoadStyled, drawTroopSprite, drawEngineerSprite, drawDroneSprite,
-  drawAATurret, drawTankTurret, drawFactoryTurret,
+  drawAATurret, drawTankTurret, drawFactoryTurret, drawArtilleryTurret,
 } from './sprites.js';
 
 // =====================================================
@@ -223,6 +223,33 @@ export function render() {
     ctx.fillText(`L${e.netLevel} ${e.netCharges}`, mx, my);
   }
 
+  // Artillery shells in flight — parabolic arc + impact-warning circle.
+  // The warning telegraph gives the defender a chance to see incoming AOE.
+  for (const s of state.shells) {
+    const p = Math.min(1, s.t / s.maxT);
+    // Position: interpolate + arc lift (parabolic — peaks at p=0.5)
+    const lx = s.x1 + (s.x2 - s.x1) * p;
+    const ly = s.y1 + (s.y2 - s.y1) * p - 50 * Math.sin(p * Math.PI);
+    // Trail
+    ctx.strokeStyle = 'rgba(255, 220, 130, 0.55)';
+    ctx.lineWidth = 1 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(s.x1, s.y1); ctx.lineTo(lx, ly);
+    ctx.stroke();
+    // Shell head
+    ctx.fillStyle = '#ffe080';
+    ctx.beginPath(); ctx.arc(lx, ly, 2.2, 0, Math.PI * 2); ctx.fill();
+    // Impact-warning ring at target (grows + brightens as shell approaches)
+    const warn = p;
+    ctx.strokeStyle = `rgba(255, 180, 80, ${0.35 + warn * 0.5})`;
+    ctx.lineWidth = (1 + warn * 1.5) / zoom;
+    ctx.setLineDash([4 / zoom, 4 / zoom]);
+    ctx.beginPath();
+    ctx.arc(s.x2, s.y2, ARTILLERY_AOE, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // AA tracer beams — render before nodes so beams pass behind icons.
   // Stacking AAs all draw beams → visible saturation interception.
   for (const t of state.tracers) {
@@ -393,6 +420,19 @@ export function render() {
       drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle);
     } else if (t.type === 'factory') {
       drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
+    } else if (t.type === 'artillery') {
+      // Aim toward the densest visible enemy point (rough — just nearest target)
+      let aimAngle = 0, aimD = Infinity;
+      for (const e of state.turrets) {
+        if (e.owner === t.owner) continue;
+        const d = Math.hypot(e.x - t.x, e.y - t.y);
+        if (d < aimD) { aimD = d; aimAngle = Math.atan2(e.y - t.y, e.x - t.x); }
+      }
+      // Recent-fire flash: cooldown just reset → recoil kick
+      const flash = (t.artyCooldown !== undefined && t.artyCooldown > ARTILLERY_INTERVAL - 0.25)
+        ? (t.artyCooldown - (ARTILLERY_INTERVAL - 0.25)) / 0.25
+        : 0;
+      drawArtilleryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle, flash);
     }
     // Progress arc while building (any type)
     if (!t.active) {
@@ -451,6 +491,8 @@ export function render() {
         drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0);
       } else if (state.placeMode.type === 'factory') {
         drawFactoryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now, false);
+      } else if (state.placeMode.type === 'artillery') {
+        drawArtilleryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0, 0);
       }
       ctx.globalAlpha = 1;
       const previewR = TURRET_RANGES[state.placeMode.type];

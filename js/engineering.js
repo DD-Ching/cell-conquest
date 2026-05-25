@@ -16,6 +16,9 @@ import {
   AA_BUILD_TIME, AA_HP, AA_RADIUS, AA_DPS,
   DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T,
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS, TANK_DPS,
+  ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE, ARTILLERY_AOE,
+  ARTILLERY_INTERVAL, ARTILLERY_INACCURACY,
+  ARTILLERY_DAMAGE_TURRET, ARTILLERY_DAMAGE_FLEET, ARTILLERY_SHELL_FLIGHT,
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE,
   DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, WRECK_CLEAR_PER_ENG,
@@ -53,15 +56,17 @@ export function resetEngineering() {
 
 // ---- Build specs (world-coord turrets only; nets are on edges, see placeNetOnEdge) ----
 const BUILD_SPECS = {
-  antiair: { time: AA_BUILD_TIME,   hp: AA_HP },
-  factory: { time: DF_BUILD_TIME,   hp: DF_HP },
-  tank:    { time: TANK_BUILD_TIME, hp: TANK_HP },
+  antiair:   { time: AA_BUILD_TIME,        hp: AA_HP },
+  factory:   { time: DF_BUILD_TIME,        hp: DF_HP },
+  tank:      { time: TANK_BUILD_TIME,      hp: TANK_HP },
+  artillery: { time: ARTILLERY_BUILD_TIME, hp: ARTILLERY_HP },
 };
 
-/** Visible turret range — used for AA and tank rings. */
+/** Visible turret range — used for AA, tank, and artillery rings. */
 export const TURRET_RANGES = {
-  antiair: AA_RADIUS,
-  tank:    TANK_RADIUS,
+  antiair:   AA_RADIUS,
+  tank:      TANK_RADIUS,
+  artillery: ARTILLERY_RANGE,
 };
 
 let nextTurretId = 1;
@@ -567,6 +572,100 @@ export function updateTanks(dt) {
       }
     }
   }
+}
+
+/** Long-range artillery — INACCURATE area cannon. Picks the densest enemy
+ *  cluster within range, applies a random wobble to the aim, and lobs a
+ *  shell that detonates in an AOE circle. Stacking many turrets at one
+ *  point becomes a liability since a single shell can wipe the cluster. */
+export function updateArtillery(dt) {
+  for (const t of state.turrets) {
+    if (t.type !== 'artillery' || !t.active) continue;
+    if (t.artyCooldown === undefined) t.artyCooldown = ARTILLERY_INTERVAL;
+    t.artyCooldown -= dt;
+    if (t.artyCooldown > 0) continue;
+    t.artyCooldown = ARTILLERY_INTERVAL;
+    fireArtilleryShell(t);
+  }
+}
+
+function fireArtilleryShell(t) {
+  // Candidate targets within range
+  const cands = [];
+  for (const e of state.turrets) {
+    if (e.owner === t.owner) continue;
+    if (Math.hypot(e.x - t.x, e.y - t.y) > ARTILLERY_RANGE) continue;
+    cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
+  }
+  for (const f of state.fleets) {
+    if (f.kind === 'drone') continue;
+    if (f.owner === t.owner) continue;
+    if (Math.hypot(f.x - t.x, f.y - t.y) > ARTILLERY_RANGE) continue;
+    cands.push({ x: f.x, y: f.y, weight: 1 });
+  }
+  if (cands.length === 0) return;
+
+  // Pick the target with the most neighbors inside the AOE — that's a "cluster"
+  let best = cands[0], bestScore = -1;
+  for (const a of cands) {
+    let s = 0;
+    for (const o of cands) {
+      if (Math.hypot(o.x - a.x, o.y - a.y) < ARTILLERY_AOE) s += o.weight;
+    }
+    if (s > bestScore) { bestScore = s; best = a; }
+  }
+
+  // Apply inaccuracy (random offset within ARTILLERY_INACCURACY)
+  const ang = Math.random() * Math.PI * 2;
+  const r = Math.random() * ARTILLERY_INACCURACY;
+  const impactX = best.x + Math.cos(ang) * r;
+  const impactY = best.y + Math.sin(ang) * r;
+
+  state.shells.push({
+    x1: t.x, y1: t.y, x2: impactX, y2: impactY,
+    t: 0, maxT: ARTILLERY_SHELL_FLIGHT, owner: t.owner,
+  });
+}
+
+/** Advance shells in flight; detonate when their flight time expires. */
+export function updateShells(dt) {
+  for (let i = state.shells.length - 1; i >= 0; i--) {
+    const s = state.shells[i];
+    s.t += dt;
+    if (s.t >= s.maxT) {
+      detonateArtillery(s.x2, s.y2, s.owner);
+      state.shells.splice(i, 1);
+    }
+  }
+}
+
+/** AOE damage at (x, y) — hits enemy turrets and ground fleets within ARTILLERY_AOE. */
+function detonateArtillery(x, y, owner) {
+  for (const t of state.turrets) {
+    if (t.owner === owner) continue;
+    if (Math.hypot(t.x - x, t.y - y) < ARTILLERY_AOE) t.hp -= ARTILLERY_DAMAGE_TURRET;
+  }
+  for (const f of state.fleets) {
+    if (f.kind === 'drone') continue;
+    if (f.owner === owner) continue;
+    const d = Math.hypot(f.x - x, f.y - y);
+    if (d >= ARTILLERY_AOE) continue;
+    f.units -= ARTILLERY_DAMAGE_FLEET;
+    if (f.units < 0.5) {
+      addWreckBlockage(f);
+      f._dead = true;
+    }
+  }
+  // Cleanup dead fleets
+  for (let i = state.fleets.length - 1; i >= 0; i--) {
+    if (state.fleets[i]._dead) state.fleets.splice(i, 1);
+  }
+  spawnBigExplosion(x, y, '#ffcc66', 30);
+  // Add a tracer-like flash burst
+  state.tracers.push({
+    x1: x, y1: y, x2: x, y2: y,
+    age: 0, maxAge: 0.35, color: '#ffd066',
+  });
 }
 
 /** Cinematic "爆肥" explosion when a turret (esp. tank) dies. */

@@ -23,7 +23,7 @@ const ASSET_FILES = [
   'tank', 'apc', 'truck',           // troop tiers
   'engineer',                       // engineer/deploy
   'drone',                          // air
-  'turret_aa', 'turret_tank', 'turret_factory',
+  'turret_aa', 'turret_tank', 'turret_factory', 'turret_artillery',
 ];
 
 export function loadAssets() {
@@ -309,6 +309,56 @@ export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
   ctx.fillRect(3, -1.7, 14, 3.4);
   ctx.fillStyle = c;
   ctx.fillRect(3, -0.7, 13, 1.5);
+  ctx.restore();
+}
+
+// =====================================================
+// Turret: artillery — long barrel cannon on wheeled carriage
+// =====================================================
+export function drawArtilleryTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, fireFlash = 0) {
+  const c = active ? COLOR[owner] : '#7a6a55';
+
+  if (Asset.turret_artillery?.ready) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(aimAngle);
+    blitSprite(ctx, Asset.turret_artillery, 32, c);
+    ctx.restore();
+    return;
+  }
+
+  // Wheeled carriage trails (left + right wheels)
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(x - 14, y - 10, 4, 20);
+  ctx.fillRect(x + 10, y - 10, 4, 20);
+  // Carriage body
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 12, 0, TAU); ctx.fill();
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.fill();
+  // Rivets
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+  // Long barrel (rotates to aim)
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(aimAngle);
+  // Recoil flash kick — barrel slides back briefly after firing
+  const recoil = fireFlash > 0 ? -fireFlash * 4 : 0;
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(recoil, -3, 26, 6);
+  ctx.fillStyle = c;
+  ctx.fillRect(recoil + 1, -1.8, 24, 3.6);
+  // Muzzle brake
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(recoil + 24, -4, 4, 8);
+  // Muzzle flash
+  if (fireFlash > 0.15) {
+    ctx.fillStyle = `rgba(255, 230, 130, ${fireFlash})`;
+    ctx.beginPath();
+    ctx.arc(recoil + 30, 0, 4 * fireFlash, 0, TAU);
+    ctx.fill();
+  }
   ctx.restore();
 }
 

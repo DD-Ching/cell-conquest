@@ -16,7 +16,8 @@ import {
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
   resetEngineering, placeTurretAt, placeNetOnEdge,
-  updateDrones, updateAntiAir, updateTanks, updateBuildings, updateTracers,
+  updateDrones, updateAntiAir, updateTanks, updateArtillery, updateShells,
+  updateBuildings, updateTracers,
 } from './engineering.js';
 import { aiTick } from './ai.js';
 import { nnLoad, nnResetGame } from './nn.js';
@@ -147,6 +148,8 @@ function simulate(dt) {
   updateBuildings(dt);
   updateAntiAir(dt);
   updateTanks(dt);
+  updateArtillery(dt);
+  updateShells(dt);
   updateDrones(dt);
   simulateFleets(dt);
 }
@@ -357,10 +360,10 @@ function attachInput() {
       const i = SPEEDS.indexOf(state.timeScale);
       state.timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
     }
-    // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net, T=Tank. Click world to place.
-    if (k === 'q' || k === 'f' || k === 'n' || k === 't') {
+    // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net, T=Tank, C=Cannon (artillery).
+    if (k === 'q' || k === 'f' || k === 'n' || k === 't' || k === 'c') {
       const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory'
-                 : (k === 'n') ? 'net'     : 'tank';
+                 : (k === 'n') ? 'net'     : (k === 't') ? 'tank' : 'artillery';
       state.placeMode = { type, byOwner: 'player' };
     }
   });

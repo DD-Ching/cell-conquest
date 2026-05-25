@@ -54,6 +54,20 @@ export const TANK_HP = 130;
 export const TANK_RADIUS = 240;
 export const TANK_DPS = 8;
 
+// Artillery — long-range area cannon. Built by an engineer (like AA), but
+// fires AOE shells that are INACCURATE — random within a wobble circle. So
+// stacking many turrets at one spot becomes a vulnerability: one lucky
+// shell wipes the whole cluster. Counters dense defenses.
+export const ARTILLERY_BUILD_TIME    = 20;
+export const ARTILLERY_HP            = 120;
+export const ARTILLERY_RANGE         = 420;   // longest range in the game
+export const ARTILLERY_AOE           = 65;    // impact-circle radius
+export const ARTILLERY_INTERVAL      = 3.2;   // sec between shells
+export const ARTILLERY_INACCURACY    = 55;    // aim wobble — random within this
+export const ARTILLERY_DAMAGE_TURRET = 35;    // damage per shell to each turret in AOE
+export const ARTILLERY_DAMAGE_FLEET  = 28;    // damage per shell to each ground fleet
+export const ARTILLERY_SHELL_FLIGHT  = 0.6;   // sec of flight before detonation
+
 // Drone
 export const DRONE_HP_AIR = 30;
 export const DRONE_SPEED = 130;

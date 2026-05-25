@@ -441,14 +441,14 @@ export function render() {
       drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
       // Stockpile badge: when Hold-Fire is on, factories accumulate drones
       if (t.dronesReady > 0) {
-        ctx.fillStyle = 'rgba(255, 200, 90, 0.85)';
+        ctx.fillStyle = 'rgba(255, 200, 90, 0.9)';
         ctx.beginPath();
-        ctx.arc(t.x + 10, t.y - 12, 5.5, 0, Math.PI * 2);
+        ctx.arc(t.x + 14, t.y - 16, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#0a0604';
-        ctx.font = `bold ${9 / zoom}px ui-monospace, monospace`;
+        ctx.font = `bold ${11 / zoom}px ui-monospace, monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(t.dronesReady, t.x + 10, t.y - 12);
+        ctx.fillText(t.dronesReady, t.x + 14, t.y - 16);
       }
     } else if (t.type === 'artillery') {
       // Aim toward the densest visible enemy point (rough — just nearest target)
@@ -467,18 +467,18 @@ export function render() {
     // Progress arc while building (any type)
     if (!t.active) {
       ctx.strokeStyle = '#ffd066';
-      ctx.lineWidth = 1.8 / zoom;
+      ctx.lineWidth = 2.2 / zoom;
       ctx.beginPath();
-      ctx.arc(t.x, t.y, 11, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
+      ctx.arc(t.x, t.y, 15, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
       ctx.stroke();
     }
     // HP bar (only if damaged)
     if (t.active && t.hp < t.hpMax) {
-      const bw = 20, frac = t.hp / t.hpMax;
+      const bw = 26, frac = t.hp / t.hpMax;
       ctx.fillStyle = 'rgba(20,20,20,0.6)';
-      ctx.fillRect(t.x - bw / 2, t.y + 11, bw, 2);
+      ctx.fillRect(t.x - bw / 2, t.y + 16, bw, 2.5);
       ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
-      ctx.fillRect(t.x - bw / 2, t.y + 11, bw * frac, 2);
+      ctx.fillRect(t.x - bw / 2, t.y + 16, bw * frac, 2.5);
     }
   }
 

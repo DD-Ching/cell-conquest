@@ -14,7 +14,7 @@ import { COLOR } from './factions.js';
 import {
   ENG_HP, ENG_BUILD_RATE, ENG_CLEAR_RATE, ENG_COST,
   AA_BUILD_TIME, AA_HP, AA_RADIUS, AA_DPS,
-  DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T,
+  DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS, TANK_DPS,
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE, ARTILLERY_AOE,
   ARTILLERY_INTERVAL, ARTILLERY_INACCURACY,
@@ -46,7 +46,9 @@ export function resetEngineering() {
     });
   }
   state.turrets = [];
+  state.shells = [];
   state.placeMode = null;
+  state.holdFire = false;
   state._nextFleetId = 1;
   for (const n of state.nodes) {
     n.engineers = 0;
@@ -510,17 +512,25 @@ export function updateDrones(dt) {
   }
 }
 
-// ---- Anti-air (now world-coord turret-based) ----
+// ---- Anti-air with saturation ----
+// Each AA splits its DPS across every enemy drone currently in its range.
+// One drone in range = full AA_DPS; ten drones = AA_DPS / 10 each. So massed
+// drone swarms saturate the defense and a fraction can punch through.
 export function updateAntiAir(dt) {
-  const tracerRate = 5;        // beams/sec per AA when a drone is in its range
+  const totalTracerRate = 5;   // total beams/sec per AA (split across targets)
   for (const t of state.turrets) {
     if (t.type !== 'antiair' || !t.active) continue;
+    const inRange = [];
     for (const f of state.fleets) {
       if (f.kind !== 'drone' || f.owner === t.owner) continue;
-      const d = Math.hypot(f.x - t.x, f.y - t.y);
-      if (d > AA_RADIUS) continue;
-      f.hp -= AA_DPS * dt;
-      if (Math.random() < tracerRate * dt) {
+      if (Math.hypot(f.x - t.x, f.y - t.y) <= AA_RADIUS) inRange.push(f);
+    }
+    if (inRange.length === 0) continue;
+    const dpsPerTarget = AA_DPS / inRange.length;
+    const tracerPerTarget = totalTracerRate / inRange.length;
+    for (const f of inRange) {
+      f.hp -= dpsPerTarget * dt;
+      if (Math.random() < tracerPerTarget * dt) {
         state.tracers.push({
           x1: t.x, y1: t.y, x2: f.x, y2: f.y,
           age: 0, maxAge: 0.18, color: COLOR[t.owner],
@@ -688,6 +698,65 @@ export function updateTracers(dt) {
   }
 }
 
+// ---- Factory drone launch helpers ----
+/** Pick a list of candidate targets for a drone leaving factory `t`.
+ *  Sorted by score (highest first). Caller picks among top-K. */
+function pickDroneTargetsFor(t) {
+  const cands = [];
+  for (const et of state.turrets) {
+    if (et.owner === t.owner) continue;
+    const d = Math.hypot(et.x - t.x, et.y - t.y);
+    let score = 1500 / (d + 200);
+    if (et.type === 'antiair') score *= 1.5;
+    if (et.type === 'factory') score *= 1.8;
+    if (!et.active) score *= 2.0;
+    cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
+  }
+  if (cands.length === 0) {
+    for (const en of state.nodes) {
+      if (en.owner === t.owner || en.owner === 'neutral') continue;
+      const d = dist(t, en);
+      const score = 800 / (d + 200);
+      cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score);
+  return cands;
+}
+
+/** Launch a single drone from factory `t` toward a randomly chosen top-3 target. */
+function launchOneDroneFrom(t) {
+  const cands = pickDroneTargetsFor(t);
+  if (cands.length === 0) return;
+  const top = cands.slice(0, Math.min(3, cands.length));
+  const pick = top[Math.floor(Math.random() * top.length)];
+  spawnDrone(t.x, t.y, t.owner, pick.target);
+}
+
+/** Flush every player factory's stockpile in one big salvo. Drones are
+ *  diversified across the top-K targets so they spread across enemy AAs
+ *  instead of stacking on one. Tiny position jitter prevents visual pileup. */
+export function releasePlayerStockpile() {
+  let launched = 0;
+  for (const t of state.turrets) {
+    if (t.owner !== 'player' || t.type !== 'factory') continue;
+    if (!t.dronesReady) continue;
+    const cands = pickDroneTargetsFor(t);
+    if (cands.length === 0) { t.dronesReady = 0; continue; }
+    const topK = cands.slice(0, Math.min(5, cands.length));
+    for (let k = 0; k < t.dronesReady; k++) {
+      const pick = topK[k % topK.length];
+      const jx = (Math.random() - 0.5) * 14;
+      const jy = (Math.random() - 0.5) * 14;
+      spawnDrone(t.x + jx, t.y + jy, t.owner, pick.target);
+      launched++;
+    }
+    t.dronesReady = 0;
+    t.prodCooldown = DF_PRODUCTION_T;     // restart the normal cycle
+  }
+  return launched;
+}
+
 // ---- Buildings tick: construction, factory production, decay, dead-turret cleanup ----
 export function updateBuildings(dt) {
   // Per-turret update
@@ -705,38 +774,19 @@ export function updateBuildings(dt) {
         if (t.progress >= 1.0) { t.progress = 1.0; t.active = true; }
       }
     } else {
-      // Factory: produce drones, targeting enemy turrets first then nodes.
-      // Picks RANDOMLY among the top-3 scoring targets so swarms split AA attention
-      // instead of all dying to the same cluster.
+      // Factory: produce drones. If the owner is the PLAYER and Hold-Fire is on,
+      // accumulate into dronesReady (up to FACTORY_MAX_STOCKPILE) instead of
+      // launching. Release happens via releasePlayerStockpile() when the
+      // player toggles Hold-Fire off.
       if (t.type === 'factory') {
+        if (t.dronesReady === undefined) t.dronesReady = 0;
         t.prodCooldown -= dt;
         if (t.prodCooldown <= 0) {
           t.prodCooldown = DF_PRODUCTION_T;
-          const cands = [];
-          // Enemy turrets first (high priority — they threaten our drones)
-          for (const et of state.turrets) {
-            if (et.owner === t.owner) continue;
-            const d = Math.hypot(et.x - t.x, et.y - t.y);
-            let score = 1500 / (d + 200);
-            if (et.type === 'antiair') score *= 1.5;
-            if (et.type === 'factory') score *= 1.8;  // kill the production source
-            if (!et.active) score *= 2.0;
-            cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
-          }
-          if (cands.length === 0) {
-            // Fall back to enemy nodes
-            for (const en of state.nodes) {
-              if (en.owner === t.owner || en.owner === 'neutral') continue;
-              const d = dist(t, en);
-              const score = 800 / (d + 200);
-              cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
-            }
-          }
-          if (cands.length) {
-            cands.sort((a, b) => b.score - a.score);
-            const top = cands.slice(0, Math.min(3, cands.length));
-            const pick = top[Math.floor(Math.random() * top.length)];
-            spawnDrone(t.x, t.y, t.owner, pick.target);
+          if (t.owner === 'player' && state.holdFire && t.dronesReady < FACTORY_MAX_STOCKPILE) {
+            t.dronesReady += 1;
+          } else {
+            launchOneDroneFrom(t);
           }
         }
       }

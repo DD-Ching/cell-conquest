@@ -38,6 +38,7 @@ export const AA_DPS = 15;
 export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;
 export const DF_PRODUCTION_T = 12;      // sec between drone spawns
+export const FACTORY_MAX_STOCKPILE = 6; // max held drones per factory while Hold-Fire is on
 
 // Drone Net (per-road segment). Engineer trips raise the level; each level grants
 // a finite "intercept" pool. Drones trying to attack troops on a netted road are

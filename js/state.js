@@ -48,6 +48,10 @@ export const state = {
   mousePos: { x: 0, y: 0 },
   panKeys: { up: false, down: false, left: false, right: false },
 
+  // Player Hold-Fire toggle: when true, player's drone factories stop launching
+  // and accumulate `dronesReady` instead. Toggling off launches the whole salvo.
+  holdFire: false,
+
   // Time
   gameOver: false,
   startTime: 0,

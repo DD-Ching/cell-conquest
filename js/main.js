@@ -15,7 +15,7 @@ import {
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
-  resetEngineering, placeTurretAt, placeNetOnEdge,
+  resetEngineering, placeTurretAt, placeNetOnEdge, releasePlayerStockpile,
   updateDrones, updateAntiAir, updateTanks, updateArtillery, updateShells,
   updateBuildings, updateTracers,
 } from './engineering.js';
@@ -365,6 +365,16 @@ function attachInput() {
       const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory'
                  : (k === 'n') ? 'net'     : (k === 't') ? 'tank' : 'artillery';
       state.placeMode = { type, byOwner: 'player' };
+    }
+    // Hold-Fire toggle: H stockpiles drones at your factories; pressing again
+    // launches the entire stockpile as one saturation salvo.
+    if (k === 'h') {
+      if (state.holdFire) {
+        releasePlayerStockpile();
+        state.holdFire = false;
+      } else {
+        state.holdFire = true;
+      }
     }
   });
 

@@ -420,6 +420,17 @@ export function render() {
       drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle);
     } else if (t.type === 'factory') {
       drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
+      // Stockpile badge: when Hold-Fire is on, factories accumulate drones
+      if (t.dronesReady > 0) {
+        ctx.fillStyle = 'rgba(255, 200, 90, 0.85)';
+        ctx.beginPath();
+        ctx.arc(t.x + 10, t.y - 12, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0a0604';
+        ctx.font = `bold ${9 / zoom}px ui-monospace, monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(t.dronesReady, t.x + 10, t.y - 12);
+      }
     } else if (t.type === 'artillery') {
       // Aim toward the densest visible enemy point (rough — just nearest target)
       let aimAngle = 0, aimD = Infinity;
@@ -567,6 +578,27 @@ export function render() {
   }
 
   ctx.restore();
+
+  // Hold-Fire screen-space banner (drawn after world transform restored)
+  if (state.holdFire) {
+    let total = 0;
+    for (const t of state.turrets) {
+      if (t.owner === 'player' && t.type === 'factory') total += t.dronesReady || 0;
+    }
+    const text = `⏸  HOLD-FIRE  ${total} drone${total === 1 ? '' : 's'} ready  —  press H to launch salvo`;
+    const a = 0.85 + Math.sin(now / 250) * 0.15;
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const w = ctx.measureText(text).width + 28;
+    const cx = state.W / 2, cy = 52;
+    ctx.fillStyle = `rgba(255, 200, 90, ${a * 0.22})`;
+    ctx.fillRect(cx - w / 2, cy, w, 30);
+    ctx.strokeStyle = `rgba(255, 200, 90, ${a})`;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx - w / 2, cy, w, 30);
+    ctx.fillStyle = `rgba(255, 220, 130, ${a})`;
+    ctx.fillText(text, cx, cy + 8);
+  }
 }
 
 function drawDragPreview(ctx, zoom) {

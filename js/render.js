@@ -512,7 +512,7 @@ export function render() {
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     let angle = 0;
-    if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) {
+    if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
       angle = Math.atan2(f.finalY - f.y, f.finalX - f.x);
     } else if (f.path && f.segIdx < f.path.length - 1) {
       const segB = state.nodes[f.path[f.segIdx + 1]];

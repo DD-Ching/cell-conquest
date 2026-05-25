@@ -71,8 +71,8 @@ export function simulateFleets(dt) {
     const f = state.fleets[i];
     if (f.kind === 'drone') continue;
 
-    // Deploy + assault: off-road final leg to a world point
-    if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) {
+    // Deploy + assault + return: off-road final leg to a world point
+    if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
       const dx = f.finalX - f.x, dy = f.finalY - f.y;
       const d = Math.hypot(dx, dy);
       if (d < 4) {
@@ -90,14 +90,46 @@ export function simulateFleets(dt) {
           } else {
             engineerArrivedAtTurret(f);
           }
-        } else {
-          // Assault — deliver damage equal to remaining units, then suicide.
+        } else if (f.kind === 'assault') {
+          // Assault arrival: each unit can absorb 8 HP of the turret. Survivors
+          // (the troops not needed to finish the kill) head home to the nearest
+          // friendly node instead of vanishing.
           const t = state.turrets.find(tt => tt.id === f.targetTurretId);
-          if (t && t.owner !== f.owner) t.hp -= Math.max(0, f.units) * 8;
+          let consumed = 0;
+          if (t && t.owner !== f.owner) {
+            const possible = Math.max(0, f.units) * 8;
+            const dealt = Math.min(possible, Math.max(0, t.hp));
+            t.hp -= dealt;
+            consumed = dealt / 8;
+          }
+          const survivors = Math.floor(Math.max(0, f.units - consumed));
+          if (survivors >= 1) {
+            // Pick the nearest own node to head back to
+            let home = null, homeD = Infinity;
+            for (const n of state.nodes) {
+              if (n.owner !== f.owner) continue;
+              const dd = Math.hypot(n.x - f.x, n.y - f.y);
+              if (dd < homeD) { homeD = dd; home = n; }
+            }
+            if (home) {
+              f.kind = 'return';
+              f.units = survivors;
+              f.finalX = home.x; f.finalY = home.y;
+              f.targetNodeId = home.id;
+              delete f.targetTurretId;
+              continue;       // off-road movement next tick will take them home
+            }
+          }
+        } else if (f.kind === 'return') {
+          // Survivors arriving home — fold them back into the node defenders.
+          const home = state.nodes[f.targetNodeId];
+          if (home) arriveAt({ owner: f.owner, units: Math.floor(f.units) }, home);
         }
         state.fleets.splice(i, 1);
         continue;
       }
+      // Movement: returning troops use normal fleet speed (faster than engineer); they're
+      // not carrying anything, just hurrying home.
       const speed = (f.kind === 'deploy') ? ENG_SPEED * OFFROAD_SPEED_MUL
                                           : FLEET_SPEED * OFFROAD_SPEED_MUL;
       const step = speed * dt;

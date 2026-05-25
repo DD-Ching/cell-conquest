@@ -38,6 +38,7 @@
   <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan &middot; click minimap to jump</div>
   <div><kbd>1</kbd>–<kbd>5</kbd> speed (1× / 2× / 5× / 10× / 20×) &middot; <kbd>[</kbd> <kbd>]</kbd> step speed</div>
   <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
+  <div>On selected own node: <kbd>Q</kbd> Anti-Air &middot; <kbd>F</kbd> Drone Factory &middot; <kbd>N</kbd> Drone Net &nbsp;(cost 12u, engineer dispatched from nearest own node)</div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
 
@@ -103,6 +104,37 @@ let zoom = 1.0;
 let timeScale = 1.0;
 const SPEEDS = [1, 2, 5, 10, 20];
 let panKeys = { up: false, down: false, left: false, right: false };
+
+// ===== Battle Engineering constants (MVP) =====
+const ENG_HP             = 60;
+const ENG_SPEED          = 70;          // engineer slower than troop FLEET_SPEED=95
+const ENG_BUILD_RATE     = 1.0;         // progress (0..1) gain rate per engineer (×dt/buildTime in seconds)
+const ENG_CLEAR_RATE     = 0.15;        // blockage / sec / engineer
+const ENG_COST           = 12;          // units spent at source node to dispatch
+
+const AA_BUILD_TIME      = 10;
+const AA_HP              = 100;
+const AA_RADIUS          = 200;
+const AA_DPS             = 15;
+
+const DF_BUILD_TIME      = 15;
+const DF_HP              = 150;
+const DF_PRODUCTION_T    = 12;
+
+const NET_BUILD_TIME     = 8;
+const NET_HP             = 80;
+const NET_DAMAGE_MULT    = 0.2;
+
+const DRONE_HP_AIR       = 30;
+const DRONE_SPEED        = 130;
+const DRONE_DAMAGE       = 50;
+
+const BLOCKAGE_DECAY     = 0.01;
+const BLOCKAGE_HEAVY     = 0.8;
+const BLOCKAGE_PER_WRECK = 0.35;
+
+let edgeData = new Map();               // ekey(a,b) -> { blockage }
+
 let gameOver = false;
 let startTime = 0;
 let elapsed = 0;
@@ -257,6 +289,7 @@ function newGame() {
     cameraY = playerStart.y - H / (2 * zoom);
     clampCamera();
   }
+  resetEngineering();
   lastTime = performance.now();
 }
 
@@ -389,9 +422,21 @@ function simulate(dt) {
     if (n.flash > 0) n.flash -= dt * 2.5;
   }
 
+  // Battle engineering systems
+  updateBuildings(dt);
+  updateAntiAir(dt);
+  updateDrones(dt);
+
   for (let i = fleets.length - 1; i >= 0; i--) {
     const f = fleets[i];
-    f.segTraveled += FLEET_SPEED * dt;
+    if (f.kind === 'drone') continue;  // drones handled by updateDrones
+    // Speed depends on fleet kind and current road blockage
+    const baseSpeed = (f.kind === 'engineer') ? ENG_SPEED : FLEET_SPEED;
+    let segMul = 1.0;
+    if (f.segIdx < f.path.length - 1) {
+      segMul = edgeSpeedMul(f.path[f.segIdx], f.path[f.segIdx + 1]);
+    }
+    f.segTraveled += baseSpeed * segMul * dt;
 
     while (f.segIdx < f.path.length - 1) {
       const segLen = dist(nodes[f.path[f.segIdx]], nodes[f.path[f.segIdx + 1]]);
@@ -402,7 +447,10 @@ function simulate(dt) {
 
     if (f.segIdx >= f.path.length - 1) {
       const target = nodes[f.path[f.path.length - 1]];
-      if (target) arriveAt({ owner: f.owner, units: Math.floor(f.units) }, target);
+      if (target) {
+        if (f.kind === 'engineer') engineerArrived(f, target);
+        else arriveAt({ owner: f.owner, units: Math.floor(f.units) }, target);
+      }
       fleets.splice(i, 1);
       continue;
     }
@@ -618,6 +666,212 @@ async function nnDecide(meOwner) {
   }
 }
 
+// =====================================================
+// Battle Engineering — buildings, engineers, drones, blockage
+// =====================================================
+function ekey(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
+function getEdge(a, b) { return edgeData.get(ekey(a, b)); }
+
+function resetEngineering() {
+  edgeData.clear();
+  for (const r of roads) edgeData.set(ekey(r.a, r.b), { blockage: 0 });
+  for (const n of nodes) {
+    n.buildings = [];         // {type, progress(0..1), hp, hpMax, active, prodCooldown, total}
+    n.engineers = 0;
+    n.flashBuild = 0;
+  }
+}
+
+function nearestOwnSource(targetNode, owner, minUnits) {
+  let best = null, bestDist = Infinity;
+  for (const n of nodes) {
+    if (n.owner !== owner || n.id === targetNode.id) continue;
+    if (n.units < minUnits) continue;
+    const d = dist(n, targetNode);
+    if (d < bestDist) { bestDist = d; best = n; }
+  }
+  return best;
+}
+
+const BUILD_SPECS = {
+  antiair: { time: AA_BUILD_TIME, hp: AA_HP },
+  factory: { time: DF_BUILD_TIME, hp: DF_HP },
+  net:     { time: NET_BUILD_TIME, hp: NET_HP },
+};
+
+function orderBuild(targetNode, type, byOwner) {
+  if (!BUILD_SPECS[type]) return false;
+  if (targetNode.owner !== byOwner) return false;
+  if (targetNode.buildings.some(b => b.type === type)) return false;
+  const src = nearestOwnSource(targetNode, byOwner, ENG_COST + 5);
+  if (!src) return false;
+  const spec = BUILD_SPECS[type];
+  targetNode.buildings.push({
+    type, progress: 0, hp: spec.hp, hpMax: spec.hp,
+    active: false, prodCooldown: 0, total: spec.time,
+  });
+  return dispatchEngineer(src, targetNode, byOwner);
+}
+
+function dispatchEngineer(source, target, owner) {
+  const path = findPath(source.id, target.id, owner);
+  if (!path || path.length < 2) return false;
+  source.units -= ENG_COST;
+  fleets.push({
+    kind: 'engineer', owner, units: 1, path,
+    segIdx: 0, segTraveled: 0, x: source.x, y: source.y,
+    hp: ENG_HP,
+  });
+  return true;
+}
+
+function engineerArrived(f, target) {
+  if (target.owner !== f.owner) return;   // wrong owner — engineer wasted
+  target.engineers = (target.engineers || 0) + 1;
+}
+
+function spawnDrone(factoryNode, targetNode) {
+  fleets.push({
+    kind: 'drone', owner: factoryNode.owner, units: 1,
+    x: factoryNode.x, y: factoryNode.y,
+    tx: targetNode.x, ty: targetNode.y,
+    targetNodeId: targetNode.id,
+    hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
+  });
+}
+
+function droneHit(drone, target) {
+  // Net protection (active net on target node)
+  let mult = 1.0;
+  const netB = target.buildings.find(b => b.type === 'net' && b.active);
+  if (netB) {
+    mult = NET_DAMAGE_MULT;
+    netB.hp -= drone.damage * 0.4;
+    if (netB.hp <= 0) {
+      target.buildings.splice(target.buildings.indexOf(netB), 1);
+    }
+  }
+  const dmg = drone.damage * mult;
+  // Priority: damage a building if any (prefer in-progress site = high value target)
+  const inProg = target.buildings.find(b => !b.active);
+  const anyBld = inProg || target.buildings.find(b => b.type !== 'net');
+  if (anyBld) {
+    anyBld.hp -= dmg;
+    if (anyBld.hp <= 0) {
+      target.buildings.splice(target.buildings.indexOf(anyBld), 1);
+      // If we destroyed an in-progress site, engineers there are lost
+      if (!anyBld.active) target.engineers = Math.max(0, (target.engineers || 0) - 1);
+    }
+  } else {
+    target.units = Math.max(0, target.units - dmg * 0.3);
+    if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
+  }
+  target.flash = Math.max(target.flash, 0.6);
+
+  // Wreckage: add blockage to a random adjacent edge
+  const nbrs = [...(adj.get(target.id) || [])];
+  if (nbrs.length) {
+    const j = nbrs[Math.floor(Math.random() * nbrs.length)];
+    const e = getEdge(target.id, j);
+    if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
+  }
+}
+
+function updateDrones(dt) {
+  for (let i = fleets.length - 1; i >= 0; i--) {
+    const f = fleets[i];
+    if (f.kind !== 'drone') continue;
+    if (f.hp <= 0) {
+      for (let k = 0; k < 6; k++) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({x: f.x, y: f.y, vx: Math.cos(a)*50, vy: Math.sin(a)*50, life: 0.3, maxLife: 0.3, color: '#aaa'});
+      }
+      fleets.splice(i, 1); continue;
+    }
+    const dx = f.tx - f.x, dy = f.ty - f.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 14) {
+      const target = nodes[f.targetNodeId];
+      if (target) droneHit(f, target);
+      for (let k = 0; k < 12; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 60;
+        particles.push({x: f.x, y: f.y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.45, maxLife: 0.45, color: '#ff8a3a'});
+      }
+      fleets.splice(i, 1); continue;
+    }
+    const step = DRONE_SPEED * dt;
+    f.x += (dx / d) * step;
+    f.y += (dy / d) * step;
+  }
+}
+
+function updateAntiAir(dt) {
+  for (const n of nodes) {
+    for (const b of n.buildings) {
+      if (b.type !== 'antiair' || !b.active) continue;
+      for (const f of fleets) {
+        if (f.kind !== 'drone' || f.owner === n.owner) continue;
+        const d = Math.hypot(f.x - n.x, f.y - n.y);
+        if (d <= AA_RADIUS) f.hp -= AA_DPS * dt;
+      }
+    }
+  }
+}
+
+function updateBuildings(dt) {
+  for (const n of nodes) {
+    // Engineers progress the first incomplete site at this node
+    if (n.engineers > 0) {
+      const site = n.buildings.find(b => !b.active);
+      if (site) {
+        site.progress += n.engineers * dt / site.total;
+        if (site.progress >= 1.0) {
+          site.progress = 1.0; site.active = true; n.flashBuild = 1;
+        }
+      } else {
+        // No site — engineers clear blockage on adjacent edges
+        for (const j of adj.get(n.id) || []) {
+          const e = getEdge(n.id, j);
+          if (e && e.blockage > 0) {
+            e.blockage = Math.max(0, e.blockage - ENG_CLEAR_RATE * dt * n.engineers);
+          }
+        }
+      }
+    }
+    // Drone factory production
+    for (const b of n.buildings) {
+      if (b.type !== 'factory' || !b.active) continue;
+      b.prodCooldown -= dt;
+      if (b.prodCooldown > 0) continue;
+      b.prodCooldown = DF_PRODUCTION_T;
+      const targets = nodes.filter(en => en.owner !== n.owner && en.owner !== 'neutral');
+      if (targets.length === 0) continue;
+      let best = null, bestScore = -Infinity;
+      for (const en of targets) {
+        const d = dist(n, en);
+        let score = 800 / (d + 200);
+        if (en.buildings.some(b => !b.active)) score *= 3;            // prefer in-progress sites
+        if (en.buildings.some(b => b.type === 'antiair' && b.active)) score *= 0.3;
+        if (score > bestScore) { bestScore = score; best = en; }
+      }
+      if (best) spawnDrone(n, best);
+    }
+    if (n.flashBuild > 0) n.flashBuild -= dt * 1.5;
+  }
+  // Blockage natural decay
+  for (const [, e] of edgeData) {
+    e.blockage = Math.max(0, e.blockage - BLOCKAGE_DECAY * dt);
+  }
+}
+
+// Edge speed multiplier for fleets traversing this segment
+function edgeSpeedMul(a, b) {
+  const e = getEdge(a, b);
+  if (!e) return 1.0;
+  return Math.max(0.2, 1.0 - e.blockage);
+}
+
 function aiTick(owner, dt) {
   aiTimers[owner] -= dt;
   if (aiTimers[owner] > 0) return;
@@ -641,6 +895,26 @@ function aiTick(owner, dt) {
 
   const myNodes = nodes.filter(n => n.owner === owner);
   if (myNodes.length === 0) return;
+
+  // ===== Engineering build orders (occasional) =====
+  // AI builds anti-air → factory → net on its best (most-connected) nodes
+  if (Math.random() < 0.12) {
+    const own = nodes.filter(n => n.owner === owner);
+    if (own.length >= 3) {
+      const sortedNodes = [...own].sort((a, b) => adj.get(b.id).size - adj.get(a.id).size);
+      for (const n of sortedNodes) {
+        if (n.units < 30) continue;
+        const has = (t) => n.buildings.some(b => b.type === t);
+        if (!has('antiair')) {
+          if (orderBuild(n, 'antiair', owner)) return;
+        } else if (!has('factory')) {
+          if (orderBuild(n, 'factory', owner)) return;
+        } else if (!has('net')) {
+          if (orderBuild(n, 'net', owner)) return;
+        }
+      }
+    }
+  }
 
   // ===== Heuristic v3 — smarter play =====
   // Aggression baseline + game-state modifiers (leader pushes to finish; underdog gambles)
@@ -860,16 +1134,29 @@ function render() {
 
   for (const r of roads) {
     const a = nodes[r.a], b = nodes[r.b];
-    ctx.strokeStyle = 'rgba(140, 160, 195, 0.32)';
-    ctx.lineWidth = 1.2 / zoom;
+    const e = getEdge(r.a, r.b);
+    const blk = e ? e.blockage : 0;
+    if (blk > 0.05) {
+      // Blocked: gradient gray → orange/red
+      const t = Math.min(1, blk);
+      const cr = Math.floor(140 + 115 * t), cg = Math.floor(160 - 60 * t), cb = Math.floor(195 - 140 * t);
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.4 + 0.4 * t})`;
+      ctx.lineWidth = (1.2 + 1.8 * t) / zoom;
+      if (blk > BLOCKAGE_HEAVY) ctx.setLineDash([6 / zoom, 4 / zoom]);
+    } else {
+      ctx.strokeStyle = 'rgba(140, 160, 195, 0.32)';
+      ctx.lineWidth = 1.2 / zoom;
+    }
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   for (const f of fleets) {
-    if (f.segIdx >= f.path.length - 1) continue;
+    if (f.kind === 'drone') continue;
+    if (!f.path || f.segIdx >= f.path.length - 1) continue;
     const segB = nodes[f.path[f.segIdx + 1]];
     ctx.strokeStyle = COLOR[f.owner] + '40';
     ctx.lineWidth = 1 / zoom;
@@ -877,6 +1164,20 @@ function render() {
     ctx.moveTo(f.x, f.y);
     ctx.lineTo(segB.x, segB.y);
     ctx.stroke();
+  }
+
+  // Anti-air radius rings (active only)
+  for (const n of nodes) {
+    for (const b of n.buildings) {
+      if (b.type !== 'antiair' || !b.active) continue;
+      ctx.strokeStyle = COLOR[n.owner] + '30';
+      ctx.lineWidth = 1 / zoom;
+      ctx.setLineDash([6 / zoom, 6 / zoom]);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, AA_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 
   for (const n of nodes) {
@@ -932,29 +1233,124 @@ function render() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(Math.floor(n.units), n.x, n.y);
+
+    // Building icons + progress bars
+    if (n.buildings && n.buildings.length) {
+      const r = n.size + 8;
+      let slotI = 0;
+      const slotAngle = (i) => -Math.PI / 2 + (i - (n.buildings.length - 1) / 2) * 0.55;
+      for (const b of n.buildings) {
+        const ang = slotAngle(slotI);
+        const bx = n.x + Math.cos(ang) * r;
+        const by = n.y + Math.sin(ang) * r;
+        const iconR = 5.5;
+        // Background disc (faded if in-progress)
+        ctx.fillStyle = b.active ? COLOR[n.owner] : 'rgba(120,120,120,0.7)';
+        ctx.beginPath(); ctx.arc(bx, by, iconR, 0, Math.PI * 2); ctx.fill();
+        // Icon glyph
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${10 / zoom}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const glyph = b.type === 'antiair' ? 'A' : b.type === 'factory' ? 'F' : 'N';
+        ctx.fillText(glyph, bx, by);
+        // Progress arc for in-progress
+        if (!b.active) {
+          ctx.strokeStyle = '#ffd066';
+          ctx.lineWidth = 1.5 / zoom;
+          ctx.beginPath();
+          ctx.arc(bx, by, iconR + 1.5, -Math.PI / 2, -Math.PI / 2 + b.progress * Math.PI * 2);
+          ctx.stroke();
+        }
+        // HP bar for active (small)
+        if (b.active && b.hp < b.hpMax) {
+          const bw = 12, frac = b.hp / b.hpMax;
+          ctx.fillStyle = 'rgba(20,20,20,0.6)';
+          ctx.fillRect(bx - bw/2, by + iconR + 2, bw, 2);
+          ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
+          ctx.fillRect(bx - bw/2, by + iconR + 2, bw * frac, 2);
+        }
+        slotI++;
+      }
+    }
+    // Engineer count badge
+    if (n.engineers > 0) {
+      const ex = n.x - n.size - 4;
+      const ey = n.y + n.size + 4;
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${10 / zoom}px sans-serif`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText('🔧' + n.engineers, ex, ey);
+    }
+    if (n.flashBuild > 0) {
+      ctx.strokeStyle = `rgba(255,220,140,${n.flashBuild})`;
+      ctx.lineWidth = 2 / zoom;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size + 14 * (1 - n.flashBuild), 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   for (const f of fleets) {
-    if (f.segIdx >= f.path.length - 1) continue;
+    if (f.kind === 'drone') continue;  // drones rendered after
+    if (!f.path || f.segIdx >= f.path.length - 1) continue;
     const segB = nodes[f.path[f.segIdx + 1]];
     const angle = Math.atan2(segB.y - f.y, segB.x - f.x);
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.rotate(angle);
-    ctx.fillStyle = COLOR[f.owner];
-    const sz = Math.min(11, 4 + Math.log(f.units + 1) * 1.3);
-    ctx.beginPath();
-    ctx.moveTo(sz, 0);
-    ctx.lineTo(-sz * 0.6, -sz * 0.6);
-    ctx.lineTo(-sz * 0.3, 0);
-    ctx.lineTo(-sz * 0.6, sz * 0.6);
-    ctx.closePath();
-    ctx.fill();
+    if (f.kind === 'engineer') {
+      // Engineer: square chassis with construction symbol
+      ctx.fillStyle = '#ffd066';
+      ctx.fillRect(-5, -4, 10, 8);
+      ctx.fillStyle = COLOR[f.owner];
+      ctx.fillRect(-2, -6, 4, 3);
+    } else {
+      ctx.fillStyle = COLOR[f.owner];
+      const sz = Math.min(11, 4 + Math.log(f.units + 1) * 1.3);
+      ctx.beginPath();
+      ctx.moveTo(sz, 0);
+      ctx.lineTo(-sz * 0.6, -sz * 0.6);
+      ctx.lineTo(-sz * 0.3, 0);
+      ctx.lineTo(-sz * 0.6, sz * 0.6);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.restore();
     ctx.fillStyle = COLOR[f.owner];
     ctx.font = `bold ${13 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(Math.floor(f.units), f.x, f.y - 14 / zoom);
+    if (f.kind === 'engineer') {
+      ctx.fillText('⚙', f.x, f.y - 14 / zoom);
+    } else {
+      ctx.fillText(Math.floor(f.units), f.x, f.y - 14 / zoom);
+    }
+  }
+
+  // Drones — straight-line, X-shape
+  for (const f of fleets) {
+    if (f.kind !== 'drone') continue;
+    const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.rotate(angle);
+    ctx.strokeStyle = COLOR[f.owner];
+    ctx.lineWidth = 1.6 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(-4, -4); ctx.lineTo(4, 4);
+    ctx.moveTo(-4, 4); ctx.lineTo(4, -4);
+    ctx.stroke();
+    // Small body
+    ctx.fillStyle = COLOR[f.owner];
+    ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // HP bar (damaged drones only)
+    if (f.hp < DRONE_HP_AIR) {
+      const bw = 12, frac = Math.max(0, f.hp) / DRONE_HP_AIR;
+      ctx.fillStyle = 'rgba(20,20,20,0.5)';
+      ctx.fillRect(f.x - bw/2, f.y + 7, bw, 2);
+      ctx.fillStyle = '#ff6678';
+      ctx.fillRect(f.x - bw/2, f.y + 7, bw * frac, 2);
+    }
   }
 
   for (const p of particles) {
@@ -1255,6 +1651,18 @@ addEventListener('keydown', e => {
   if (e.key === '[') {
     const i = SPEEDS.indexOf(timeScale);
     timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
+  }
+  // Build orders on selected own node
+  if (k === 'q' || k === 'f' || k === 'n') {
+    const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory' : 'net';
+    for (const id of selectedIds) {
+      const n = nodes[id];
+      if (n && n.owner === 'player') {
+        const ok = orderBuild(n, type, 'player');
+        if (ok) n.flash = Math.max(n.flash, 0.4);
+        break;
+      }
+    }
   }
 });
 

@@ -642,20 +642,31 @@ function aiTick(owner, dt) {
   const myNodes = nodes.filter(n => n.owner === owner);
   if (myNodes.length === 0) return;
 
-  // Mission: total conquest. Aggression rises with elapsed time so AIs don't
-  // sit on entrenched defenses indefinitely. 1.0 → 3.0 over 6 minutes.
-  const aggression = 1.0 + Math.min(elapsed / 180, 2.0);
+  // ===== Heuristic v3 — smarter play =====
+  // Aggression baseline + game-state modifiers (leader pushes to finish; underdog gambles)
+  const totalOwned = nodes.filter(n => n.owner !== 'neutral').length || 1;
+  const myShare = myNodes.length / totalOwned;
+  const counts = {};
+  for (const n of nodes) {
+    if (n.owner === 'neutral') continue;
+    counts[n.owner] = (counts[n.owner] || 0) + 1;
+  }
+  const leaderEntry = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const iAmLeader = leaderEntry && leaderEntry[0] === owner;
+  let aggression = 1.0 + Math.min(elapsed / 180, 2.0);
+  if (iAmLeader && myShare > 0.40) aggression *= 1.4;   // winning → push to total domination
+  else if (myShare < 0.20) aggression *= 1.3;           // losing → must gamble
 
   function incomingTo(nodeId) {
-    let friendly = 0, hostile = 0;
+    let friendly = 0, hostile = 0, hostileSrc = null;
     const targetOwner = nodes[nodeId].owner;
     for (const f of fleets) {
       const finalId = f.path[f.path.length - 1];
       if (finalId !== nodeId) continue;
       if (f.owner === targetOwner) friendly += f.units;
-      else hostile += f.units;
+      else { hostile += f.units; if (!hostileSrc) hostileSrc = f.path[0]; }
     }
-    return { friendly, hostile };
+    return { friendly, hostile, hostileSrc };
   }
 
   function attackerAvail(node) {
@@ -669,12 +680,14 @@ function aiTick(owner, dt) {
     return Math.max(0, node.units * (1 - reserveRatio) - reserveAbs);
   }
 
-  // Phase 1: emergency defense — neighbor sends help when attacked
+  // ===== Phase 1: PROACTIVE defense =====
+  // Trigger earlier (cap-relative threshold, not just absolute < 5)
   for (const my of myNodes) {
     const inc = incomingTo(my.id);
     if (inc.hostile <= 5) continue;
     const projected = my.units + inc.friendly + my.regenRate * 5 - inc.hostile;
-    if (projected < 5) {
+    const dangerThresh = Math.max(5, my.capacity * 0.20);
+    if (projected < dangerThresh) {
       let donor = null, donorScore = 0;
       for (const nbId of adj.get(my.id)) {
         const nb = nodes[nbId];
@@ -686,15 +699,12 @@ function aiTick(owner, dt) {
       if (donor) {
         const need = Math.ceil(inc.hostile - projected + 8);
         const send = Math.min(Math.floor(donorScore), need);
-        if (send >= 5) {
-          sendFleet(donor, my, send);
-          return;
-        }
+        if (send >= 5) { sendFleet(donor, my, send); return; }
       }
     }
   }
 
-  // Phase 2: coordinated attack — combine multiple sources on best target
+  // ===== Phase 2: ATTACK with hub-priority + opportunism =====
   const targetMap = new Map();
   for (const my of myNodes) {
     if (attackerAvail(my) < 5) continue;
@@ -721,15 +731,20 @@ function aiTick(owner, dt) {
     trueDefenders = Math.max(0, trueDefenders);
 
     const required = trueDefenders + 5 + target.size * 0.3;
-    const minThreshold = required / aggression;          // late game: gamble with thinner margins
+    const minThreshold = required / aggression;
     const availForce = attackers.reduce((s, a) => s + attackerAvail(a), 0);
     if (availForce < minThreshold) continue;
 
     const adjCount = adj.get(tId).size;
-    const value = adjCount * 1.6 + target.regenRate * 6 + target.size * 0.6;
+    const sat = target.units / Math.max(1, target.capacity);
+    // New scoring: hubs much more valuable, regen long-term, opportunism for empty targets
+    const value = adjCount * 2.8 + target.regenRate * 9 + target.size * 0.5;
     let score = value / (required + 8);
     if (target.owner === 'neutral') score *= 1.5;
-    score *= aggression;                                  // urgency boost over time
+    score *= aggression;
+    score *= (1.0 + 0.6 * (1.0 - sat));                   // opportunistic: emptier = better
+    const avgDist = attackers.reduce((s, a) => s + dist(a, target), 0) / attackers.length;
+    score *= 1.0 / (1.0 + avgDist / 600);                 // mild distance penalty
 
     if (score > bestScore) {
       bestScore = score;
@@ -745,36 +760,33 @@ function aiTick(owner, dt) {
       const max = Math.floor(attackerAvail(a));
       if (max < 3) continue;
       const send = Math.min(max, Math.ceil(toSend));
-      if (send >= 3) {
-        sendFleet(a, bestAtt.target, send);
-        toSend -= send;
-      }
+      if (send >= 3) { sendFleet(a, bestAtt.target, send); toSend -= send; }
     }
     return;
   }
 
-  // Phase 3: reinforce frontline from saturated rear
+  // ===== Phase 3: CAP-AWARE reinforce to frontline / hub =====
   for (const my of myNodes) {
     if (my.units < my.capacity * 0.85) continue;
     let bestRecip = null, bestRecipScore = 0;
     for (const nbId of adj.get(my.id)) {
       const nb = nodes[nbId];
       if (nb.owner !== owner) continue;
-      if (nb.units >= nb.capacity * 0.7) continue;
+      if (nb.units >= nb.capacity * 0.85) continue;       // don't dump into near-full
       let frontness = 0;
       for (const nbnbId of adj.get(nb.id)) {
         const nnb = nodes[nbnbId];
-        if (nnb.owner !== owner && nnb.owner !== 'neutral') frontness += 2;
+        if (nnb.owner !== owner && nnb.owner !== 'neutral') frontness += 3;  // was 2
         else if (nnb.owner === 'neutral') frontness += 1;
       }
-      if (frontness > bestRecipScore) {
-        bestRecipScore = frontness;
-        bestRecip = nb;
-      }
+      frontness += adj.get(nb.id).size * 0.5;             // bonus for hub recipients
+      if (frontness > bestRecipScore) { bestRecipScore = frontness; bestRecip = nb; }
     }
     if (bestRecip && bestRecipScore > 0) {
-      sendFleet(my, bestRecip, Math.floor(my.units * 0.5));
-      return;
+      // Don't overflow recipient: cap send by remaining room (up to cap × 1.4)
+      const room = Math.max(0, bestRecip.capacity * 1.4 - bestRecip.units);
+      const send = Math.min(Math.floor(my.units * 0.5), Math.floor(room));
+      if (send >= 5) { sendFleet(my, bestRecip, send); return; }
     }
   }
 }

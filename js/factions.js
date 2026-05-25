@@ -1,6 +1,6 @@
 // =====================================================
 // Faction roster + color tables.
-// AIS is the list of AI-controlled faction ids (player excluded).
+// Mars Front: player (cyan) vs Crimson (Martian red). 1v1.
 // =====================================================
 
 function hexToRgba(hex, a) {
@@ -13,13 +13,11 @@ function hexToRgba(hex, a) {
 export const FACTIONS = [
   { id: 'player',  name: 'You',     color: '#5cb3ff' },
   { id: 'red',     name: 'Crimson', color: '#ff6678' },
-  { id: 'green',   name: 'Verdant', color: '#79e58c' },
-  { id: 'amber',   name: 'Amber',   color: '#ffa844' },
-  { id: 'neutral', name: 'Neutral', color: '#8694ad' },
+  { id: 'neutral', name: 'Neutral', color: '#a08574' },   // sandy/dusty Mars rock
 ];
 
 export const COLOR = Object.fromEntries(FACTIONS.map(f => [f.id, f.color]));
 export const GLOW = Object.fromEntries(
   FACTIONS.map(f => [f.id, hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.4)])
 );
-export const AIS = ['red', 'green', 'amber'];
+export const AIS = ['red'];     // single opponent

@@ -49,27 +49,31 @@ export function updateHUD() {
 // =====================================================
 // Atmosphere
 // =====================================================
+// Mars dust — drifts mostly sideways with slow vertical haze.
 export function makeSnow() {
-  state.snowflakes = [];
-  const count = Math.floor((state.W * state.H) / 12000);
+  state.dust = [];
+  const count = Math.floor((state.W * state.H) / 14000);
   for (let i = 0; i < count; i++) {
-    state.snowflakes.push({
+    state.dust.push({
       x: Math.random() * state.W, y: Math.random() * state.H,
-      vx: -8 + Math.random() * 16, vy: 12 + Math.random() * 22,
-      r: 0.6 + Math.random() * 1.6,
-      a: 0.25 + Math.random() * 0.55,
+      vx: 18 + Math.random() * 30,            // wind blowing right
+      vy: -4 + Math.random() * 10,            // slight vertical drift
+      r: 0.5 + Math.random() * 1.4,
+      a: 0.18 + Math.random() * 0.4,
       drift: Math.random() * Math.PI * 2,
+      hue: 18 + Math.random() * 22,           // 18..40 = sandy orange range
     });
   }
 }
 
 export function updateSnow(dt) {
-  for (const s of state.snowflakes) {
-    s.x += (s.vx + Math.sin(performance.now() / 1500 + s.drift) * 6) * dt;
+  for (const s of state.dust) {
+    s.x += (s.vx + Math.sin(performance.now() / 1500 + s.drift) * 4) * dt;
     s.y += s.vy * dt;
-    if (s.y > state.H + 5) { s.y = -5; s.x = Math.random() * state.W; }
+    if (s.x > state.W + 5) { s.x = -5; s.y = Math.random() * state.H; }
     if (s.x < -5) s.x = state.W + 5;
-    if (s.x > state.W + 5) s.x = -5;
+    if (s.y > state.H + 5) s.y = -5;
+    if (s.y < -5) s.y = state.H + 5;
   }
 }
 
@@ -89,17 +93,18 @@ export function updateParticles(dt) {
 export function render() {
   const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
 
-  // Sky gradient
-  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
-  bg.addColorStop(0, '#0c1830');
-  bg.addColorStop(1, '#040814');
+  // Martian sky — dusty rust gradient (warm rather than cold).
+  const bg = ctx.createRadialGradient(W / 2, H * 0.6, 0, W / 2, H * 0.6, Math.max(W, H) * 0.8);
+  bg.addColorStop(0, '#3a1a08');
+  bg.addColorStop(0.6, '#1f0d05');
+  bg.addColorStop(1, '#0d0703');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Snow (screen-space)
-  for (const s of state.snowflakes) {
+  // Mars dust (screen-space, blowing sideways)
+  for (const s of state.dust) {
     ctx.globalAlpha = s.a;
-    ctx.fillStyle = '#dceaff';
+    ctx.fillStyle = `hsl(${s.hue}, 65%, 60%)`;
     ctx.beginPath();
     ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     ctx.fill();
@@ -112,24 +117,24 @@ export function render() {
   ctx.translate(-state.cameraX, -state.cameraY);
 
   // World boundary
-  ctx.strokeStyle = 'rgba(80, 100, 140, 0.3)';
+  ctx.strokeStyle = 'rgba(180, 130, 80, 0.25)';
   ctx.lineWidth = 1 / zoom;
   ctx.strokeRect(0, 0, WORLD_W, WORLD_H);
 
-  // Roads (color by blockage)
+  // Roads (color by blockage) — sand → bright orange-red as blockage rises
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const e = getEdge(r.a, r.b);
     const blk = e ? e.blockage : 0;
     if (blk > 0.05) {
       const t = Math.min(1, blk);
-      const cr = Math.floor(140 + 115 * t), cg = Math.floor(160 - 60 * t), cb = Math.floor(195 - 140 * t);
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.4 + 0.4 * t})`;
-      ctx.lineWidth = (1.2 + 1.8 * t) / zoom;
+      const cr = Math.floor(180 + 60 * t), cg = Math.floor(140 - 80 * t), cb = Math.floor(100 - 70 * t);
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.5 + 0.4 * t})`;
+      ctx.lineWidth = (1.3 + 1.8 * t) / zoom;
       if (blk > BLOCKAGE_HEAVY) ctx.setLineDash([6 / zoom, 4 / zoom]);
     } else {
-      ctx.strokeStyle = 'rgba(140, 160, 195, 0.32)';
-      ctx.lineWidth = 1.2 / zoom;
+      ctx.strokeStyle = 'rgba(200, 160, 110, 0.32)';
+      ctx.lineWidth = 1.3 / zoom;
     }
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -137,6 +142,20 @@ export function render() {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+
+  // AA tracer beams — render before nodes so beams pass behind icons.
+  // Stacking AAs all draw beams → visible saturation interception.
+  for (const t of state.tracers) {
+    const a = 1 - t.age / t.maxAge;
+    ctx.strokeStyle = t.color;
+    ctx.globalAlpha = a * 0.85;
+    ctx.lineWidth = (1.0 + 1.5 * a) / zoom;
+    ctx.beginPath();
+    ctx.moveTo(t.x1, t.y1);
+    ctx.lineTo(t.x2, t.y2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 
   // Fleet trails (skip drones)
   for (const f of state.fleets) {

@@ -15,7 +15,7 @@ import {
 import { sendFleet, simulateFleets } from './fleets.js';
 import {
   resetEngineering, orderBuild,
-  updateDrones, updateAntiAir, updateBuildings,
+  updateDrones, updateAntiAir, updateBuildings, updateTracers,
 } from './engineering.js';
 import { aiTick } from './ai.js';
 import { nnLoad, nnResetGame } from './nn.js';
@@ -175,6 +175,7 @@ function loop() {
       simulate(subDt);
       for (const ai of AIS) aiTick(ai, subDt);
       updateParticles(subDt);
+      updateTracers(subDt);
     }
     state.elapsed += gameDt;
     checkVictory();

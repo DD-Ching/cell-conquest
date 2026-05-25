@@ -39,6 +39,40 @@
 - v2 model: variable 2-6 player, 23-feature player-agnostic obs, plateaued ~38-41% (12h on Kaggle T4)
 - Honest assessment: hand-tuned heuristic (current v3 in `node-conquest.html`) is competitive with NN models for this game given Kaggle-scale compute. Pure RL self-play degenerates into equilibrium without strong asymmetric signal.
 
+## Game design direction (current)
+
+**Setting:** Mars warfare ("Mars Front"). Warm rust palette, sandy dust haze,
+1v1 by default (player vs Crimson). Small-arena tactical: 10–16 nodes.
+
+**Gameplay target:** tower-defense / RTS hybrid where every "building" is a
+physical unit that has to travel from a base to its deployment slot before it
+works. Bases differ — some only spit infantry, some only drones, etc.
+
+**Done so far:**
+- Mars visual restyle, dust particles, AA tracer beams (saturation animation)
+- AIS = ['red'] (single opponent)
+- Smaller arena (1600×1200), 10–16 nodes
+- Roads, road blockage, engineers, construction sites
+- Anti-air, drone factory, drone net (still node-anchored)
+- Drones (straight-line suicide)
+
+**Not yet (next iterations):**
+1. **Deployable physical structures** — turrets / AA carry to a chosen world
+   slot before activating. Engineer fleet → deployment site → activates there
+   (not on the parent node). Lets player draw a defensive line between nodes.
+2. **Asymmetric bases** — big bases can build anything; small bases restricted
+   to one or two unit types (e.g. infantry-only outposts, drone-factory bases).
+3. **Saturation math, formally** — currently AA damage simply stacks. Want
+   probabilistic interception: each AA has per-second kill chance, multiple
+   drones in zone divide attention. Tracer beams already give the visual hook.
+4. **Free art** — Kenney.nl packs to consider:
+     - Top-Down Tanks (kenney.nl/assets/top-down-tanks)
+     - Tower Defense — Top-Down (kenney.nl/assets/tower-defense-top-down)
+     - Space Kit (kenney.nl/assets/space-kit)
+   Drop sprites into `assets/` and have `render.js` swap canvas primitives for
+   `Image()` blits where appropriate. Keep code paths so missing assets fall
+   back to current primitive shapes.
+
 ## Kaggle deployment notes
 
 - Datasets auto-found via `glob.glob('/kaggle/input/**/cell_env.py', recursive=True)` — slug name doesn't matter

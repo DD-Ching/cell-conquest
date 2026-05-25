@@ -3,13 +3,13 @@
 // road graph (k-NN + connectivity), pathfinding.
 // =====================================================
 import { state } from './state.js';
-import { WORLD_W, WORLD_H } from './config.js';
+import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
 import { dist } from './util.js';
 
-const NODE_MARGIN = 130;
-const BASE_GAP    = 95;
-const N_TARGET    = (W, H) => Math.min(55, Math.max(32, Math.floor((W * H) / 130000)));
-const ROAD_MAX    = 340;
+const NODE_MARGIN = 100;
+const BASE_GAP    = 80;
+const N_TARGET    = (W, H) => Math.min(N_NODES_MAX, Math.max(N_NODES_MIN, Math.floor((W * H) / 130000)));
+const ROAD_MAX    = 320;
 const ROAD_K      = 3;
 
 function pickSize(rng) {

@@ -24,7 +24,8 @@ export const state = {
   nodes: [],
   fleets: [],
   particles: [],
-  snowflakes: [],
+  dust: [],                  // atmospheric Mars dust (was 'snowflakes')
+  tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
   roads: [],
   adj: new Map(),
   edgeData: new Map(),       // ekey(a,b) -> { blockage }

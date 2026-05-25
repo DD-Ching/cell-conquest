@@ -4,8 +4,11 @@
 // =====================================================
 
 // ---- World ----
-export const WORLD_W = 2800;
-export const WORLD_H = 2000;
+// Smaller arena → fewer nodes, faster decisive fights.
+export const WORLD_W = 1600;
+export const WORLD_H = 1200;
+export const N_NODES_MIN = 10;
+export const N_NODES_MAX = 16;
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec

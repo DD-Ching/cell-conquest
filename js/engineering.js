@@ -9,6 +9,7 @@
 import { state } from './state.js';
 import { dist } from './util.js';
 import { findPath } from './world.js';
+import { COLOR } from './factions.js';
 import {
   ENG_HP, ENG_BUILD_RATE, ENG_CLEAR_RATE, ENG_COST,
   AA_BUILD_TIME, AA_HP, AA_RADIUS, AA_DPS,
@@ -173,17 +174,36 @@ export function updateDrones(dt) {
   }
 }
 
-/** Anti-air buildings fire at enemy drones in range. Damage stacks across overlapping AA. */
+/** Anti-air buildings fire at enemy drones in range. Damage stacks across overlapping
+ *  AA — visualized as tracer beams. Multiple overlapping AAs → multiple beams per
+ *  drone per second, making the saturation interception math visible to the player. */
 export function updateAntiAir(dt) {
+  const tracerRate = 5;        // beams/sec per AA when a drone is in its range
   for (const n of state.nodes) {
     for (const b of n.buildings) {
       if (b.type !== 'antiair' || !b.active) continue;
       for (const f of state.fleets) {
         if (f.kind !== 'drone' || f.owner === n.owner) continue;
         const d = Math.hypot(f.x - n.x, f.y - n.y);
-        if (d <= AA_RADIUS) f.hp -= AA_DPS * dt;
+        if (d > AA_RADIUS) continue;
+        f.hp -= AA_DPS * dt;
+        // Probabilistic tracer (independent per AA; overlapping → more beams)
+        if (Math.random() < tracerRate * dt) {
+          state.tracers.push({
+            x1: n.x, y1: n.y, x2: f.x, y2: f.y,
+            age: 0, maxAge: 0.18, color: COLOR[n.owner],
+          });
+        }
       }
     }
+  }
+}
+
+/** Tracer fade. Called from main loop. */
+export function updateTracers(dt) {
+  for (let i = state.tracers.length - 1; i >= 0; i--) {
+    state.tracers[i].age += dt;
+    if (state.tracers[i].age >= state.tracers[i].maxAge) state.tracers.splice(i, 1);
   }
 }
 

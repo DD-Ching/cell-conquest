@@ -1,0 +1,343 @@
+// =====================================================
+// Drone behavior + factory production / stockpile.
+//
+// Drones are top-down delta-wing suicide UAVs. They:
+//   - spawn from drone factories (or are released in salvos via Hold-Fire)
+//   - hunt enemy turrets / nodes / ground fleets in transit
+//   - detonate on impact, applying damage to the target type
+//   - get intercepted by edge-mounted drone nets while attacking road
+//     fleets (nets are faction-agnostic infrastructure)
+//
+// Carved out of engineering.js so that file stays focused on edges,
+// turret-build lifecycle, and engineer behavior.
+// =====================================================
+import { state } from './state.js';
+import {
+  DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE,
+  DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
+  DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
+} from './config.js';
+import { dist } from './util.js';
+import { addWreckBlockage, spawnBigExplosion, getEdge } from './engineering.js';
+
+// ---- Spawn ----
+export function spawnDrone(originX, originY, owner, target) {
+  state.fleets.push({
+    _id: state._nextFleetId++,
+    kind: 'drone', owner, units: 1,
+    x: originX, y: originY,
+    tx: target.x, ty: target.y,
+    targetKind: target.kind,            // 'turret' | 'node' | 'fleet'
+    targetId:   target.id,
+    hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
+  });
+}
+
+// ---- Target resolution ----
+/** Does the drone's stored target still WARRANT a strike?
+ *  A "gone" target is one that's: removed (turret destroyed, fleet wiped),
+ *  no longer hostile (node captured by an ally of the drone),
+ *  or already worthless (node bombed down to ~0 units — another drone got it). */
+function droneTargetExists(drone) {
+  if (drone.targetKind === 'turret') return state.turrets.some(t => t.id === drone.targetId);
+  if (drone.targetKind === 'node') {
+    if (drone.targetId >= state.nodes.length) return false;
+    const n = state.nodes[drone.targetId];
+    if (n.owner === drone.owner) return false;     // we already own it
+    if (n.units < 1) return false;                  // someone else cleaned it out
+    return true;
+  }
+  if (drone.targetKind === 'fleet')  return state.fleets.some(f => f._id === drone.targetId);
+  return false;
+}
+
+/** Find the closest enemy entity for `drone` to switch to. Returns true if found. */
+function retargetDrone(drone) {
+  let best = null, bestD = Infinity;
+  for (const t of state.turrets) {
+    if (t.owner === drone.owner) continue;
+    const d = Math.hypot(t.x - drone.x, t.y - drone.y);
+    if (d < bestD) { bestD = d; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
+  }
+  if (!best) {
+    for (const n of state.nodes) {
+      if (n.owner === drone.owner || n.owner === 'neutral') continue;
+      const d = Math.hypot(n.x - drone.x, n.y - drone.y);
+      if (d < bestD) { bestD = d; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
+    }
+  }
+  if (!best) return false;
+  drone.targetKind = best.kind;
+  drone.targetId   = best.id;
+  drone.tx = best.x; drone.ty = best.y;
+  return true;
+}
+
+// ---- Impact ----
+/** Drone hitting a STATIC target (turret or node). No net protection here —
+ *  nets only protect troops on roads (handled in droneHitFleet). */
+function droneHit(drone) {
+  let target;
+  if (drone.targetKind === 'turret') target = state.turrets.find(t => t.id === drone.targetId);
+  else                                target = state.nodes[drone.targetId];
+  if (!target) return false;
+  const dmg = drone.damage;
+  if (drone.targetKind === 'turret') {
+    target.hp -= dmg;
+  } else {
+    target.units = Math.max(0, target.units - dmg * 0.3);
+    if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
+  }
+  return true;
+}
+
+/** Drone vs a moving ground fleet. The fleet's CURRENT edge may have an
+ *  active drone net — if so, the net intercepts the drone instead of the
+ *  fleet taking damage. Returns true if the fleet was hit (no net). */
+function droneHitFleet(drone, fleet) {
+  let edge = null;
+  if (fleet.path && fleet.segIdx < fleet.path.length - 1) {
+    edge = getEdge(fleet.path[fleet.segIdx], fleet.path[fleet.segIdx + 1]);
+  }
+  if (edge && edge.netLevel > 0 && edge.netCharges > 0) {
+    edge.netCharges -= 1;
+    if (edge.netCharges <= 0) { edge.netLevel = 0; edge.netCharges = 0; }
+    const aN = state.nodes[fleet.path[fleet.segIdx]];
+    const bN = state.nodes[fleet.path[fleet.segIdx + 1]];
+    state.tracers.push({
+      x1: (aN.x + bN.x) / 2, y1: (aN.y + bN.y) / 2, x2: drone.x, y2: drone.y,
+      age: 0, maxAge: 0.22, color: '#e8d6a8',
+    });
+    return false;        // fleet untouched
+  }
+  fleet.units -= DRONE_HUNT_DMG;
+  if (fleet.units < 0.5) {
+    addWreckBlockage(fleet);
+    spawnBigExplosion(fleet.x, fleet.y, '#ff8a3a', 10);
+    fleet._dead = true;
+  }
+  return true;
+}
+
+// ---- Per-tick ----
+export function updateDrones(dt) {
+  for (let i = state.fleets.length - 1; i >= 0; i--) {
+    const f = state.fleets[i];
+    if (f.kind !== 'drone') continue;
+    // Shot down by AA
+    if (f.hp <= 0) {
+      for (let k = 0; k < 6; k++) {
+        const a = Math.random() * Math.PI * 2;
+        state.particles.push({
+          x: f.x, y: f.y, vx: Math.cos(a) * 50, vy: Math.sin(a) * 50,
+          life: 0.3, maxLife: 0.3, color: '#aaa',
+        });
+      }
+      state.fleets.splice(i, 1); continue;
+    }
+
+    // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
+    let huntFleet = null, huntD = DRONE_DETECT_R;
+    for (const g of state.fleets) {
+      if (g.owner === f.owner) continue;
+      if (g.kind === 'drone') continue;
+      if (!g.path || g.segIdx >= g.path.length - 1) continue;
+      const d = Math.hypot(g.x - f.x, g.y - f.y);
+      if (d < huntD) { huntD = d; huntFleet = g; }
+    }
+
+    // Target maintenance
+    if (f.targetKind === 'fleet') {
+      const locked = state.fleets.find(g => g._id === f.targetId);
+      if (locked) {
+        f.tx = locked.x; f.ty = locked.y;
+        if (huntFleet && huntFleet._id !== f.targetId) {
+          const curD = Math.hypot(locked.x - f.x, locked.y - f.y);
+          if (huntD < curD * DRONE_HUNT_SWITCH_RATIO) {
+            f.targetId = huntFleet._id;
+            f.tx = huntFleet.x; f.ty = huntFleet.y;
+          }
+        }
+      } else {
+        if (huntFleet) {
+          f.targetId = huntFleet._id;
+          f.tx = huntFleet.x; f.ty = huntFleet.y;
+        } else {
+          f.targetKind = 'turret';
+          if (!retargetDrone(f)) {
+            for (let k = 0; k < 4; k++) {
+              const a = Math.random() * Math.PI * 2;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
+                life: 0.4, maxLife: 0.4, color: '#888',
+              });
+            }
+            state.fleets.splice(i, 1); continue;
+          }
+        }
+      }
+    } else {
+      if (!droneTargetExists(f)) {
+        if (!retargetDrone(f)) {
+          for (let k = 0; k < 4; k++) {
+            const a = Math.random() * Math.PI * 2;
+            state.particles.push({
+              x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
+              life: 0.4, maxLife: 0.4, color: '#888',
+            });
+          }
+          state.fleets.splice(i, 1); continue;
+        }
+      }
+      if (huntFleet) {
+        const primD = Math.hypot(f.tx - f.x, f.ty - f.y);
+        if (huntD < primD * DRONE_HUNT_SWITCH_RATIO || huntD < 50) {
+          f.targetKind = 'fleet';
+          f.targetId = huntFleet._id;
+          f.tx = huntFleet.x; f.ty = huntFleet.y;
+        }
+      }
+    }
+
+    // Approach / impact
+    const dx = f.tx - f.x, dy = f.ty - f.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 12) {
+      if (f.targetKind === 'fleet') {
+        const fleet = state.fleets.find(g => g._id === f.targetId);
+        if (fleet) {
+          const hit = droneHitFleet(f, fleet);
+          if (hit) {
+            for (let k = 0; k < 10; k++) {
+              const a = Math.random() * Math.PI * 2;
+              const sp = 50 + Math.random() * 60;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: 0.4, maxLife: 0.4, color: '#ff8a3a',
+              });
+            }
+          } else {
+            for (let k = 0; k < 5; k++) {
+              const a = Math.random() * Math.PI * 2;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * 30, vy: Math.sin(a) * 30,
+                life: 0.3, maxLife: 0.3, color: '#a4d8ff',
+              });
+            }
+          }
+        }
+        state.fleets.splice(i, 1); continue;
+      }
+      const hit = droneHit(f);
+      if (hit) {
+        for (let k = 0; k < 12; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 60;
+          state.particles.push({
+            x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.45, maxLife: 0.45, color: '#ff8a3a',
+          });
+        }
+      } else {
+        for (let k = 0; k < 4; k++) {
+          const a = Math.random() * Math.PI * 2;
+          state.particles.push({
+            x: f.x, y: f.y, vx: Math.cos(a) * 25, vy: Math.sin(a) * 25 - 10,
+            life: 0.35, maxLife: 0.35, color: '#888',
+          });
+        }
+      }
+      state.fleets.splice(i, 1); continue;
+    }
+    const step = DRONE_SPEED * dt;
+    f.x += (dx / d) * step;
+    f.y += (dy / d) * step;
+  }
+  // Cleanup pass: remove fleets killed mid-loop by drone hunts
+  for (let i = state.fleets.length - 1; i >= 0; i--) {
+    if (state.fleets[i]._dead) state.fleets.splice(i, 1);
+  }
+}
+
+// ---- Factory production & stockpile release ----
+/** Pick a list of candidate targets for a drone leaving factory `t`.
+ *  Sorted by score (highest first). Caller picks among top-K. */
+function pickDroneTargetsFor(t) {
+  const cands = [];
+  for (const et of state.turrets) {
+    if (et.owner === t.owner) continue;
+    const d = Math.hypot(et.x - t.x, et.y - t.y);
+    let score = 1500 / (d + 200);
+    if (et.type === 'antiair') score *= 1.5;
+    if (et.type === 'factory') score *= 1.8;
+    if (!et.active) score *= 2.0;
+    cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
+  }
+  if (cands.length === 0) {
+    for (const en of state.nodes) {
+      if (en.owner === t.owner || en.owner === 'neutral') continue;
+      const d = dist(t, en);
+      const score = 800 / (d + 200);
+      cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score);
+  return cands;
+}
+
+/** Launch a single drone from factory `t` toward a randomly chosen top-3 target.
+ *  Called from engineering.js updateBuildings during normal factory ticks. */
+export function launchOneDroneFrom(t) {
+  const cands = pickDroneTargetsFor(t);
+  if (cands.length === 0) return;
+  const top = cands.slice(0, Math.min(3, cands.length));
+  const pick = top[Math.floor(Math.random() * top.length)];
+  spawnDrone(t.x, t.y, t.owner, pick.target);
+}
+
+/** Resolve the player's salvoTarget against current state. */
+function resolveSalvoTarget() {
+  const s = state.salvoTarget;
+  if (!s) return null;
+  if (s.kind === 'turret') {
+    const t = state.turrets.find(tt => tt.id === s.id);
+    if (t && t.owner !== 'player') return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+  } else if (s.kind === 'node') {
+    const n = state.nodes[s.id];
+    if (n && n.owner !== 'player') return { kind: 'node', id: n.id, x: n.x, y: n.y };
+  }
+  return null;
+}
+
+/** Flush every player factory's stockpile in one big salvo. If the player
+ *  designated a salvoTarget (clicked an enemy while Hold-Fire was on), ALL
+ *  drones go there. Otherwise, diversify across top-5 auto-picked targets. */
+export function releasePlayerStockpile() {
+  const fixedTarget = resolveSalvoTarget();
+  let launched = 0;
+  for (const t of state.turrets) {
+    if (t.owner !== 'player' || t.type !== 'factory') continue;
+    if (!t.dronesReady) continue;
+
+    let pool;
+    if (fixedTarget) {
+      pool = [{ target: fixedTarget }];
+    } else {
+      const cands = pickDroneTargetsFor(t);
+      if (cands.length === 0) { t.dronesReady = 0; continue; }
+      pool = cands.slice(0, Math.min(5, cands.length));
+    }
+
+    for (let k = 0; k < t.dronesReady; k++) {
+      const pick = pool[k % pool.length];
+      const jx = (Math.random() - 0.5) * 14;
+      const jy = (Math.random() - 0.5) * 14;
+      spawnDrone(t.x + jx, t.y + jy, t.owner, pick.target);
+      launched++;
+    }
+    t.dronesReady = 0;
+    t.prodCooldown = DF_PRODUCTION_T;
+  }
+  state.salvoTarget = null;
+  return launched;
+}

@@ -15,10 +15,11 @@ import {
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
-  resetEngineering, placeTurretAt, placeNetOnEdge, releasePlayerStockpile,
-  updateDrones, updateAntiAir, updateTanks, updateArtillery, updateShells,
+  resetEngineering, placeTurretAt, placeNetOnEdge,
   updateBuildings, updateTracers,
 } from './engineering.js';
+import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
+import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {

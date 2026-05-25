@@ -4,6 +4,13 @@
 
 export const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
+/** Squared distance — faster than dist() because no sqrt. Use whenever you
+ *  only need to *compare* distances (sorting, "within radius" tests). */
+export const distSq = (a, b) => {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return dx * dx + dy * dy;
+};
+
 /** Closest-point distance from (px,py) to the line segment (ax,ay)-(bx,by). */
 export function pointToSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;

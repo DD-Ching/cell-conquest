@@ -20,6 +20,12 @@ import {
 import { dist } from './util.js';
 import { addWreckBlockage, spawnBigExplosion, getEdge } from './engineering.js';
 
+// Pre-squared distances — comparisons use dx²+dy² < r² to avoid sqrt in the
+// hottest per-tick loops (drone hunt scan runs once per drone per sub-step).
+const DRONE_DETECT_R2  = DRONE_DETECT_R * DRONE_DETECT_R;
+const DRONE_SWITCH_R2  = DRONE_HUNT_SWITCH_RATIO * DRONE_HUNT_SWITCH_RATIO;
+const HUNT_PROXIMITY2  = 50 * 50;     // huntD < 50 → huntD² < 2500
+
 // ---- Spawn ----
 export function spawnDrone(originX, originY, owner, target) {
   state.fleets.push({
@@ -53,17 +59,19 @@ function droneTargetExists(drone) {
 
 /** Find the closest enemy entity for `drone` to switch to. Returns true if found. */
 function retargetDrone(drone) {
-  let best = null, bestD = Infinity;
+  let best = null, bestD2 = Infinity;
   for (const t of state.turrets) {
     if (t.owner === drone.owner) continue;
-    const d = Math.hypot(t.x - drone.x, t.y - drone.y);
-    if (d < bestD) { bestD = d; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
+    const dx = t.x - drone.x, dy = t.y - drone.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
   }
   if (!best) {
     for (const n of state.nodes) {
       if (n.owner === drone.owner || n.owner === 'neutral') continue;
-      const d = Math.hypot(n.x - drone.x, n.y - drone.y);
-      if (d < bestD) { bestD = d; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
+      const dx = n.x - drone.x, dy = n.y - drone.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
     }
   }
   if (!best) return false;
@@ -121,6 +129,12 @@ function droneHitFleet(drone, fleet) {
 
 // ---- Per-tick ----
 export function updateDrones(dt) {
+  // Build a fleet-by-id Map once per tick so the per-drone target lookup is
+  // O(1) instead of O(N). Marked-dead fleets are still in the array (and
+  // therefore in this Map); they're cleared in the cleanup pass at the end.
+  const fleetById = new Map();
+  for (const g of state.fleets) fleetById.set(g._id, g);
+
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind !== 'drone') continue;
@@ -137,23 +151,26 @@ export function updateDrones(dt) {
     }
 
     // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
-    let huntFleet = null, huntD = DRONE_DETECT_R;
+    // Squared-distance comparison avoids sqrt — this is the hottest inner loop.
+    let huntFleet = null, huntD2 = DRONE_DETECT_R2;
     for (const g of state.fleets) {
       if (g.owner === f.owner) continue;
       if (g.kind === 'drone') continue;
       if (!g.path || g.segIdx >= g.path.length - 1) continue;
-      const d = Math.hypot(g.x - f.x, g.y - f.y);
-      if (d < huntD) { huntD = d; huntFleet = g; }
+      const dx = g.x - f.x, dy = g.y - f.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }
     }
 
     // Target maintenance
     if (f.targetKind === 'fleet') {
-      const locked = state.fleets.find(g => g._id === f.targetId);
+      const locked = fleetById.get(f.targetId);
       if (locked) {
         f.tx = locked.x; f.ty = locked.y;
         if (huntFleet && huntFleet._id !== f.targetId) {
-          const curD = Math.hypot(locked.x - f.x, locked.y - f.y);
-          if (huntD < curD * DRONE_HUNT_SWITCH_RATIO) {
+          const cx = locked.x - f.x, cy = locked.y - f.y;
+          const curD2 = cx * cx + cy * cy;
+          if (huntD2 < curD2 * DRONE_SWITCH_R2) {
             f.targetId = huntFleet._id;
             f.tx = huntFleet.x; f.ty = huntFleet.y;
           }
@@ -190,8 +207,9 @@ export function updateDrones(dt) {
         }
       }
       if (huntFleet) {
-        const primD = Math.hypot(f.tx - f.x, f.ty - f.y);
-        if (huntD < primD * DRONE_HUNT_SWITCH_RATIO || huntD < 50) {
+        const px = f.tx - f.x, py = f.ty - f.y;
+        const primD2 = px * px + py * py;
+        if (huntD2 < primD2 * DRONE_SWITCH_R2 || huntD2 < HUNT_PROXIMITY2) {
           f.targetKind = 'fleet';
           f.targetId = huntFleet._id;
           f.tx = huntFleet.x; f.ty = huntFleet.y;
@@ -199,12 +217,13 @@ export function updateDrones(dt) {
       }
     }
 
-    // Approach / impact
+    // Approach / impact — still need real `d` here because we normalize by it
+    // for the movement step (dx/d, dy/d). The arrival check stays scalar.
     const dx = f.tx - f.x, dy = f.ty - f.y;
     const d = Math.hypot(dx, dy);
     if (d < 12) {
       if (f.targetKind === 'fleet') {
-        const fleet = state.fleets.find(g => g._id === f.targetId);
+        const fleet = fleetById.get(f.targetId);
         if (fleet) {
           const hit = droneHitFleet(f, fleet);
           if (hit) {

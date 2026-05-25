@@ -17,6 +17,12 @@ import {
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion } from './engineering.js';
 
+// Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
+const AA_R2          = AA_RADIUS * AA_RADIUS;
+const TANK_R2        = TANK_RADIUS * TANK_RADIUS;
+const ARTILLERY_R2   = ARTILLERY_RANGE * ARTILLERY_RANGE;
+const ARTILLERY_AOE2 = ARTILLERY_AOE * ARTILLERY_AOE;
+
 // ---- Anti-air with saturation ----
 // Each AA splits its DPS across every enemy drone currently in its range.
 // One drone in range = full AA_DPS; ten drones = AA_DPS / 10 each. So massed
@@ -28,7 +34,8 @@ export function updateAntiAir(dt) {
     const inRange = [];
     for (const f of state.fleets) {
       if (f.kind !== 'drone' || f.owner === t.owner) continue;
-      if (Math.hypot(f.x - t.x, f.y - t.y) <= AA_RADIUS) inRange.push(f);
+      const dx = f.x - t.x, dy = f.y - t.y;
+      if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
     }
     if (inRange.length === 0) continue;
     const dpsPerTarget = AA_DPS / inRange.length;
@@ -56,8 +63,8 @@ export function updateTanks(dt) {
       const f = state.fleets[i];
       if (f.owner === t.owner) continue;
       if (f.kind === 'drone') continue;
-      const d = Math.hypot(f.x - t.x, f.y - t.y);
-      if (d > TANK_RADIUS) continue;
+      const dx = f.x - t.x, dy = f.y - t.y;
+      if (dx * dx + dy * dy > TANK_R2) continue;
       f.units -= TANK_DPS * 0.6 * dt;
       if (f.units < 0.5) {
         addWreckBlockage(f);
@@ -75,8 +82,8 @@ export function updateTanks(dt) {
     // Siege: slow chip damage to enemy turrets within range
     for (const o of state.turrets) {
       if (o.owner === t.owner) continue;
-      const d = Math.hypot(o.x - t.x, o.y - t.y);
-      if (d > TANK_RADIUS) continue;
+      const dx = o.x - t.x, dy = o.y - t.y;
+      if (dx * dx + dy * dy > TANK_R2) continue;
       o.hp -= TANK_DPS * 0.7 * dt;
       if (Math.random() < tracerRate * 0.4 * dt) {
         state.tracers.push({
@@ -107,13 +114,15 @@ function fireArtilleryShell(t) {
   const cands = [];
   for (const e of state.turrets) {
     if (e.owner === t.owner) continue;
-    if (Math.hypot(e.x - t.x, e.y - t.y) > ARTILLERY_RANGE) continue;
+    const dx = e.x - t.x, dy = e.y - t.y;
+    if (dx * dx + dy * dy > ARTILLERY_R2) continue;
     cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
   }
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (f.owner === t.owner) continue;
-    if (Math.hypot(f.x - t.x, f.y - t.y) > ARTILLERY_RANGE) continue;
+    const dx = f.x - t.x, dy = f.y - t.y;
+    if (dx * dx + dy * dy > ARTILLERY_R2) continue;
     cands.push({ x: f.x, y: f.y, weight: 1 });
   }
   if (cands.length === 0) return;
@@ -123,7 +132,8 @@ function fireArtilleryShell(t) {
   for (const a of cands) {
     let s = 0;
     for (const o of cands) {
-      if (Math.hypot(o.x - a.x, o.y - a.y) < ARTILLERY_AOE) s += o.weight;
+      const dx = o.x - a.x, dy = o.y - a.y;
+      if (dx * dx + dy * dy < ARTILLERY_AOE2) s += o.weight;
     }
     if (s > bestScore) { bestScore = s; best = a; }
   }
@@ -156,13 +166,14 @@ export function updateShells(dt) {
 function detonateArtillery(x, y, owner) {
   for (const t of state.turrets) {
     if (t.owner === owner) continue;
-    if (Math.hypot(t.x - x, t.y - y) < ARTILLERY_AOE) t.hp -= ARTILLERY_DAMAGE_TURRET;
+    const dx = t.x - x, dy = t.y - y;
+    if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
   }
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (f.owner === owner) continue;
-    const d = Math.hypot(f.x - x, f.y - y);
-    if (d >= ARTILLERY_AOE) continue;
+    const dx = f.x - x, dy = f.y - y;
+    if (dx * dx + dy * dy >= ARTILLERY_AOE2) continue;
     f.units -= ARTILLERY_DAMAGE_FLEET;
     if (f.units < 0.5) {
       addWreckBlockage(f);

@@ -124,6 +124,44 @@ export function aiTick(owner, dt) {
     return false;
   }
 
+  // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam.
+  // The AI now follows the same script.
+  const AA_TARGET      = 4;                       // 4-AA wall in front of each hub
+  const TANK_TARGET    = 2;                       // 2 tanks for siege + flank
+  const FACTORY_TARGET = antiTurtle ? 6 : 4;      // drone spam goal per hub
+
+  // Position helpers — spread AAs across the front arc to form a WALL (not a circle).
+  // Drones flying toward the hub get sieved by overlapping radars from multiple angles.
+  function aaWallSpot(n, dirX, dirY, idx) {
+    const px = -dirY, py = dirX;
+    const layout = [
+      { fwd: 70, side:   0 },     // 0: center front
+      { fwd: 55, side:  80 },     // 1: right flank
+      { fwd: 55, side: -80 },     // 2: left flank
+      { fwd: 30, side: 130 },     // 3: far right
+      { fwd: 30, side:-130 },     // 4: far left
+    ][idx % 5];
+    return { x: n.x + dirX * layout.fwd + px * layout.side,
+             y: n.y + dirY * layout.fwd + py * layout.side };
+  }
+  function tankSpot(n, dirX, dirY, idx) {
+    const px = -dirY, py = dirX;
+    const layout = [
+      { fwd: 100, side:  0 },     // 0: center forward (siege)
+      { fwd:  80, side: 70 },     // 1: right flank
+    ][idx % 2];
+    return { x: n.x + dirX * layout.fwd + px * layout.side,
+             y: n.y + dirY * layout.fwd + py * layout.side };
+  }
+  function factorySpot(n, dirX, dirY, idx) {
+    // BEHIND the hub, fanned out in an arc deeper each step. Stays inside our AA umbrella.
+    const px = -dirY, py = dirX;
+    const back = 35 + Math.floor(idx / 2) * 30;
+    const side = (idx % 2 === 0 ? 1 : -1) * Math.min(15 + idx * 12, 70);
+    return { x: n.x - dirX * back + px * side,
+             y: n.y - dirY * back + py * side };
+  }
+
   if (Math.random() < buildChance && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
 
@@ -141,67 +179,39 @@ export function aiTick(owner, dt) {
       const ddx = toward.x - n.x, ddy = toward.y - n.y;
       const dlen = Math.hypot(ddx, ddy) || 1;
       const dirX = ddx / dlen, dirY = ddy / dlen;
-      const off = { dx: dirX * 70, dy: dirY * 70 };
 
-      // Survey friendly infrastructure NEAR this hub
+      // Survey friendly infrastructure NEAR this hub (wide net to catch the whole wall)
       const ownAAsNear = state.turrets.filter(t =>
         t.owner === owner && t.type === 'antiair' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 160);
+        Math.hypot(t.x - n.x, t.y - n.y) < 220);
       const ownTanksNear = state.turrets.filter(t =>
         t.owner === owner && t.type === 'tank' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 160);
+        Math.hypot(t.x - n.x, t.y - n.y) < 200);
       const ownFactoriesNear = state.turrets.filter(t =>
         t.owner === owner && t.type === 'factory' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 100);
-      // Is THIS hub within range of ANY friendly AA (umbrella coverage)?
+        Math.hypot(t.x - n.x, t.y - n.y) < 180);
+      // Hub under our AA umbrella?
       const aaCoversThisHub = state.turrets.some(t =>
         t.owner === owner && t.type === 'antiair' &&
         Math.hypot(t.x - n.x, t.y - n.y) < AA_RADIUS * 0.8);
 
-      // Enemy pressure near this hub
-      const enemyTurretsNear = state.turrets.filter(t =>
-        t.owner !== owner && t.active &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 280).length;
-
-      // ---- 1) First AA at any hub that lacks one (oriented toward nearest enemy) ----
-      if (ownAAsNear.length === 0) {
-        const tx = n.x + off.dx, ty = n.y + off.dy;
-        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'antiair', owner)) return;
+      // ---- 1) AA WALL — keep stacking until we hit AA_TARGET ----
+      if (ownAAsNear.length < AA_TARGET) {
+        const spot = aaWallSpot(n, dirX, dirY, ownAAsNear.length);
+        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'antiair', owner)) return;
       }
 
-      // ---- 2) First Tank (after AA is in place) ----
-      if (ownAAsNear.length >= 1 && ownTanksNear.length === 0) {
-        const tx = n.x + off.dx * 1.4, ty = n.y + off.dy * 1.4;
-        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'tank', owner)) return;
+      // ---- 2) Tanks — start as soon as we have at least 2 AAs ----
+      if (ownAAsNear.length >= 2 && ownTanksNear.length < TANK_TARGET) {
+        const spot = tankSpot(n, dirX, dirY, ownTanksNear.length);
+        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'tank', owner)) return;
       }
 
-      // ---- 3) Stack additional AAs with OVERLAPPING coverage ----
-      // 2nd / 3rd AA placed on perpendicular flanks so their ranges intersect
-      // the first AA — drones flying through the gap get hit by multiple AAs.
-      const stackThresh = antiTurtle ? 1 : 2;
-      if (ownAAsNear.length >= 1 && ownAAsNear.length < 3 && enemyTurretsNear >= stackThresh) {
-        const px = -dirY, py = dirX;          // perpendicular unit vector
-        const side = (ownAAsNear.length % 2 === 0) ? 1 : -1;
-        const tx = n.x + off.dx * 0.5 + px * side * 90;
-        const ty = n.y + off.dy * 0.5 + py * side * 90;
-        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'antiair', owner)) return;
-      }
-
-      // ---- 4) Factory — only at hubs already under our AA umbrella, placed BEHIND the hub ----
-      const factoryLimit = antiTurtle ? 2 : 1;
-      if (aaCoversThisHub && ownFactoriesNear.length < factoryLimit) {
-        const stackOff = 35 + ownFactoriesNear.length * 30;
-        const fx = n.x - dirX * stackOff;
-        const fy = n.y - dirY * stackOff;
-        if (!isExposedToEnemyTank(fx, fy) && placeTurretAt(fx, fy, 'factory', owner)) return;
-      }
-
-      // ---- 5) Second Tank on flank if heavy enemy turret pressure ----
-      if (ownTanksNear.length === 1 && enemyTurretsNear >= 3) {
-        const px = -dirY, py = dirX;
-        const tx = n.x + off.dx * 1.4 + px * 70;
-        const ty = n.y + off.dy * 1.4 + py * 70;
-        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'tank', owner)) return;
+      // ---- 3) FACTORY SPAM — once the wall is up, mass-produce drones ----
+      // Wait until at least 2 AAs cover the hub before spending units on factories.
+      if (aaCoversThisHub && ownAAsNear.length >= 2 && ownFactoriesNear.length < FACTORY_TARGET) {
+        const spot = factorySpot(n, dirX, dirY, ownFactoriesNear.length);
+        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'factory', owner)) return;
       }
     }
   }

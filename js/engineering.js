@@ -279,28 +279,26 @@ export function updateAntiAir(dt) {
   }
 }
 
-/** Tanks (anti-ground / anti-everything). Constantly damages enemy fleets,
- *  drones and turrets in range. Lower DPS than AA but generalist + longer range. */
+/** Tanks — anti-ground. Damage enemy GROUND fleets in range (creates the
+ *  "death highway" effect on roads they cover) and slowly chip enemy turrets.
+ *  Cannot target drones (that's AA's job). Lower DPS than AA, longer range. */
 export function updateTanks(dt) {
   const tracerRate = 3;
   for (const t of state.turrets) {
     if (t.type !== 'tank' || !t.active) continue;
-    // Damage enemy fleets in range
+    // Damage enemy ground fleets in range — drones are skipped
     for (let i = state.fleets.length - 1; i >= 0; i--) {
       const f = state.fleets[i];
       if (f.owner === t.owner) continue;
+      if (f.kind === 'drone') continue;        // tanks can't shoot air
       const d = Math.hypot(f.x - t.x, f.y - t.y);
       if (d > TANK_RADIUS) continue;
-      // Damage units count (or drone hp)
-      if (f.kind === 'drone') {
-        f.hp -= TANK_DPS * dt;
-      } else {
-        f.units -= TANK_DPS * 0.6 * dt;          // troops less squishy than drones
-        if (f.units < 0.5) {
-          addWreckBlockage(f);                   // killed on the road → wreck blocks the segment
-          spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
-          state.fleets.splice(i, 1); continue;
-        }
+      f.units -= TANK_DPS * 0.6 * dt;
+      if (f.units < 0.5) {
+        addWreckBlockage(f);
+        spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
+        state.fleets.splice(i, 1);
+        continue;
       }
       if (Math.random() < tracerRate * dt) {
         state.tracers.push({
@@ -309,7 +307,7 @@ export function updateTanks(dt) {
         });
       }
     }
-    // Damage enemy turrets in range
+    // Siege: chip enemy turrets within range (slow — primarily an anti-ground tool)
     for (const o of state.turrets) {
       if (o.owner === t.owner) continue;
       const d = Math.hypot(o.x - t.x, o.y - t.y);

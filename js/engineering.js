@@ -591,12 +591,14 @@ export function updateBuildings(dt) {
         if (t.progress >= 1.0) { t.progress = 1.0; t.active = true; }
       }
     } else {
-      // Factory: produce drones, targeting enemy turrets first then nodes
+      // Factory: produce drones, targeting enemy turrets first then nodes.
+      // Picks RANDOMLY among the top-3 scoring targets so swarms split AA attention
+      // instead of all dying to the same cluster.
       if (t.type === 'factory') {
         t.prodCooldown -= dt;
         if (t.prodCooldown <= 0) {
           t.prodCooldown = DF_PRODUCTION_T;
-          let best = null, bestScore = -Infinity;
+          const cands = [];
           // Enemy turrets first (high priority — they threaten our drones)
           for (const et of state.turrets) {
             if (et.owner === t.owner) continue;
@@ -604,18 +606,23 @@ export function updateBuildings(dt) {
             let score = 1500 / (d + 200);
             if (et.type === 'antiair') score *= 1.5;
             if (!et.active) score *= 2.0;
-            if (score > bestScore) { bestScore = score; best = { kind: 'turret', id: et.id, x: et.x, y: et.y }; }
+            cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
           }
-          // Otherwise nodes
-          if (!best) {
+          if (cands.length === 0) {
+            // Fall back to enemy nodes
             for (const en of state.nodes) {
               if (en.owner === t.owner || en.owner === 'neutral') continue;
               const d = dist(t, en);
-              let score = 800 / (d + 200);
-              if (score > bestScore) { bestScore = score; best = { kind: 'node', id: en.id, x: en.x, y: en.y }; }
+              const score = 800 / (d + 200);
+              cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
             }
           }
-          if (best) spawnDrone(t.x, t.y, t.owner, best);
+          if (cands.length) {
+            cands.sort((a, b) => b.score - a.score);
+            const top = cands.slice(0, Math.min(3, cands.length));
+            const pick = top[Math.floor(Math.random() * top.length)];
+            spawnDrone(t.x, t.y, t.owner, pick.target);
+          }
         }
       }
     }

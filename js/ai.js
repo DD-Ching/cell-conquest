@@ -4,7 +4,10 @@
 // faction ids listed in config.NN_OWNERS.
 // =====================================================
 import { state } from './state.js';
-import { FLEET_SPEED, NN_OWNERS, NET_LEVEL_MAX } from './config.js';
+import {
+  FLEET_SPEED, NN_OWNERS, NET_LEVEL_MAX,
+  TANK_RADIUS, TANK_DPS,
+} from './config.js';
 import { dist } from './util.js';
 import { sendFleet } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
@@ -58,17 +61,64 @@ export function aiTick(owner, dt) {
   if (saturationRatio > 0.5) aggression *= 1.55;
   else if (saturationRatio > 0.3) aggression *= 1.25;
 
+  // ---- Anti-turtle detection ----
+  // If my node count hasn't grown for a while AND opponents are stacking turrets,
+  // the player is walling up. Switch to factory-rush + heavier commitments to crack it.
+  state.aiMetrics ||= {};
+  const m = state.aiMetrics[owner] ||= { lastNodeCount: myNodes.length, lastChangeT: state.elapsed };
+  if (myNodes.length !== m.lastNodeCount) {
+    m.lastNodeCount = myNodes.length;
+    m.lastChangeT = state.elapsed;
+  }
+  const stagnantSec = state.elapsed - m.lastChangeT;
+  const enemyTurrets = state.turrets.filter(t => t.owner !== owner && t.owner !== 'neutral' && t.active).length;
+  const enemyAA = state.turrets.filter(t => t.owner !== owner && t.type === 'antiair' && t.active).length;
+  const antiTurtle = stagnantSec > 18 && enemyTurrets >= 3;
+  // Far-behind: someone clearly ahead and I'm small
+  const sharesByOwner = {};
+  for (const n of state.nodes) {
+    if (n.owner === 'neutral' || n.owner === owner) continue;
+    sharesByOwner[n.owner] = (sharesByOwner[n.owner] || 0) + 1;
+  }
+  const topEnemyShare = Math.max(0, ...Object.values(sharesByOwner)) / state.nodes.length;
+  const farBehind = myShare < 0.18 && topEnemyShare > 0.40;
+  if (antiTurtle) aggression *= 1.5;
+  if (farBehind) aggression *= 1.8;
+  // Opening burst — grab the map before the player turtles up
+  if (state.elapsed < 35) aggression *= 1.3;
+
+  // ---- Hostile turret threat to ground attacks targeting a given node ----
+  // Tank turrets within ~range of the target node will chew up our attackers en route.
+  // Counts expected casualties so Phase 2's `required` reflects reality.
+  function turretThreatTo(targetNode) {
+    let threat = 0;
+    for (const t of state.turrets) {
+      if (!t.active) continue;
+      if (t.owner === owner) continue;
+      if (t.type !== 'tank') continue;
+      const d = Math.hypot(t.x - targetNode.x, t.y - targetNode.y);
+      if (d < TANK_RADIUS + 60) threat += TANK_DPS * 0.6 * 3.5;  // ~3.5s exposure
+    }
+    return threat;
+  }
+
   // ---- Engineering: occasional turret placement near hub nodes, offset toward enemy ----
   // Build chance scales with saturation — full coffers should be spent on infrastructure.
-  const buildChance = 0.12 + saturationRatio * 0.40;
+  const buildChance = 0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0);
   const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
+  // Anti-turtle: shrink the "already-built nearby" radius so we keep stacking
+  // factories along the front to drone-rush the walled-up enemy.
+  const factoryClusterR = antiTurtle ? 80 : 120;
   if (Math.random() < buildChance && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
     for (const n of byHub) {
       if (n.units < buildMinUnits) continue;
-      const nearbyTurrets = state.turrets.filter(t =>
+      const nearAA = state.turrets.filter(t =>
         t.owner === owner && Math.hypot(t.x - n.x, t.y - n.y) < 120);
-      const has = (type) => nearbyTurrets.some(t => t.type === type);
+      const nearFact = state.turrets.filter(t =>
+        t.owner === owner && t.type === 'factory' && Math.hypot(t.x - n.x, t.y - n.y) < factoryClusterR);
+      const has = (type) => nearAA.some(t => t.type === type);
+      const hasNearFactory = nearFact.length > 0;
       // Direction toward nearest enemy node (so turrets land between us and threat)
       let toward = null, towardDist = Infinity;
       for (const en of state.nodes) {
@@ -83,11 +133,18 @@ export function aiTick(owner, dt) {
         return { dx: (dx / len) * 70, dy: (dy / len) * 70 };
       })();
       const tx = n.x + off.dx, ty = n.y + off.dy;
-      // Build priority order: AA → Tank (anti-ground) → Factory
-      // (Nets are per-edge now, handled separately below.)
+      // Build priority order: AA → Tank (anti-ground) → Factory.
+      // Nets are per-edge now, handled separately below.
+      // Anti-turtle bias: jump straight to factory if the player's walling up — drones bypass tanks.
+      if (antiTurtle && !hasNearFactory) {
+        if (placeTurretAt(n.x + off.dx * 0.7, n.y + off.dy * 0.7, 'factory', owner)) return;
+      }
       if (!has('antiair')) { if (placeTurretAt(tx, ty, 'antiair', owner)) return; }
-      else if (!has('tank')) { if (placeTurretAt(tx * 1.05, ty * 1.05, 'tank', owner)) return; }
-      else if (!has('factory')) { if (placeTurretAt(n.x - off.dx * 0.5, n.y - off.dy * 0.5, 'factory', owner)) return; }
+      else if (!has('tank')) {
+        // Tank: slightly forward of AA (siege role) — use additive offset, not scaling.
+        if (placeTurretAt(n.x + off.dx * 1.4, n.y + off.dy * 1.4, 'tank', owner)) return;
+      }
+      else if (!hasNearFactory) { if (placeTurretAt(n.x + off.dx * 0.7, n.y + off.dy * 0.7, 'factory', owner)) return; }
       // Saturated empire & all three built nearby → place a second layer further toward the front
       else if (saturationRatio > 0.5 && toward) {
         const tx2 = n.x + (toward.x - n.x) * 0.45;
@@ -213,7 +270,8 @@ export function aiTick(owner, dt) {
     }
     trueDefenders = Math.max(0, trueDefenders);
 
-    const required = trueDefenders + 5 + target.size * 0.3;
+    const tankThreat = turretThreatTo(target);
+    const required = trueDefenders + 5 + target.size * 0.3 + tankThreat;
     const minThreshold = required / aggression;
     const availForce = attackers.reduce((s, a) => s + attackerAvail(a), 0);
     if (availForce < minThreshold) continue;
@@ -236,7 +294,9 @@ export function aiTick(owner, dt) {
 
   if (bestAtt) {
     bestAtt.attackers.sort((a, b) => dist(a, bestAtt.target) - dist(b, bestAtt.target));
-    let toSend = bestAtt.required + 6;
+    // Anti-turtle / far-behind: send a heavier wave so it actually breaks through.
+    const overcommit = farBehind ? 1.8 : antiTurtle ? 1.5 : 1.0;
+    let toSend = (bestAtt.required + 6) * overcommit;
     for (const a of bestAtt.attackers) {
       if (toSend <= 0) break;
       const max = Math.floor(attackerAvail(a));

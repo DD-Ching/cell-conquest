@@ -111,15 +111,6 @@ export function aiTick(owner, dt) {
   const buildChance = 0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0);
   const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
 
-  // Helper: count enemy neighbors of a node (frontness)
-  function frontness(n) {
-    let count = 0;
-    for (const nb of state.adj.get(n.id)) {
-      const o = state.nodes[nb].owner;
-      if (o !== owner && o !== 'neutral') count++;
-    }
-    return count;
-  }
   // Helper: refuse to send engineers into enemy tank kill zones
   function isExposedToEnemyTank(x, y) {
     for (const t of state.turrets) {
@@ -148,8 +139,6 @@ export function aiTick(owner, dt) {
       const dirX = ddx / dlen, dirY = ddy / dlen;
       const off = { dx: dirX * 70, dy: dirY * 70 };
 
-      const isFront = frontness(n) > 0;
-
       // Survey friendly infrastructure NEAR this hub
       const ownAAsNear = state.turrets.filter(t =>
         t.owner === owner && t.type === 'antiair' &&
@@ -170,14 +159,14 @@ export function aiTick(owner, dt) {
         t.owner !== owner && t.active &&
         Math.hypot(t.x - n.x, t.y - n.y) < 280).length;
 
-      // ---- 1) First AA on a front hub ----
-      if (isFront && ownAAsNear.length === 0) {
+      // ---- 1) First AA at any hub that lacks one (oriented toward nearest enemy) ----
+      if (ownAAsNear.length === 0) {
         const tx = n.x + off.dx, ty = n.y + off.dy;
         if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'antiair', owner)) return;
       }
 
-      // ---- 2) First Tank on a front hub (after AA is in place) ----
-      if (isFront && ownAAsNear.length >= 1 && ownTanksNear.length === 0) {
+      // ---- 2) First Tank (after AA is in place) ----
+      if (ownAAsNear.length >= 1 && ownTanksNear.length === 0) {
         const tx = n.x + off.dx * 1.4, ty = n.y + off.dy * 1.4;
         if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'tank', owner)) return;
       }
@@ -186,7 +175,7 @@ export function aiTick(owner, dt) {
       // 2nd / 3rd AA placed on perpendicular flanks so their ranges intersect
       // the first AA — drones flying through the gap get hit by multiple AAs.
       const stackThresh = antiTurtle ? 1 : 2;
-      if (isFront && ownAAsNear.length >= 1 && ownAAsNear.length < 3 && enemyTurretsNear >= stackThresh) {
+      if (ownAAsNear.length >= 1 && ownAAsNear.length < 3 && enemyTurretsNear >= stackThresh) {
         const px = -dirY, py = dirX;          // perpendicular unit vector
         const side = (ownAAsNear.length % 2 === 0) ? 1 : -1;
         const tx = n.x + off.dx * 0.5 + px * side * 90;
@@ -204,7 +193,7 @@ export function aiTick(owner, dt) {
       }
 
       // ---- 5) Second Tank on flank if heavy enemy turret pressure ----
-      if (isFront && ownTanksNear.length === 1 && enemyTurretsNear >= 3) {
+      if (ownTanksNear.length === 1 && enemyTurretsNear >= 3) {
         const px = -dirY, py = dirX;
         const tx = n.x + off.dx * 1.4 + px * 70;
         const ty = n.y + off.dy * 1.4 + py * 70;

@@ -34,11 +34,38 @@ export function aiTick(owner, dt) {
   const myNodes = state.nodes.filter(n => n.owner === owner);
   if (myNodes.length === 0) return;
 
+  // ---- Saturation: how much of my regen is being wasted because nodes are full ----
+  // Full nodes (>= 95% cap) gain nothing from sitting still. The more of my empire
+  // is saturated, the more I should be spending units (turrets, attacks, reinforces).
+  let saturatedCount = 0;
+  for (const n of myNodes) if (n.units >= n.capacity * 0.95) saturatedCount++;
+  const saturationRatio = saturatedCount / myNodes.length;
+
+  // ---- Heuristic v3 — game-state-aware aggression ----
+  const totalOwned = state.nodes.filter(n => n.owner !== 'neutral').length || 1;
+  const myShare = myNodes.length / totalOwned;
+  const counts = {};
+  for (const n of state.nodes) {
+    if (n.owner === 'neutral') continue;
+    counts[n.owner] = (counts[n.owner] || 0) + 1;
+  }
+  const leaderEntry = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const iAmLeader = leaderEntry && leaderEntry[0] === owner;
+  let aggression = 1.0 + Math.min(state.elapsed / 180, 2.0);
+  if (iAmLeader && myShare > 0.40) aggression *= 1.4;
+  else if (myShare < 0.20) aggression *= 1.3;
+  // Wasted-regen drive: when ≥30% of my nodes are full, I push harder
+  if (saturationRatio > 0.5) aggression *= 1.55;
+  else if (saturationRatio > 0.3) aggression *= 1.25;
+
   // ---- Engineering: occasional turret placement near hub nodes, offset toward enemy ----
-  if (Math.random() < 0.12 && myNodes.length >= 2) {
+  // Build chance scales with saturation — full coffers should be spent on infrastructure.
+  const buildChance = 0.12 + saturationRatio * 0.40;
+  const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
+  if (Math.random() < buildChance && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
     for (const n of byHub) {
-      if (n.units < 30) continue;
+      if (n.units < buildMinUnits) continue;
       const nearbyTurrets = state.turrets.filter(t =>
         t.owner === owner && Math.hypot(t.x - n.x, t.y - n.y) < 120);
       const has = (type) => nearbyTurrets.some(t => t.type === type);
@@ -56,25 +83,25 @@ export function aiTick(owner, dt) {
         return { dx: (dx / len) * 70, dy: (dy / len) * 70 };
       })();
       const tx = n.x + off.dx, ty = n.y + off.dy;
+      // Build priority order: AA → Tank (anti-ground!) → Factory → Net
       if (!has('antiair')) { if (placeTurretAt(tx, ty, 'antiair', owner)) return; }
+      else if (!has('tank')) { if (placeTurretAt(tx * 1.05, ty * 1.05, 'tank', owner)) return; }
       else if (!has('factory')) { if (placeTurretAt(n.x - off.dx * 0.5, n.y - off.dy * 0.5, 'factory', owner)) return; }
       else if (!has('net')) { if (placeTurretAt(tx * 0.8 + n.x * 0.2, ty * 0.8 + n.y * 0.2, 'net', owner)) return; }
+      // Saturated empire & all four built nearby → place a second layer further toward the front
+      else if (saturationRatio > 0.5 && toward) {
+        const tx2 = n.x + (toward.x - n.x) * 0.45;
+        const ty2 = n.y + (toward.y - n.y) * 0.45;
+        const farTurrets = state.turrets.filter(t =>
+          t.owner === owner && Math.hypot(t.x - tx2, t.y - ty2) < 100);
+        if (!farTurrets.some(t => t.type === 'antiair')) {
+          if (placeTurretAt(tx2, ty2, 'antiair', owner)) return;
+        } else if (!farTurrets.some(t => t.type === 'tank')) {
+          if (placeTurretAt(tx2, ty2, 'tank', owner)) return;
+        }
+      }
     }
   }
-
-  // ---- Heuristic v3 — game-state-aware aggression ----
-  const totalOwned = state.nodes.filter(n => n.owner !== 'neutral').length || 1;
-  const myShare = myNodes.length / totalOwned;
-  const counts = {};
-  for (const n of state.nodes) {
-    if (n.owner === 'neutral') continue;
-    counts[n.owner] = (counts[n.owner] || 0) + 1;
-  }
-  const leaderEntry = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-  const iAmLeader = leaderEntry && leaderEntry[0] === owner;
-  let aggression = 1.0 + Math.min(state.elapsed / 180, 2.0);
-  if (iAmLeader && myShare > 0.40) aggression *= 1.4;
-  else if (myShare < 0.20) aggression *= 1.3;
 
   function incomingTo(nodeId) {
     let friendly = 0, hostile = 0, hostileSrc = null;
@@ -96,6 +123,11 @@ export function aiTick(owner, dt) {
     for (const nbId of state.adj.get(node.id)) {
       const nb = state.nodes[nbId];
       if (nb.owner !== owner && nb.owner !== 'neutral') enemyNeighbors++;
+    }
+    // Saturated node — sitting on units is wasted regen, so dump most of them.
+    if (node.units >= node.capacity * 0.95) {
+      const garrison = 6 + enemyNeighbors * 4;
+      return Math.max(0, node.units - garrison);
     }
     const reserveRatio = 0.15 + enemyNeighbors * 0.18;
     const reserveAbs = 5 + enemyNeighbors * 9;
@@ -188,9 +220,10 @@ export function aiTick(owner, dt) {
     return;
   }
 
-  // Phase 3: cap-aware reinforce frontline
+  // Phase 3: cap-aware reinforce frontline — lower threshold when empire is saturated
+  const dumpThresh = saturationRatio > 0.4 ? 0.70 : 0.85;
   for (const my of myNodes) {
-    if (my.units < my.capacity * 0.85) continue;
+    if (my.units < my.capacity * dumpThresh) continue;
     let bestRecip = null, bestRecipScore = 0;
     for (const nbId of state.adj.get(my.id)) {
       const nb = state.nodes[nbId];
@@ -209,6 +242,29 @@ export function aiTick(owner, dt) {
       const room = Math.max(0, bestRecip.capacity * 1.4 - bestRecip.units);
       const send = Math.min(Math.floor(my.units * 0.5), Math.floor(room));
       if (send >= 5) { sendFleet(my, bestRecip, send); return; }
+    }
+  }
+
+  // Phase 4: emergency overflow — if any node is FULL and nothing above fired,
+  // ship surplus to the most-front friendly neighbor regardless of its fill.
+  // Pure regen waste is worse than slight overflow, and a thicker hub can absorb a strike.
+  for (const my of myNodes) {
+    if (my.units < my.capacity * 0.95) continue;
+    let target = null, bestFront = -1;
+    for (const nbId of state.adj.get(my.id)) {
+      const nb = state.nodes[nbId];
+      if (nb.owner !== owner) continue;
+      let frontness = 0;
+      for (const nbnbId of state.adj.get(nb.id)) {
+        const nnb = state.nodes[nbnbId];
+        if (nnb.owner !== owner && nnb.owner !== 'neutral') frontness += 3;
+        else if (nnb.owner === 'neutral') frontness += 1;
+      }
+      if (frontness > bestFront) { bestFront = frontness; target = nb; }
+    }
+    if (target) {
+      const send = Math.floor((my.units - 8) * 0.6);
+      if (send >= 5) { sendFleet(my, target, send); return; }
     }
   }
 }

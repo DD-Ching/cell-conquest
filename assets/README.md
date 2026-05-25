@@ -15,7 +15,7 @@ canvas sprites. Sized so the longest edge is roughly 64-128 px.
 | `apc.png` | top-down APC / armored vehicle | troop fleets with 12-39 units |
 | `truck.png` | top-down light truck or jeep | troop fleets with < 12 units |
 | `engineer.png` | top-down bulldozer / construction vehicle | engineer & deploy fleets |
-| `drone.png` | top-down quadcopter / UAV | aerial drones |
+| `drone.png` | top-down delta-wing / paper-airplane suicide drone (Shahed-style) | aerial drones |
 | `turret_aa.png` | top-down anti-air radar / missile turret | placed AA turret |
 | `turret_tank.png` | top-down stationary cannon | placed Tank turret |
 | `turret_factory.png` | top-down hangar / production building | placed Drone Factory |

@@ -191,7 +191,10 @@ export function engineerArrivedAtTurret(f) {
 /** Called when an engineer arrives at a net edge site. Performs ONE action:
  *  - If the edge has heavy wreckage (blockage >= 0.15), clear it by WRECK_CLEAR_PER_ENG.
  *  - Else if net not maxed, raise net level by 1 and refill charges to that level's max.
- *  - Else (nothing to do here): redirect engineer toward the nearest road that needs work. */
+ *  - Else (nothing to do here): redirect engineer toward the nearest road that needs work.
+ *
+ * Nets are ownership-agnostic (like wreckage): any faction's engineer can
+ * upgrade the same net, and any vehicle on the road benefits. */
 export function engineerArrivedAtNetEdge(f) {
   const edge = getEdge(f.targetEdgeA, f.targetEdgeB);
   if (!edge) return { consumed: true };
@@ -201,17 +204,14 @@ export function engineerArrivedAtNetEdge(f) {
     flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#ffd066');
     return { consumed: true };
   }
-  // 2) Net not yet maxed (and not owned by an opposing faction) — upgrade
-  const canUpgrade = edge.netLevel < NET_LEVEL_MAX
-                  && (edge.netOwner === null || edge.netOwner === f.owner);
-  if (canUpgrade) {
+  // 2) Net not yet maxed — upgrade (no ownership block)
+  if (edge.netLevel < NET_LEVEL_MAX) {
     edge.netLevel += 1;
     edge.netCharges = NET_CHARGES_LEVEL[edge.netLevel];
-    edge.netOwner = f.owner;
-    flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#5cb3ff');
+    flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#e8d6a8');
     return { consumed: true };
   }
-  // 3) Maxed or opposing-faction net — redirect to nearest road that needs work
+  // 3) Maxed — redirect to nearest road that needs work
   const redirect = findNetWorkRedirect(f.owner, f.x, f.y);
   if (!redirect) return { consumed: true };
   return { consumed: false, redirect };
@@ -302,23 +302,25 @@ function droneHit(drone) {
 
 /** A drone is colliding with a moving ground fleet. The fleet's CURRENT edge
  *  may have an active drone net — if so, the net intercepts the drone instead
- *  of the fleet taking damage. Returns true if the fleet was hit (no net). */
+ *  of the fleet taking damage. Nets are faction-agnostic (like road wreckage):
+ *  whoever built it, it protects anyone on that road. Returns true if the
+ *  fleet was hit (no net). */
 function droneHitFleet(drone, fleet) {
   // Find the edge the fleet is currently traversing
   let edge = null;
   if (fleet.path && fleet.segIdx < fleet.path.length - 1) {
     edge = getEdge(fleet.path[fleet.segIdx], fleet.path[fleet.segIdx + 1]);
   }
-  // Net intercepts: must be active (charges > 0) and protect the fleet's owner
-  if (edge && edge.netLevel > 0 && edge.netCharges > 0 && edge.netOwner === fleet.owner) {
+  // Net intercepts: any net with charges left, regardless of who built it
+  if (edge && edge.netLevel > 0 && edge.netCharges > 0) {
     edge.netCharges -= 1;
-    if (edge.netCharges <= 0) { edge.netLevel = 0; edge.netCharges = 0; edge.netOwner = null; }
+    if (edge.netCharges <= 0) { edge.netLevel = 0; edge.netCharges = 0; }
     // Visual: short tracer beam from net midpoint to drone
     const aN = state.nodes[fleet.path[fleet.segIdx]];
     const bN = state.nodes[fleet.path[fleet.segIdx + 1]];
     state.tracers.push({
       x1: (aN.x + bN.x) / 2, y1: (aN.y + bN.y) / 2, x2: drone.x, y2: drone.y,
-      age: 0, maxAge: 0.22, color: '#a4d8ff',
+      age: 0, maxAge: 0.22, color: '#e8d6a8',
     });
     return false;        // fleet untouched
   }
@@ -349,7 +351,7 @@ export function addWreckBlockage(f) {
     // Net absorbs the death (one level worth of charges per casualty)
     e.netCharges -= NET_CHARGES_LEVEL[1];
     if (e.netCharges <= 0) {
-      e.netLevel = 0; e.netCharges = 0; e.netOwner = null;
+      e.netLevel = 0; e.netCharges = 0;
     } else if (e.netCharges <= NET_CHARGES_LEVEL[1]) e.netLevel = 1;
     else if (e.netCharges <= NET_CHARGES_LEVEL[2]) e.netLevel = 2;
     return;

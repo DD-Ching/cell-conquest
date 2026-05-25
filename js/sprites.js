@@ -180,7 +180,7 @@ export function drawEngineerSprite(ctx, x, y, angle, owner, zoom) {
 }
 
 // =====================================================
-// Drone — quadcopter (X arms + rotors)
+// Drone — delta-wing paper-airplane / Shahed-style suicide drone
 // =====================================================
 export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
   const c = COLOR[owner];
@@ -189,41 +189,50 @@ export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
   ctx.rotate(angle);
 
   if (Asset.drone?.ready) {
-    blitSprite(ctx, Asset.drone, 14, c);
+    blitSprite(ctx, Asset.drone, 16, c);
     ctx.restore();
     return;
   }
 
-  // Arms (X)
-  ctx.strokeStyle = c;
-  ctx.lineWidth = 1.5 / zoom;
-  ctx.beginPath();
-  ctx.moveTo(-5, -5); ctx.lineTo(5, 5);
-  ctx.moveTo(-5,  5); ctx.lineTo(5, -5);
-  ctx.stroke();
-  // Rotor blur (semi-transparent circles)
-  ctx.strokeStyle = 'rgba(220, 220, 220, 0.45)';
-  ctx.lineWidth = 0.7 / zoom;
-  const rotorPhase = (time / 50) % TAU;
-  for (const [rx, ry] of [[-5,-5],[5,5],[-5,5],[5,-5]]) {
-    ctx.beginPath();
-    ctx.arc(rx, ry, 2.4, 0, TAU);
-    ctx.stroke();
-    // Spinning blade hint
-    ctx.beginPath();
-    const a1 = rotorPhase + (rx + ry) * 0.5;
-    ctx.moveTo(rx + Math.cos(a1) * 2.4, ry + Math.sin(a1) * 2.4);
-    ctx.lineTo(rx - Math.cos(a1) * 2.4, ry - Math.sin(a1) * 2.4);
-    ctx.stroke();
-  }
-  // Central body
-  ctx.fillStyle = c;
-  ctx.beginPath(); ctx.arc(0, 0, 2.4, 0, TAU); ctx.fill();
+  // Dark outline (paper-airplane / delta wing silhouette)
   ctx.fillStyle = '#1a1206';
-  ctx.beginPath(); ctx.arc(0, 0, 1.2, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(9.5, 0);              // nose tip
+  ctx.lineTo(-6, -5);              // back-left wing tip
+  ctx.lineTo(-3.5, 0);             // tail crease
+  ctx.lineTo(-6, 5);               // back-right wing tip
+  ctx.closePath();
+  ctx.fill();
+
+  // Faction-tinted upper half — gives the side identification at a glance
+  ctx.fillStyle = c;
+  ctx.beginPath();
+  ctx.moveTo(8.5, 0);
+  ctx.lineTo(-5, -4);
+  ctx.lineTo(-3, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Center crease — paper-airplane spine
+  ctx.strokeStyle = 'rgba(255, 240, 220, 0.55)';
+  ctx.lineWidth = 0.7 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(9.5, 0);
+  ctx.lineTo(-3.5, 0);
+  ctx.stroke();
+
+  // Small tail propeller disc — only thing rotating, faint
+  const spin = (time / 25) % TAU;
+  ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+  ctx.lineWidth = 0.8 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(-4.5 + Math.cos(spin) * 1.4, Math.sin(spin) * 1.4);
+  ctx.lineTo(-4.5 - Math.cos(spin) * 1.4, -Math.sin(spin) * 1.4);
+  ctx.stroke();
+
   // Tiny forward indicator
   ctx.fillStyle = '#ff8a3a';
-  ctx.beginPath(); ctx.arc(2, 0, 0.6, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(7, 0, 0.7, 0, TAU); ctx.fill();
   ctx.restore();
 }
 

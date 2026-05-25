@@ -135,11 +135,13 @@ export function render() {
     drawRoadStyled(ctx, a, b, e ? e.blockage : 0, zoom);
   }
 
-  // Drone nets on edges — drawn as a fence-like parallel line.
-  // Higher level = thicker; charge level fades alpha.
+  // Drone nets on edges — faction-agnostic infrastructure (like road wreckage).
+  // Higher level = thicker; charge level fades alpha. Drawn in a neutral
+  // cream / sand tone so it reads as terrain, not as faction property.
+  const NET_COLOR = '#e8d6a8';
   for (const r of state.roads) {
     const e = getEdge(r.a, r.b);
-    if (!e || e.netLevel <= 0 || !e.netOwner) continue;
+    if (!e || e.netLevel <= 0) continue;
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
@@ -151,8 +153,8 @@ export function render() {
     const x2 = b.x + px * off, y2 = b.y + py * off;
     const maxCh = 60;                           // NET_CHARGES_LEVEL[NET_LEVEL_MAX] = 60
     const chargeFrac = Math.max(0.25, Math.min(1, e.netCharges / maxCh));
-    ctx.strokeStyle = COLOR[e.netOwner];
-    ctx.globalAlpha = 0.5 + 0.45 * chargeFrac;
+    ctx.strokeStyle = NET_COLOR;
+    ctx.globalAlpha = 0.55 + 0.4 * chargeFrac;
     ctx.lineWidth = (1.1 + e.netLevel * 0.6) / zoom;
     ctx.beginPath();
     ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
@@ -174,7 +176,7 @@ export function render() {
     // Compact label near the midpoint
     const mx = (a.x + b.x) / 2 + px * (off + 10);
     const my = (a.y + b.y) / 2 + py * (off + 10);
-    ctx.fillStyle = COLOR[e.netOwner];
+    ctx.fillStyle = NET_COLOR;
     ctx.font = `bold ${10 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`L${e.netLevel} ${e.netCharges}`, mx, my);

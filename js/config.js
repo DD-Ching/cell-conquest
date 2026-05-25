@@ -43,6 +43,13 @@ export const NET_BUILD_TIME = 8;
 export const NET_HP = 80;
 export const NET_DAMAGE_MULT = 0.2;     // drone damage multiplier on protected node
 
+// Tank / cannon — anti-ground (and anti-drone, anti-turret) generalist tower.
+// Longer range than AA but lower DPS per target.
+export const TANK_BUILD_TIME = 12;
+export const TANK_HP = 130;
+export const TANK_RADIUS = 240;
+export const TANK_DPS = 8;
+
 // Drone
 export const DRONE_HP_AIR = 30;
 export const DRONE_SPEED = 130;

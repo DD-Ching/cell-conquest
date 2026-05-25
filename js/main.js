@@ -12,10 +12,10 @@ import { clampCamera, zoomBy } from './camera.js';
 import {
   placeNodes, buildRoads, adjustHubSizes, findPath, nodeAt,
 } from './world.js';
-import { sendFleet, simulateFleets } from './fleets.js';
+import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
   resetEngineering, placeTurretAt,
-  updateDrones, updateAntiAir, updateBuildings, updateTracers,
+  updateDrones, updateAntiAir, updateTanks, updateBuildings, updateTracers,
 } from './engineering.js';
 import { aiTick } from './ai.js';
 import { nnLoad, nnResetGame } from './nn.js';
@@ -134,6 +134,7 @@ function simulate(dt) {
   }
   updateBuildings(dt);
   updateAntiAir(dt);
+  updateTanks(dt);
   updateDrones(dt);
   simulateFleets(dt);
 }
@@ -274,10 +275,19 @@ function attachInput() {
       }
     } else if (d.mode === 'send') {
       const releaseNode = nodeAt(wx, wy);
-      if (releaseNode && releaseNode.id !== d.originNode.id) {
-        const sources = state.selectedIds.has(d.originNode.id)
-          ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
-          : [d.originNode];
+      // First check: did we release on an enemy turret? → assault dispatch.
+      const targetTurret = state.turrets.find(t => t.owner !== 'player'
+        && Math.hypot(t.x - wx, t.y - wy) < 14);
+      const sources = state.selectedIds.has(d.originNode.id)
+        ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
+        : [d.originNode];
+      if (targetTurret) {
+        for (const from of sources) {
+          if (!from || from.owner !== 'player' || from.units < 2) continue;
+          const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
+          assaultTurret(from, targetTurret, amt);
+        }
+      } else if (releaseNode && releaseNode.id !== d.originNode.id) {
         for (const from of sources) {
           if (!from || from.owner !== 'player' || from.id === releaseNode.id || from.units < 2) continue;
           const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
@@ -330,9 +340,10 @@ function attachInput() {
       const i = SPEEDS.indexOf(state.timeScale);
       state.timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
     }
-    // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net. Click world to place.
-    if (k === 'q' || k === 'f' || k === 'n') {
-      const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory' : 'net';
+    // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net, T=Tank. Click world to place.
+    if (k === 'q' || k === 'f' || k === 'n' || k === 't') {
+      const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory'
+                 : (k === 'n') ? 'net'     : 'tank';
       state.placeMode = { type, byOwner: 'player' };
     }
   });

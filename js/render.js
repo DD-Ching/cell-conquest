@@ -3,11 +3,11 @@
 // Reads from state; never mutates game data (only DOM + canvas).
 // =====================================================
 import { state } from './state.js';
-import { WORLD_W, WORLD_H, AA_RADIUS, DRONE_HP_AIR, BLOCKAGE_HEAVY } from './config.js';
+import { WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR, BLOCKAGE_HEAVY } from './config.js';
 import { COLOR, GLOW, FACTIONS } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { findPath, nodeAt } from './world.js';
-import { getEdge } from './engineering.js';
+import { getEdge, TURRET_RANGES } from './engineering.js';
 
 // =====================================================
 // HUD (DOM)
@@ -170,14 +170,17 @@ export function render() {
     ctx.stroke();
   }
 
-  // AA radius rings (active anti-air turrets)
+  // Range rings — AA and tank (active only). Tank ring slightly warmer alpha.
   for (const t of state.turrets) {
-    if (t.type !== 'antiair' || !t.active) continue;
-    ctx.strokeStyle = COLOR[t.owner] + '30';
+    if (!t.active) continue;
+    const r = TURRET_RANGES[t.type];
+    if (!r) continue;
+    const alpha = t.type === 'tank' ? '50' : '30';
+    ctx.strokeStyle = COLOR[t.owner] + alpha;
     ctx.lineWidth = 1 / zoom;
     ctx.setLineDash([6 / zoom, 6 / zoom]);
     ctx.beginPath();
-    ctx.arc(t.x, t.y, AA_RADIUS, 0, Math.PI * 2);
+    ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -266,7 +269,8 @@ export function render() {
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${12 / zoom}px sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const glyph = t.type === 'antiair' ? 'A' : t.type === 'factory' ? 'F' : 'N';
+    const glyph = t.type === 'antiair' ? 'A' : t.type === 'factory' ? 'F'
+                : t.type === 'tank'    ? 'T' : 'N';
     ctx.fillText(glyph, t.x, t.y);
     // Progress arc while building
     if (!t.active) {
@@ -294,14 +298,17 @@ export function render() {
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${12 / zoom}px sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const glyph = state.placeMode.type === 'antiair' ? 'A' : state.placeMode.type === 'factory' ? 'F' : 'N';
+    const glyph = state.placeMode.type === 'antiair' ? 'A'
+                : state.placeMode.type === 'factory' ? 'F'
+                : state.placeMode.type === 'tank'    ? 'T' : 'N';
     ctx.fillText(glyph, wx, wy);
-    if (state.placeMode.type === 'antiair') {
+    const previewR = TURRET_RANGES[state.placeMode.type];
+    if (previewR) {
       ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
       ctx.lineWidth = 1 / zoom;
       ctx.setLineDash([5 / zoom, 5 / zoom]);
       ctx.beginPath();
-      ctx.arc(wx, wy, AA_RADIUS, 0, Math.PI * 2);
+      ctx.arc(wx, wy, previewR, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -312,7 +319,7 @@ export function render() {
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     let angle = 0;
-    if (f.kind === 'deploy' && f.offroad) {
+    if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) {
       angle = Math.atan2(f.finalY - f.y, f.finalX - f.x);
     } else if (f.path && f.segIdx < f.path.length - 1) {
       const segB = state.nodes[f.path[f.segIdx + 1]];

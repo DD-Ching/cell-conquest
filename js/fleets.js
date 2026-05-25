@@ -32,22 +32,58 @@ export function sendFleet(from, to, amount) {
   return true;
 }
 
+/** Dispatch an "assault" fleet — troops that road-travel to the closest own
+ *  anchor node then leave the road to suicide-attack an enemy turret. */
+export function assaultTurret(from, turret, amount) {
+  amount = Math.floor(amount);
+  if (amount < 1) return false;
+  amount = Math.min(amount, Math.floor(from.units));
+  if (amount < 1) return false;
+  // Anchor: nearest own node to the turret.
+  let anchor = from, anchorDist = Math.hypot(from.x - turret.x, from.y - turret.y);
+  for (const n of state.nodes) {
+    if (n.owner !== from.owner) continue;
+    const d = Math.hypot(n.x - turret.x, n.y - turret.y);
+    if (d < anchorDist) { anchorDist = d; anchor = n; }
+  }
+  const path = (from.id === anchor.id) ? [from.id] : findPath(from.id, anchor.id, from.owner);
+  if (!path) { from.flash = Math.max(from.flash, 0.6); return false; }
+  from.units -= amount;
+  state.fleets.push({
+    kind: 'assault', owner: from.owner, units: amount, path,
+    segIdx: 0, segTraveled: 0,
+    x: from.x, y: from.y,
+    finalX: turret.x, finalY: turret.y,
+    targetTurretId: turret.id,
+    offroad: false,
+  });
+  return true;
+}
+
 /** Advance path-based fleets (troops + deploy-engineers). Drones in engineering.js. */
 export function simulateFleets(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind === 'drone') continue;
 
-    // Deploy engineers may run off-road after the path ends.
-    if (f.kind === 'deploy' && f.offroad) {
+    // Deploy + assault: off-road final leg to a world point
+    if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) {
       const dx = f.finalX - f.x, dy = f.finalY - f.y;
       const d = Math.hypot(dx, dy);
       if (d < 4) {
-        engineerArrivedAtTurret(f);
+        if (f.kind === 'deploy') {
+          engineerArrivedAtTurret(f);
+        } else {
+          // Assault — deliver damage equal to remaining units, then suicide.
+          const t = state.turrets.find(tt => tt.id === f.targetTurretId);
+          if (t && t.owner !== f.owner) t.hp -= Math.max(0, f.units) * 8;
+        }
         state.fleets.splice(i, 1);
         continue;
       }
-      const step = ENG_SPEED * OFFROAD_SPEED_MUL * dt;
+      const speed = (f.kind === 'deploy') ? ENG_SPEED * OFFROAD_SPEED_MUL
+                                          : FLEET_SPEED * OFFROAD_SPEED_MUL;
+      const step = speed * dt;
       f.x += (dx / d) * step;
       f.y += (dy / d) * step;
       continue;
@@ -69,12 +105,12 @@ export function simulateFleets(dt) {
 
     if (f.segIdx >= f.path.length - 1) {
       // Road portion done.
-      if (f.kind === 'deploy') {
-        // Begin off-road leg toward the world-coord turret site.
+      if (f.kind === 'deploy' || f.kind === 'assault') {
+        // Begin off-road leg toward the world-coord target (turret site).
         const anchor = state.nodes[f.path[f.path.length - 1]];
         f.x = anchor.x; f.y = anchor.y;
         f.offroad = true;
-        continue;          // process again next tick
+        continue;
       }
       const target = state.nodes[f.path[f.path.length - 1]];
       if (target) arriveAt({ owner: f.owner, units: Math.floor(f.units) }, target);

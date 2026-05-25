@@ -16,6 +16,7 @@ import {
   AA_BUILD_TIME, AA_HP, AA_RADIUS, AA_DPS,
   DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T,
   NET_BUILD_TIME, NET_HP, NET_DAMAGE_MULT,
+  TANK_BUILD_TIME, TANK_HP, TANK_RADIUS, TANK_DPS,
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE,
   BLOCKAGE_DECAY, BLOCKAGE_PER_WRECK,
 } from './config.js';
@@ -45,9 +46,16 @@ export function resetEngineering() {
 
 // ---- Build specs ----
 const BUILD_SPECS = {
-  antiair: { time: AA_BUILD_TIME, hp: AA_HP },
-  factory: { time: DF_BUILD_TIME, hp: DF_HP },
-  net:     { time: NET_BUILD_TIME, hp: NET_HP },
+  antiair: { time: AA_BUILD_TIME,   hp: AA_HP },
+  factory: { time: DF_BUILD_TIME,   hp: DF_HP },
+  net:     { time: NET_BUILD_TIME,  hp: NET_HP },
+  tank:    { time: TANK_BUILD_TIME, hp: TANK_HP },
+};
+
+/** Visible turret range — used for AA and tank rings. */
+export const TURRET_RANGES = {
+  antiair: AA_RADIUS,
+  tank:    TANK_RADIUS,
 };
 
 let nextTurretId = 1;
@@ -212,6 +220,64 @@ export function updateAntiAir(dt) {
   }
 }
 
+/** Tanks (anti-ground / anti-everything). Constantly damages enemy fleets,
+ *  drones and turrets in range. Lower DPS than AA but generalist + longer range. */
+export function updateTanks(dt) {
+  const tracerRate = 3;
+  for (const t of state.turrets) {
+    if (t.type !== 'tank' || !t.active) continue;
+    // Damage enemy fleets in range
+    for (let i = state.fleets.length - 1; i >= 0; i--) {
+      const f = state.fleets[i];
+      if (f.owner === t.owner) continue;
+      const d = Math.hypot(f.x - t.x, f.y - t.y);
+      if (d > TANK_RADIUS) continue;
+      // Damage units count (or drone hp)
+      if (f.kind === 'drone') {
+        f.hp -= TANK_DPS * dt;
+      } else {
+        f.units -= TANK_DPS * 0.6 * dt;          // troops less squishy than drones
+        if (f.units < 0.5) {
+          spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
+          state.fleets.splice(i, 1); continue;
+        }
+      }
+      if (Math.random() < tracerRate * dt) {
+        state.tracers.push({
+          x1: t.x, y1: t.y, x2: f.x, y2: f.y,
+          age: 0, maxAge: 0.22, color: COLOR[t.owner],
+        });
+      }
+    }
+    // Damage enemy turrets in range
+    for (const o of state.turrets) {
+      if (o.owner === t.owner) continue;
+      const d = Math.hypot(o.x - t.x, o.y - t.y);
+      if (d > TANK_RADIUS) continue;
+      o.hp -= TANK_DPS * 0.7 * dt;
+      if (Math.random() < tracerRate * 0.4 * dt) {
+        state.tracers.push({
+          x1: t.x, y1: t.y, x2: o.x, y2: o.y,
+          age: 0, maxAge: 0.22, color: COLOR[t.owner],
+        });
+      }
+    }
+  }
+}
+
+/** Cinematic "爆肥" explosion when a turret (esp. tank) dies. */
+export function spawnBigExplosion(x, y, color = '#ff8a3a', n = 20) {
+  for (let k = 0; k < n; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 80 + Math.random() * 160;
+    state.particles.push({
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 0.6 + Math.random() * 0.3, maxLife: 0.9,
+      color: k % 3 === 0 ? '#ffe080' : color,
+    });
+  }
+}
+
 export function updateTracers(dt) {
   for (let i = state.tracers.length - 1; i >= 0; i--) {
     state.tracers[i].age += dt;
@@ -224,7 +290,11 @@ export function updateBuildings(dt) {
   // Per-turret update
   for (let i = state.turrets.length - 1; i >= 0; i--) {
     const t = state.turrets[i];
-    if (t.hp <= 0) { state.turrets.splice(i, 1); continue; }
+    if (t.hp <= 0) {
+      spawnBigExplosion(t.x, t.y, t.type === 'tank' ? '#ffaa55' : '#ff8a3a',
+                        t.type === 'tank' ? 32 : 18);
+      state.turrets.splice(i, 1); continue;
+    }
     // Construction
     if (!t.active) {
       if (t.engineers > 0) {

@@ -51,6 +51,10 @@ export const state = {
   // Player Hold-Fire toggle: when true, player's drone factories stop launching
   // and accumulate `dronesReady` instead. Toggling off launches the whole salvo.
   holdFire: false,
+  // Designated salvo target while Hold-Fire is on. Click an enemy turret or
+  // node during Hold-Fire to mark it; on release, ALL stockpiled drones go
+  // there. null = auto-target via the usual scoring.
+  salvoTarget: null,
 
   // Time
   gameOver: false,

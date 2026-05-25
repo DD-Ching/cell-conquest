@@ -49,6 +49,7 @@ export function resetEngineering() {
   state.shells = [];
   state.placeMode = null;
   state.holdFire = false;
+  state.salvoTarget = null;
   state._nextFleetId = 1;
   for (const n of state.nodes) {
     n.engineers = 0;
@@ -733,19 +734,42 @@ function launchOneDroneFrom(t) {
   spawnDrone(t.x, t.y, t.owner, pick.target);
 }
 
-/** Flush every player factory's stockpile in one big salvo. Drones are
- *  diversified across the top-K targets so they spread across enemy AAs
- *  instead of stacking on one. Tiny position jitter prevents visual pileup. */
+/** Resolve the player's salvoTarget against current state. Returns a fresh
+ *  target descriptor or null if the marked entity is no longer hostile. */
+function resolveSalvoTarget() {
+  const s = state.salvoTarget;
+  if (!s) return null;
+  if (s.kind === 'turret') {
+    const t = state.turrets.find(tt => tt.id === s.id);
+    if (t && t.owner !== 'player') return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+  } else if (s.kind === 'node') {
+    const n = state.nodes[s.id];
+    if (n && n.owner !== 'player') return { kind: 'node', id: n.id, x: n.x, y: n.y };
+  }
+  return null;
+}
+
+/** Flush every player factory's stockpile in one big salvo. If the player
+ *  designated a salvoTarget (clicked an enemy while Hold-Fire was on), ALL
+ *  drones go there. Otherwise, diversify across top-5 auto-picked targets. */
 export function releasePlayerStockpile() {
+  const fixedTarget = resolveSalvoTarget();
   let launched = 0;
   for (const t of state.turrets) {
     if (t.owner !== 'player' || t.type !== 'factory') continue;
     if (!t.dronesReady) continue;
-    const cands = pickDroneTargetsFor(t);
-    if (cands.length === 0) { t.dronesReady = 0; continue; }
-    const topK = cands.slice(0, Math.min(5, cands.length));
+
+    let pool;
+    if (fixedTarget) {
+      pool = [{ target: fixedTarget }];
+    } else {
+      const cands = pickDroneTargetsFor(t);
+      if (cands.length === 0) { t.dronesReady = 0; continue; }
+      pool = cands.slice(0, Math.min(5, cands.length));
+    }
+
     for (let k = 0; k < t.dronesReady; k++) {
-      const pick = topK[k % topK.length];
+      const pick = pool[k % pool.length];
       const jx = (Math.random() - 0.5) * 14;
       const jy = (Math.random() - 0.5) * 14;
       spawnDrone(t.x + jx, t.y + jy, t.owner, pick.target);
@@ -754,6 +778,7 @@ export function releasePlayerStockpile() {
     t.dronesReady = 0;
     t.prodCooldown = DF_PRODUCTION_T;     // restart the normal cycle
   }
+  state.salvoTarget = null;               // consumed on release
   return launched;
 }
 

@@ -282,6 +282,23 @@ function attachInput() {
     const wy = e.clientY / state.zoom + state.cameraY;
     const d = state.drag;
     if (!d.moved) {
+      // Hold-Fire mode: a click on an enemy turret or enemy/neutral node
+      // designates it as the salvo target. On H release, the whole stockpile
+      // converges on this single point.
+      if (state.holdFire) {
+        const turretAt = state.turrets.find(tt => tt.owner !== 'player'
+          && Math.hypot(tt.x - wx, tt.y - wy) < 14);
+        if (turretAt) {
+          state.salvoTarget = { kind: 'turret', id: turretAt.id, x: turretAt.x, y: turretAt.y };
+          state.drag = null;
+          return;
+        }
+        if (d.originNode && d.originNode.owner !== 'player') {
+          state.salvoTarget = { kind: 'node', id: d.originNode.id, x: d.originNode.x, y: d.originNode.y };
+          state.drag = null;
+          return;
+        }
+      }
       if (!d.originNode) {
         if (!d.shift && !d.ctrl) state.selectedIds.clear();
       } else if (d.originNode.owner === 'player') {
@@ -342,7 +359,7 @@ function attachInput() {
     if (k === 's' || k === 'arrowdown')  { state.panKeys.down = true; e.preventDefault(); }
     if (k === 'a' || k === 'arrowleft')  { state.panKeys.left = true; e.preventDefault(); }
     if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
-    if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; }
+    if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; }
     if (k === 'r') newGame();
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

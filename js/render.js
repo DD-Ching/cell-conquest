@@ -577,6 +577,35 @@ export function render() {
     drawDragPreview(ctx, zoom);
   }
 
+  // Salvo-target marker — pulsing crosshair on the designated enemy
+  if (state.holdFire && state.salvoTarget) {
+    const s = state.salvoTarget;
+    let tx = s.x, ty = s.y;
+    if (s.kind === 'turret') {
+      const t2 = state.turrets.find(tt => tt.id === s.id);
+      if (t2) { tx = t2.x; ty = t2.y; }
+    } else if (s.kind === 'node') {
+      const n = state.nodes[s.id];
+      if (n) { tx = n.x; ty = n.y; }
+    }
+    const pulse = 0.6 + 0.4 * Math.sin(now / 200);
+    ctx.strokeStyle = `rgba(255, 80, 60, ${pulse})`;
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([6 / zoom, 4 / zoom]);
+    ctx.beginPath();
+    ctx.arc(tx, ty, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = `rgba(255, 80, 60, ${pulse * 0.9})`;
+    ctx.lineWidth = 1.4 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(tx - 34, ty); ctx.lineTo(tx - 16, ty);
+    ctx.moveTo(tx + 16, ty); ctx.lineTo(tx + 34, ty);
+    ctx.moveTo(tx, ty - 34); ctx.lineTo(tx, ty - 16);
+    ctx.moveTo(tx, ty + 16); ctx.lineTo(tx, ty + 34);
+    ctx.stroke();
+  }
+
   ctx.restore();
 
   // Hold-Fire screen-space banner (drawn after world transform restored)
@@ -585,18 +614,22 @@ export function render() {
     for (const t of state.turrets) {
       if (t.owner === 'player' && t.type === 'factory') total += t.dronesReady || 0;
     }
-    const text = `⏸  HOLD-FIRE  ${total} drone${total === 1 ? '' : 's'} ready  —  press H to launch salvo`;
+    const targeted = !!state.salvoTarget;
+    const text = targeted
+      ? `⏸  HOLD-FIRE  ${total} drones  →  TARGET LOCKED  —  H to strike, Esc to clear`
+      : `⏸  HOLD-FIRE  ${total} drone${total === 1 ? '' : 's'} ready  —  click an enemy to lock target, H to auto-launch`;
     const a = 0.85 + Math.sin(now / 250) * 0.15;
     ctx.font = 'bold 14px ui-monospace, monospace';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const w = ctx.measureText(text).width + 28;
     const cx = state.W / 2, cy = 52;
-    ctx.fillStyle = `rgba(255, 200, 90, ${a * 0.22})`;
+    const baseTint = targeted ? '255, 110, 90' : '255, 200, 90';
+    ctx.fillStyle = `rgba(${baseTint}, ${a * 0.22})`;
     ctx.fillRect(cx - w / 2, cy, w, 30);
-    ctx.strokeStyle = `rgba(255, 200, 90, ${a})`;
+    ctx.strokeStyle = `rgba(${baseTint}, ${a})`;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(cx - w / 2, cy, w, 30);
-    ctx.fillStyle = `rgba(255, 220, 130, ${a})`;
+    ctx.fillStyle = targeted ? `rgba(255, 200, 180, ${a})` : `rgba(255, 220, 130, ${a})`;
     ctx.fillText(text, cx, cy + 8);
   }
 }

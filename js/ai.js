@@ -82,8 +82,12 @@ export function aiTick(owner, dt) {
   }
   const topEnemyShare = Math.max(0, ...Object.values(sharesByOwner)) / state.nodes.length;
   const farBehind = myShare < 0.18 && topEnemyShare > 0.40;
-  if (antiTurtle) aggression *= 1.5;
-  if (farBehind) aggression *= 1.8;
+  // Anti-turtle: MIRROR the enemy's defensive posture. Throwing waves into
+  // a wall just feeds tanks. Stay normal-aggression so Phase 2 naturally
+  // skips fortified targets (turret threat is now part of `required`), and
+  // pour the spare capacity into our own turrets + factories below.
+  // (Drones bypass tanks; that's the actual wall-breaker.)
+  if (farBehind) aggression *= 1.3;
   // Opening burst — grab the map before the player turtles up
   if (state.elapsed < 35) aggression *= 1.3;
 
@@ -275,6 +279,9 @@ export function aiTick(owner, dt) {
     const minThreshold = required / aggression;
     const availForce = attackers.reduce((s, a) => s + attackerAvail(a), 0);
     if (availForce < minThreshold) continue;
+    // Hard skip: if the target is heavily protected by tanks (the wall trap),
+    // don't feed the meat grinder. Wait for drones to chip the wall down.
+    if (tankThreat > 0 && tankThreat > availForce * 0.45) continue;
 
     const adjCount = state.adj.get(tId).size;
     const sat = target.units / Math.max(1, target.capacity);
@@ -294,9 +301,7 @@ export function aiTick(owner, dt) {
 
   if (bestAtt) {
     bestAtt.attackers.sort((a, b) => dist(a, bestAtt.target) - dist(b, bestAtt.target));
-    // Anti-turtle / far-behind: send a heavier wave so it actually breaks through.
-    const overcommit = farBehind ? 1.8 : antiTurtle ? 1.5 : 1.0;
-    let toSend = (bestAtt.required + 6) * overcommit;
+    let toSend = bestAtt.required + 6;
     for (const a of bestAtt.attackers) {
       if (toSend <= 0) break;
       const max = Math.floor(attackerAvail(a));

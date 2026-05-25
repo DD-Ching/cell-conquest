@@ -443,12 +443,12 @@ export function render() {
       if (t.dronesReady > 0) {
         ctx.fillStyle = 'rgba(255, 200, 90, 0.9)';
         ctx.beginPath();
-        ctx.arc(t.x + 14, t.y - 16, 7, 0, Math.PI * 2);
+        ctx.arc(t.x + 42, t.y - 48, 21, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#0a0604';
-        ctx.font = `bold ${11 / zoom}px ui-monospace, monospace`;
+        ctx.font = `bold ${22 / zoom}px ui-monospace, monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(t.dronesReady, t.x + 14, t.y - 16);
+        ctx.fillText(t.dronesReady, t.x + 42, t.y - 48);
       }
     } else if (t.type === 'artillery') {
       // Aim toward the densest visible enemy point (rough — just nearest target)
@@ -467,18 +467,18 @@ export function render() {
     // Progress arc while building (any type)
     if (!t.active) {
       ctx.strokeStyle = '#ffd066';
-      ctx.lineWidth = 2.2 / zoom;
+      ctx.lineWidth = 6 / zoom;
       ctx.beginPath();
-      ctx.arc(t.x, t.y, 15, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
+      ctx.arc(t.x, t.y, 45, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
       ctx.stroke();
     }
     // HP bar (only if damaged)
     if (t.active && t.hp < t.hpMax) {
-      const bw = 26, frac = t.hp / t.hpMax;
+      const bw = 78, frac = t.hp / t.hpMax;
       ctx.fillStyle = 'rgba(20,20,20,0.6)';
-      ctx.fillRect(t.x - bw / 2, t.y + 16, bw, 2.5);
+      ctx.fillRect(t.x - bw / 2, t.y + 48, bw, 7);
       ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
-      ctx.fillRect(t.x - bw / 2, t.y + 16, bw * frac, 2.5);
+      ctx.fillRect(t.x - bw / 2, t.y + 48, bw * frac, 7);
     }
   }
 
@@ -558,12 +558,12 @@ export function render() {
     } else {
       drawTroopSprite(ctx, f.x, f.y, angle, f.units, f.owner, zoom);
     }
-    // Unit count label
+    // Unit count label — positioned well above the bigger sprite
     ctx.fillStyle = COLOR[f.owner];
-    ctx.font = `bold ${13 / zoom}px ui-monospace, monospace`;
+    ctx.font = `bold ${14 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    if (f.kind === 'engineer' || f.kind === 'deploy') ctx.fillText('⚙', f.x, f.y - 14 / zoom);
-    else ctx.fillText(Math.floor(f.units), f.x, f.y - 14 / zoom);
+    if (f.kind === 'engineer' || f.kind === 'deploy') ctx.fillText('⚙', f.x, f.y - 42);
+    else ctx.fillText(Math.floor(f.units), f.x, f.y - 42);
   }
 
   // Drones — quadcopter sprite with rotor blur
@@ -572,11 +572,11 @@ export function render() {
     const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
     drawDroneSprite(ctx, f.x, f.y, angle, f.owner, zoom, now);
     if (f.hp < DRONE_HP_AIR) {
-      const bw = 12, frac = Math.max(0, f.hp) / DRONE_HP_AIR;
+      const bw = 36, frac = Math.max(0, f.hp) / DRONE_HP_AIR;
       ctx.fillStyle = 'rgba(20,20,20,0.5)';
-      ctx.fillRect(f.x - bw / 2, f.y + 8, bw, 2);
+      ctx.fillRect(f.x - bw / 2, f.y + 24, bw, 6);
       ctx.fillStyle = '#ff6678';
-      ctx.fillRect(f.x - bw / 2, f.y + 8, bw * frac, 2);
+      ctx.fillRect(f.x - bw / 2, f.y + 24, bw * frac, 6);
     }
   }
 

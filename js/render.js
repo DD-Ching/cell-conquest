@@ -5,12 +5,16 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR,
-  BLOCKAGE_HEAVY, NET_PICK_R, NET_LEVEL_MAX,
+  NET_PICK_R, NET_LEVEL_MAX,
 } from './config.js';
 import { COLOR, GLOW, FACTIONS } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { findPath, nodeAt, roadAt } from './world.js';
 import { getEdge, TURRET_RANGES } from './engineering.js';
+import {
+  drawRoadStyled, drawTroopSprite, drawEngineerSprite, drawDroneSprite,
+  drawAATurret, drawTankTurret, drawFactoryTurret,
+} from './sprites.js';
 
 // =====================================================
 // HUD (DOM)
@@ -124,26 +128,11 @@ export function render() {
   ctx.lineWidth = 1 / zoom;
   ctx.strokeRect(0, 0, WORLD_W, WORLD_H);
 
-  // Roads (color by blockage) — sand → bright orange-red as blockage rises
+  // Roads — thick TD-style path with edge highlights
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const e = getEdge(r.a, r.b);
-    const blk = e ? e.blockage : 0;
-    if (blk > 0.05) {
-      const t = Math.min(1, blk);
-      const cr = Math.floor(180 + 60 * t), cg = Math.floor(140 - 80 * t), cb = Math.floor(100 - 70 * t);
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.5 + 0.4 * t})`;
-      ctx.lineWidth = (1.3 + 1.8 * t) / zoom;
-      if (blk > BLOCKAGE_HEAVY) ctx.setLineDash([6 / zoom, 4 / zoom]);
-    } else {
-      ctx.strokeStyle = 'rgba(200, 160, 110, 0.32)';
-      ctx.lineWidth = 1.3 / zoom;
-    }
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    drawRoadStyled(ctx, a, b, e ? e.blockage : 0, zoom);
   }
 
   // Drone nets on edges — drawn as a fence-like parallel line.
@@ -305,36 +294,39 @@ export function render() {
     }
   }
 
-  // Turrets (world-coord buildings: A / F / N)
+  // Turrets — distinct sprites per type
+  const now = performance.now();
   for (const t of state.turrets) {
-    const iconR = 8;
-    ctx.fillStyle = t.active ? COLOR[t.owner] : 'rgba(120,120,120,0.75)';
-    ctx.beginPath(); ctx.arc(t.x, t.y, iconR, 0, Math.PI * 2); ctx.fill();
-    // Inner dark
-    ctx.fillStyle = 'rgba(10,5,2,0.45)';
-    ctx.beginPath(); ctx.arc(t.x, t.y, iconR - 2.5, 0, Math.PI * 2); ctx.fill();
-    // Glyph
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${12 / zoom}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const glyph = t.type === 'antiair' ? 'A' : t.type === 'factory' ? 'F'
-                : t.type === 'tank'    ? 'T' : 'N';
-    ctx.fillText(glyph, t.x, t.y);
-    // Progress arc while building
+    if (t.type === 'antiair') {
+      drawAATurret(ctx, t.x, t.y, t.owner, t.active, zoom, now);
+    } else if (t.type === 'tank') {
+      // Aim at nearest enemy fleet (visual flavor; firing is omnidirectional)
+      let aimAngle = 0, aimD = Infinity;
+      for (const f of state.fleets) {
+        if (f.owner === t.owner) continue;
+        if (f.kind === 'drone') continue;
+        const d = Math.hypot(f.x - t.x, f.y - t.y);
+        if (d < aimD) { aimD = d; aimAngle = Math.atan2(f.y - t.y, f.x - t.x); }
+      }
+      drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle);
+    } else if (t.type === 'factory') {
+      drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
+    }
+    // Progress arc while building (any type)
     if (!t.active) {
       ctx.strokeStyle = '#ffd066';
-      ctx.lineWidth = 1.6 / zoom;
+      ctx.lineWidth = 1.8 / zoom;
       ctx.beginPath();
-      ctx.arc(t.x, t.y, iconR + 2, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
+      ctx.arc(t.x, t.y, 11, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2);
       ctx.stroke();
     }
     // HP bar (only if damaged)
     if (t.active && t.hp < t.hpMax) {
-      const bw = 18, frac = t.hp / t.hpMax;
+      const bw = 20, frac = t.hp / t.hpMax;
       ctx.fillStyle = 'rgba(20,20,20,0.6)';
-      ctx.fillRect(t.x - bw / 2, t.y + iconR + 2, bw, 2);
+      ctx.fillRect(t.x - bw / 2, t.y + 11, bw, 2);
       ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
-      ctx.fillRect(t.x - bw / 2, t.y + iconR + 2, bw * frac, 2);
+      ctx.fillRect(t.x - bw / 2, t.y + 11, bw * frac, 2);
     }
   }
 
@@ -369,16 +361,16 @@ export function render() {
         ctx.beginPath(); ctx.arc(wx, wy, 4, 0, Math.PI * 2); ctx.fill();
       }
     } else {
-      // Turret world-point preview
-      ctx.fillStyle = 'rgba(255, 220, 130, 0.6)';
-      ctx.beginPath(); ctx.arc(wx, wy, 8, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = `bold ${12 / zoom}px sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const glyph = state.placeMode.type === 'antiair' ? 'A'
-                  : state.placeMode.type === 'factory' ? 'F'
-                  : 'T';
-      ctx.fillText(glyph, wx, wy);
+      // Turret world-point preview — render the actual sprite (semi-transparent)
+      ctx.globalAlpha = 0.65;
+      if (state.placeMode.type === 'antiair') {
+        drawAATurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now);
+      } else if (state.placeMode.type === 'tank') {
+        drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0);
+      } else if (state.placeMode.type === 'factory') {
+        drawFactoryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now, false);
+      }
+      ctx.globalAlpha = 1;
       const previewR = TURRET_RANGES[state.placeMode.type];
       if (previewR) {
         ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
@@ -392,8 +384,7 @@ export function render() {
     }
   }
 
-  // Engineer fleet rendering — deploy variant also rendered here
-  // Fleet ships (troops + engineers / deploy — drones rendered next)
+  // Ground fleets — distinct sprites per kind, size-tiered for troops
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     let angle = 0;
@@ -405,26 +396,15 @@ export function render() {
     } else if (!f.path) {
       continue;
     }
-    ctx.save();
-    ctx.translate(f.x, f.y);
-    ctx.rotate(angle);
     if (f.kind === 'engineer' || f.kind === 'deploy') {
-      ctx.fillStyle = '#ffd066';
-      ctx.fillRect(-5, -4, 10, 8);
-      ctx.fillStyle = COLOR[f.owner];
-      ctx.fillRect(-2, -6, 4, 3);
+      drawEngineerSprite(ctx, f.x, f.y, angle, f.owner, zoom);
+    } else if (f.kind === 'assault') {
+      // Assault wave — render as the heaviest troop tier regardless of unit count
+      drawTroopSprite(ctx, f.x, f.y, angle, Math.max(40, f.units), f.owner, zoom);
     } else {
-      ctx.fillStyle = COLOR[f.owner];
-      const sz = Math.min(11, 4 + Math.log(f.units + 1) * 1.3);
-      ctx.beginPath();
-      ctx.moveTo(sz, 0);
-      ctx.lineTo(-sz * 0.6, -sz * 0.6);
-      ctx.lineTo(-sz * 0.3, 0);
-      ctx.lineTo(-sz * 0.6, sz * 0.6);
-      ctx.closePath();
-      ctx.fill();
+      drawTroopSprite(ctx, f.x, f.y, angle, f.units, f.owner, zoom);
     }
-    ctx.restore();
+    // Unit count label
     ctx.fillStyle = COLOR[f.owner];
     ctx.font = `bold ${13 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
@@ -432,28 +412,17 @@ export function render() {
     else ctx.fillText(Math.floor(f.units), f.x, f.y - 14 / zoom);
   }
 
-  // Drones (straight-line, X-shape)
+  // Drones — quadcopter sprite with rotor blur
   for (const f of state.fleets) {
     if (f.kind !== 'drone') continue;
     const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
-    ctx.save();
-    ctx.translate(f.x, f.y);
-    ctx.rotate(angle);
-    ctx.strokeStyle = COLOR[f.owner];
-    ctx.lineWidth = 1.6 / zoom;
-    ctx.beginPath();
-    ctx.moveTo(-4, -4); ctx.lineTo(4, 4);
-    ctx.moveTo(-4, 4); ctx.lineTo(4, -4);
-    ctx.stroke();
-    ctx.fillStyle = COLOR[f.owner];
-    ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    drawDroneSprite(ctx, f.x, f.y, angle, f.owner, zoom, now);
     if (f.hp < DRONE_HP_AIR) {
       const bw = 12, frac = Math.max(0, f.hp) / DRONE_HP_AIR;
       ctx.fillStyle = 'rgba(20,20,20,0.5)';
-      ctx.fillRect(f.x - bw / 2, f.y + 7, bw, 2);
+      ctx.fillRect(f.x - bw / 2, f.y + 8, bw, 2);
       ctx.fillStyle = '#ff6678';
-      ctx.fillRect(f.x - bw / 2, f.y + 7, bw * frac, 2);
+      ctx.fillRect(f.x - bw / 2, f.y + 8, bw * frac, 2);
     }
   }
 

@@ -24,6 +24,7 @@ import {
   buildHUD, updateHUD, render, renderMinimap,
   makeSnow, updateSnow, updateParticles,
 } from './render.js';
+import { loadAssets } from './sprites.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -382,6 +383,7 @@ function attachInput() {
 resize();
 buildHUD();
 attachInput();
+loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
 newGame();
 loop();
 nnLoad();

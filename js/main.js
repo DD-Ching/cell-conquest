@@ -230,15 +230,26 @@ function attachInput() {
     const wx = e.clientX / state.zoom + state.cameraX;
     const wy = e.clientY / state.zoom + state.cameraY;
 
-    // Placement mode: clicking confirms placement.
-    // 'net' targets a road segment (per-edge); other types target a world point.
+    // Placement mode: clicking confirms placement. Drag to PAINT a row of them.
+    // Shift held at release keeps the mode active for the next placement.
+    // 'net' targets road segments (per-edge); other types target world points.
     if (state.placeMode) {
-      if (state.placeMode.type === 'net') {
+      const type = state.placeMode.type;
+      const byOwner = state.placeMode.byOwner;
+      // First placement at the click point
+      if (type === 'net') {
         const r = roadAt(wx, wy, NET_PICK_R);
-        if (r && placeNetOnEdge(r.a, r.b, state.placeMode.byOwner)) state.placeMode = null;
+        if (r) placeNetOnEdge(r.a, r.b, byOwner);
       } else {
-        if (placeTurretAt(wx, wy, state.placeMode.type, state.placeMode.byOwner)) state.placeMode = null;
+        placeTurretAt(wx, wy, type, byOwner);
       }
+      // Start paint state so dragging lays more along the path
+      state.painting = {
+        type, byOwner,
+        lastX: wx, lastY: wy,
+        step: type === 'net' ? 30 : 40,    // world-px between drag placements
+        placedEdges: new Set(),
+      };
       return;
     }
 
@@ -256,6 +267,40 @@ function attachInput() {
       state.cameraX = state.middlePan.startCamX - (e.clientX - state.middlePan.startSX) / state.zoom;
       state.cameraY = state.middlePan.startCamY - (e.clientY - state.middlePan.startSY) / state.zoom;
       clampCamera();
+      return;
+    }
+    // Drag-paint: while in placeMode and the mouse is held, lay down more
+    // placements at fixed intervals along the drag path.
+    if (state.painting) {
+      const wx = e.clientX / state.zoom + state.cameraX;
+      const wy = e.clientY / state.zoom + state.cameraY;
+      const dx = wx - state.painting.lastX;
+      const dy = wy - state.painting.lastY;
+      const d = Math.hypot(dx, dy);
+      const step = state.painting.step;
+      if (d >= step) {
+        const ux = dx / d, uy = dy / d;
+        const steps = Math.floor(d / step);
+        for (let i = 1; i <= steps; i++) {
+          const px = state.painting.lastX + ux * step * i;
+          const py = state.painting.lastY + uy * step * i;
+          if (state.painting.type === 'net') {
+            const r = roadAt(px, py, NET_PICK_R);
+            if (r) {
+              const ek = r.a < r.b ? `${r.a}_${r.b}` : `${r.b}_${r.a}`;
+              if (!state.painting.placedEdges.has(ek)) {
+                if (placeNetOnEdge(r.a, r.b, state.painting.byOwner)) {
+                  state.painting.placedEdges.add(ek);
+                }
+              }
+            }
+          } else {
+            placeTurretAt(px, py, state.painting.type, state.painting.byOwner);
+          }
+        }
+        state.painting.lastX += ux * step * steps;
+        state.painting.lastY += uy * step * steps;
+      }
       return;
     }
     if (!state.drag) return;
@@ -276,6 +321,13 @@ function attachInput() {
 
   c.addEventListener('mouseup', e => {
     if (e.button === 1 && state.middlePan) { state.middlePan = null; return; }
+    // End drag-paint. Shift held at release keeps place mode active so you
+    // can immediately start another row without re-pressing Q/T/F/C/N.
+    if (state.painting) {
+      if (!e.shiftKey) state.placeMode = null;
+      state.painting = null;
+      return;
+    }
     if (e.button !== 0 || !state.drag) return;
     if (state.gameOver) { state.drag = null; return; }
     const wx = e.clientX / state.zoom + state.cameraX;
@@ -359,7 +411,7 @@ function attachInput() {
     if (k === 's' || k === 'arrowdown')  { state.panKeys.down = true; e.preventDefault(); }
     if (k === 'a' || k === 'arrowleft')  { state.panKeys.left = true; e.preventDefault(); }
     if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
-    if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; }
+    if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; state.painting = null; }
     if (k === 'r') newGame();
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

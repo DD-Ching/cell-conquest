@@ -56,6 +56,10 @@ export const state = {
   // there. null = auto-target via the usual scoring.
   salvoTarget: null,
 
+  // Drag-paint state while in placeMode — sweep the mouse to lay down a row
+  // of turrets / nets without clicking N separate times. Cleared on mouseup.
+  painting: null,
+
   // Time
   gameOver: false,
   startTime: 0,

@@ -130,13 +130,41 @@ export function spawnDrone(originX, originY, owner, target) {
   });
 }
 
+/** Does the drone's stored target still exist? */
+function droneTargetExists(drone) {
+  if (drone.targetKind === 'turret') return state.turrets.some(t => t.id === drone.targetId);
+  if (drone.targetKind === 'node')   return drone.targetId < state.nodes.length;
+  return false;
+}
+
+/** Find the closest enemy entity for `drone` to switch to. Returns true if found. */
+function retargetDrone(drone) {
+  let best = null, bestD = Infinity;
+  for (const t of state.turrets) {
+    if (t.owner === drone.owner) continue;
+    const d = Math.hypot(t.x - drone.x, t.y - drone.y);
+    if (d < bestD) { bestD = d; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
+  }
+  if (!best) {
+    for (const n of state.nodes) {
+      if (n.owner === drone.owner || n.owner === 'neutral') continue;
+      const d = Math.hypot(n.x - drone.x, n.y - drone.y);
+      if (d < bestD) { bestD = d; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
+    }
+  }
+  if (!best) return false;
+  drone.targetKind = best.kind;
+  drone.targetId   = best.id;
+  drone.tx = best.x; drone.ty = best.y;
+  return true;
+}
+
 function droneHit(drone) {
-  // Resolve drone target by id and kind
   let target;
   if (drone.targetKind === 'turret') target = state.turrets.find(t => t.id === drone.targetId);
   else                                target = state.nodes[drone.targetId];
-  if (!target) return;
-  // Net protection: any active 'net' turret within its small range of the impact point
+  if (!target) return false;             // already gone — no damage, no boom
+  // Net protection
   let mult = 1.0;
   let netT = null;
   for (const t of state.turrets) {
@@ -155,21 +183,26 @@ function droneHit(drone) {
     target.units = Math.max(0, target.units - dmg * 0.3);
     if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
   }
-  // Wreckage on a random adjacent road (only for node targets)
-  if (drone.targetKind === 'node') {
-    const nbrs = [...(state.adj.get(target.id) || [])];
-    if (nbrs.length) {
-      const j = nbrs[Math.floor(Math.random() * nbrs.length)];
-      const e = getEdge(target.id, j);
-      if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
-    }
-  }
+  // No road wreckage from drone strikes — the wreck is at the node, not on a road.
+  return true;
+}
+
+/** A vehicle (any non-drone fleet) dying on the road leaves a wreck on
+ *  the segment it was traversing. Off-road / drone deaths produce nothing. */
+export function addWreckBlockage(f) {
+  if (f.kind === 'drone') return;
+  if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) return;
+  if (!f.path || f.segIdx >= f.path.length - 1) return;
+  const a = f.path[f.segIdx], b = f.path[f.segIdx + 1];
+  const e = getEdge(a, b);
+  if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
 }
 
 export function updateDrones(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind !== 'drone') continue;
+    // Shot down by AA
     if (f.hp <= 0) {
       for (let k = 0; k < 6; k++) {
         const a = Math.random() * Math.PI * 2;
@@ -180,17 +213,43 @@ export function updateDrones(dt) {
       }
       state.fleets.splice(i, 1); continue;
     }
+    // Target validation: drone shouldn't bomb empty space. If target died,
+    // retarget to nearest enemy; if none, drone bails out silently.
+    if (!droneTargetExists(f)) {
+      if (!retargetDrone(f)) {
+        for (let k = 0; k < 4; k++) {
+          const a = Math.random() * Math.PI * 2;
+          state.particles.push({
+            x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
+            life: 0.4, maxLife: 0.4, color: '#888',
+          });
+        }
+        state.fleets.splice(i, 1); continue;
+      }
+    }
     const dx = f.tx - f.x, dy = f.ty - f.y;
     const d = Math.hypot(dx, dy);
     if (d < 12) {
-      droneHit(f);
-      for (let k = 0; k < 12; k++) {
-        const a = Math.random() * Math.PI * 2;
-        const sp = 60 + Math.random() * 60;
-        state.particles.push({
-          x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: 0.45, maxLife: 0.45, color: '#ff8a3a',
-        });
+      // Last-chance check (target may have died this tick)
+      const hit = droneHit(f);
+      if (hit) {
+        for (let k = 0; k < 12; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 60;
+          state.particles.push({
+            x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.45, maxLife: 0.45, color: '#ff8a3a',
+          });
+        }
+      } else {
+        // Target evaporated at the last moment — smoke puff, no boom
+        for (let k = 0; k < 4; k++) {
+          const a = Math.random() * Math.PI * 2;
+          state.particles.push({
+            x: f.x, y: f.y, vx: Math.cos(a) * 25, vy: Math.sin(a) * 25 - 10,
+            life: 0.35, maxLife: 0.35, color: '#888',
+          });
+        }
       }
       state.fleets.splice(i, 1); continue;
     }
@@ -238,6 +297,7 @@ export function updateTanks(dt) {
       } else {
         f.units -= TANK_DPS * 0.6 * dt;          // troops less squishy than drones
         if (f.units < 0.5) {
+          addWreckBlockage(f);                   // killed on the road → wreck blocks the segment
           spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
           state.fleets.splice(i, 1); continue;
         }

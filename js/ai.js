@@ -112,8 +112,8 @@ export function aiTick(owner, dt) {
 
   // ---- Engineering: smart turret placement ----
   // Build chance scales with saturation + per-faction strength.
-  const buildChance = (0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
-  const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
+  const buildChance = (0.18 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
+  const buildMinUnits = saturationRatio > 0.4 ? 14 : 22;
 
   // Helper: refuse to send engineers into enemy tank kill zones
   function isExposedToEnemyTank(x, y) {
@@ -207,30 +207,39 @@ export function aiTick(owner, dt) {
         t.owner === owner && t.type === 'antiair' &&
         Math.hypot(t.x - n.x, t.y - n.y) < AA_RADIUS * 0.8);
 
+      // Try a build at one of several layout positions — if the first is blocked
+      // by enemy tank range, fall through to the next. Stops the AI from giving
+      // up on AA construction the moment one spot is contested.
+      function tryBuild(type, makeSpot, baseIdx, maxAttempts = 4) {
+        for (let a = 0; a < maxAttempts; a++) {
+          const spot = makeSpot(n, dirX, dirY, baseIdx + a);
+          if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, type, owner)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
       // ---- 1) AA WALL — keep stacking until we hit AA_TARGET ----
       if (ownAAsNear.length < AA_TARGET) {
-        const spot = aaWallSpot(n, dirX, dirY, ownAAsNear.length);
-        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'antiair', owner)) return;
+        if (tryBuild('antiair', aaWallSpot, ownAAsNear.length, 5)) return;
       }
 
       // ---- 2) Tanks — start as soon as we have at least 2 AAs ----
       if (ownAAsNear.length >= 2 && ownTanksNear.length < TANK_TARGET) {
-        const spot = tankSpot(n, dirX, dirY, ownTanksNear.length);
-        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'tank', owner)) return;
+        if (tryBuild('tank', tankSpot, ownTanksNear.length, 3)) return;
       }
 
       // ---- 3) FACTORY SPAM — once the wall is up, mass-produce drones ----
       // Wait until at least 2 AAs cover the hub before spending units on factories.
       if (aaCoversThisHub && ownAAsNear.length >= 2 && ownFactoriesNear.length < FACTORY_TARGET) {
-        const spot = factorySpot(n, dirX, dirY, ownFactoriesNear.length);
-        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'factory', owner)) return;
+        if (tryBuild('factory', factorySpot, ownFactoriesNear.length, 4)) return;
       }
 
       // ---- 4) ARTILLERY — deep rear AOE pressure ----
       // Long range so it can stay way back. Random AOE counters dense enemy clusters.
       if (aaCoversThisHub && ownAAsNear.length >= 2 && ownArtilleryNear.length < ARTILLERY_TARGET) {
-        const spot = artillerySpot(n, dirX, dirY, ownArtilleryNear.length);
-        if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, 'artillery', owner)) return;
+        if (tryBuild('artillery', artillerySpot, ownArtilleryNear.length, 3)) return;
       }
     }
   }

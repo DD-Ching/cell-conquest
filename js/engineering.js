@@ -15,9 +15,10 @@ import {
   ENG_HP, ENG_BUILD_RATE, ENG_CLEAR_RATE, ENG_COST,
   AA_BUILD_TIME, AA_HP, AA_RADIUS, AA_DPS,
   DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T,
-  NET_BUILD_TIME, NET_HP, NET_DAMAGE_MULT,
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS, TANK_DPS,
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE,
+  DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
+  NET_LEVEL_MAX, NET_CHARGES_LEVEL, WRECK_CLEAR_PER_ENG,
   BLOCKAGE_DECAY, BLOCKAGE_PER_WRECK,
 } from './config.js';
 
@@ -35,20 +36,25 @@ export function edgeSpeedMul(a, b) {
 // ---- Reset ----
 export function resetEngineering() {
   state.edgeData.clear();
-  for (const r of state.roads) state.edgeData.set(ekey(r.a, r.b), { blockage: 0 });
+  for (const r of state.roads) {
+    state.edgeData.set(ekey(r.a, r.b), {
+      blockage: 0,
+      netLevel: 0, netCharges: 0, netOwner: null,
+    });
+  }
   state.turrets = [];
   state.placeMode = null;
+  state._nextFleetId = 1;
   for (const n of state.nodes) {
     n.engineers = 0;
     n.flashBuild = 0;
   }
 }
 
-// ---- Build specs ----
+// ---- Build specs (world-coord turrets only; nets are on edges, see placeNetOnEdge) ----
 const BUILD_SPECS = {
   antiair: { time: AA_BUILD_TIME,   hp: AA_HP },
   factory: { time: DF_BUILD_TIME,   hp: DF_HP },
-  net:     { time: NET_BUILD_TIME,  hp: NET_HP },
   tank:    { time: TANK_BUILD_TIME, hp: TANK_HP },
 };
 
@@ -95,6 +101,7 @@ export function placeTurretAt(x, y, type, byOwner) {
   state.turrets.push(turret);
   source.units -= ENG_COST;
   state.fleets.push({
+    _id: state._nextFleetId++,
     kind: 'deploy', owner: byOwner, units: 1, path,
     segIdx: 0, segTraveled: 0,
     x: source.x, y: source.y,
@@ -104,6 +111,69 @@ export function placeTurretAt(x, y, type, byOwner) {
     offroad: false,
   });
   return true;
+}
+
+/** Place a drone-net engineer on a specific road segment. The net mechanic is
+ *  per-edge: arriving engineers either clear wreckage on that segment OR
+ *  upgrade the net level (capped at NET_LEVEL_MAX). Each level grants
+ *  NET_CHARGES_LEVEL[level] drone interceptions. */
+export function placeNetOnEdge(roadA, roadB, byOwner) {
+  const edge = getEdge(roadA, roadB);
+  if (!edge) return false;
+  // Source: nearest own node with enough units to fund an engineer.
+  let source = null, srcD = Infinity;
+  for (const n of state.nodes) {
+    if (n.owner !== byOwner) continue;
+    if (n.units < ENG_COST + 5) continue;
+    const d = Math.hypot(n.x - state.nodes[roadA].x, n.y - state.nodes[roadA].y) +
+              Math.hypot(n.x - state.nodes[roadB].x, n.y - state.nodes[roadB].y);
+    if (d < srcD) { srcD = d; source = n; }
+  }
+  if (!source) return false;
+  // Anchor: closer endpoint of the edge that's our own (so engineer can road there).
+  // If neither endpoint is ours, abort — we can't path safely.
+  const aN = state.nodes[roadA], bN = state.nodes[roadB];
+  let anchor = null;
+  if (aN.owner === byOwner && bN.owner === byOwner) {
+    anchor = (Math.hypot(source.x - aN.x, source.y - aN.y) <
+              Math.hypot(source.x - bN.x, source.y - bN.y)) ? aN : bN;
+  } else if (aN.owner === byOwner) anchor = aN;
+  else if (bN.owner === byOwner) anchor = bN;
+  if (!anchor) return false;
+  const path = (source.id === anchor.id) ? [source.id] : findPath(source.id, anchor.id, byOwner);
+  if (!path || path.length < 1) return false;
+  // Off-road target = midpoint of the edge (where the net physically sits)
+  const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
+  source.units -= ENG_COST;
+  state.fleets.push({
+    _id: state._nextFleetId++,
+    kind: 'deploy', owner: byOwner, units: 1, path,
+    segIdx: 0, segTraveled: 0,
+    x: source.x, y: source.y,
+    hp: ENG_HP,
+    finalX: mx, finalY: my,
+    targetEdgeA: roadA, targetEdgeB: roadB,
+    offroad: false,
+  });
+  return true;
+}
+
+/** Find a nearby road that still needs work (blockage to clear or net to upgrade)
+ *  for an engineer whose original target is already maxed. Returns {a, b} or null. */
+export function findNetWorkRedirect(byOwner, fromX, fromY) {
+  let best = null, bestD = Infinity;
+  for (const r of state.roads) {
+    const e = state.edgeData.get(ekey(r.a, r.b));
+    if (!e) continue;
+    if (e.blockage < 0.15 && e.netLevel >= NET_LEVEL_MAX) continue;     // nothing to do
+    // Only redirect to edges where at least one endpoint is ours
+    const aN = state.nodes[r.a], bN = state.nodes[r.b];
+    if (aN.owner !== byOwner && bN.owner !== byOwner) continue;
+    const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
+    const d = Math.hypot(fromX - mx, fromY - my);
+    if (d < bestD) { bestD = d; best = { a: r.a, b: r.b }; }
+  }
+  return best;
 }
 
 /** Called by fleet sim when an engineer finishes its road path and starts the off-road leg. */
@@ -118,13 +188,57 @@ export function engineerArrivedAtTurret(f) {
   t.engineers += 1;
 }
 
+/** Called when an engineer arrives at a net edge site. Performs ONE action:
+ *  - If the edge has heavy wreckage (blockage >= 0.15), clear it by WRECK_CLEAR_PER_ENG.
+ *  - Else if net not maxed, raise net level by 1 and refill charges to that level's max.
+ *  - Else (nothing to do here): redirect engineer toward the nearest road that needs work. */
+export function engineerArrivedAtNetEdge(f) {
+  const edge = getEdge(f.targetEdgeA, f.targetEdgeB);
+  if (!edge) return { consumed: true };
+  // 1) Heavy wreckage — clear it first
+  if (edge.blockage >= 0.15) {
+    edge.blockage = Math.max(0, edge.blockage - WRECK_CLEAR_PER_ENG);
+    flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#ffd066');
+    return { consumed: true };
+  }
+  // 2) Net not yet maxed (and not owned by an opposing faction) — upgrade
+  const canUpgrade = edge.netLevel < NET_LEVEL_MAX
+                  && (edge.netOwner === null || edge.netOwner === f.owner);
+  if (canUpgrade) {
+    edge.netLevel += 1;
+    edge.netCharges = NET_CHARGES_LEVEL[edge.netLevel];
+    edge.netOwner = f.owner;
+    flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#5cb3ff');
+    return { consumed: true };
+  }
+  // 3) Maxed or opposing-faction net — redirect to nearest road that needs work
+  const redirect = findNetWorkRedirect(f.owner, f.x, f.y);
+  if (!redirect) return { consumed: true };
+  return { consumed: false, redirect };
+}
+
+/** Visual flash on an edge when an engineer finishes a piece of work there. */
+function flashEdgeWork(a, b, color) {
+  const aN = state.nodes[a], bN = state.nodes[b];
+  const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
+  for (let k = 0; k < 10; k++) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = 30 + Math.random() * 60;
+    state.particles.push({
+      x: mx, y: my, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      life: 0.5, maxLife: 0.5, color,
+    });
+  }
+}
+
 // ---- Drone ----
 export function spawnDrone(originX, originY, owner, target) {
   state.fleets.push({
+    _id: state._nextFleetId++,
     kind: 'drone', owner, units: 1,
     x: originX, y: originY,
     tx: target.x, ty: target.y,
-    targetKind: target.kind,            // 'turret' | 'node'
+    targetKind: target.kind,            // 'turret' | 'node' | 'fleet'
     targetId:   target.id,
     hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
   });
@@ -134,6 +248,7 @@ export function spawnDrone(originX, originY, owner, target) {
 function droneTargetExists(drone) {
   if (drone.targetKind === 'turret') return state.turrets.some(t => t.id === drone.targetId);
   if (drone.targetKind === 'node')   return drone.targetId < state.nodes.length;
+  if (drone.targetKind === 'fleet')  return state.fleets.some(f => f._id === drone.targetId);
   return false;
 }
 
@@ -159,31 +274,53 @@ function retargetDrone(drone) {
   return true;
 }
 
+/** A drone impacting a STATIC target (turret or node). Damage applied directly,
+ *  no net protection here — nets only protect troops on roads (handled in updateDrones). */
 function droneHit(drone) {
   let target;
   if (drone.targetKind === 'turret') target = state.turrets.find(t => t.id === drone.targetId);
   else                                target = state.nodes[drone.targetId];
   if (!target) return false;             // already gone — no damage, no boom
-  // Net protection
-  let mult = 1.0;
-  let netT = null;
-  for (const t of state.turrets) {
-    if (t.type !== 'net' || !t.active || t.owner !== target.owner) continue;
-    const d = Math.hypot(t.x - drone.x, t.y - drone.y);
-    if (d <= AA_RADIUS * 0.7) { netT = t; break; }
-  }
-  if (netT) {
-    mult = NET_DAMAGE_MULT;
-    netT.hp -= drone.damage * 0.4;
-  }
-  const dmg = drone.damage * mult;
+  const dmg = drone.damage;
   if (drone.targetKind === 'turret') {
     target.hp -= dmg;
   } else {
     target.units = Math.max(0, target.units - dmg * 0.3);
     if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
   }
-  // No road wreckage from drone strikes — the wreck is at the node, not on a road.
+  return true;
+}
+
+/** A drone is colliding with a moving ground fleet. The fleet's CURRENT edge
+ *  may have an active drone net — if so, the net intercepts the drone instead
+ *  of the fleet taking damage. Returns true if the fleet was hit (no net). */
+function droneHitFleet(drone, fleet) {
+  // Find the edge the fleet is currently traversing
+  let edge = null;
+  if (fleet.path && fleet.segIdx < fleet.path.length - 1) {
+    edge = getEdge(fleet.path[fleet.segIdx], fleet.path[fleet.segIdx + 1]);
+  }
+  // Net intercepts: must be active (charges > 0) and protect the fleet's owner
+  if (edge && edge.netLevel > 0 && edge.netCharges > 0 && edge.netOwner === fleet.owner) {
+    edge.netCharges -= 1;
+    if (edge.netCharges <= 0) { edge.netLevel = 0; edge.netCharges = 0; edge.netOwner = null; }
+    // Visual: short tracer beam from net midpoint to drone
+    const aN = state.nodes[fleet.path[fleet.segIdx]];
+    const bN = state.nodes[fleet.path[fleet.segIdx + 1]];
+    state.tracers.push({
+      x1: (aN.x + bN.x) / 2, y1: (aN.y + bN.y) / 2, x2: drone.x, y2: drone.y,
+      age: 0, maxAge: 0.22, color: '#a4d8ff',
+    });
+    return false;        // fleet untouched
+  }
+  // No protection — drone damages the fleet
+  fleet.units -= DRONE_HUNT_DMG;
+  if (fleet.units < 0.5) {
+    addWreckBlockage(fleet);
+    spawnBigExplosion(fleet.x, fleet.y, '#ff8a3a', 10);
+    // Mark for cleanup — splicing here would corrupt the outer loop's index
+    fleet._dead = true;
+  }
   return true;
 }
 
@@ -213,24 +350,106 @@ export function updateDrones(dt) {
       }
       state.fleets.splice(i, 1); continue;
     }
-    // Target validation: drone shouldn't bomb empty space. If target died,
-    // retarget to nearest enemy; if none, drone bails out silently.
-    if (!droneTargetExists(f)) {
-      if (!retargetDrone(f)) {
-        for (let k = 0; k < 4; k++) {
-          const a = Math.random() * Math.PI * 2;
-          state.particles.push({
-            x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
-            life: 0.4, maxLife: 0.4, color: '#888',
-          });
+
+    // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
+    let huntFleet = null, huntD = DRONE_DETECT_R;
+    for (const g of state.fleets) {
+      if (g.owner === f.owner) continue;
+      if (g.kind === 'drone') continue;
+      if (!g.path || g.segIdx >= g.path.length - 1) continue;
+      const d = Math.hypot(g.x - f.x, g.y - f.y);
+      if (d < huntD) { huntD = d; huntFleet = g; }
+    }
+
+    // Target maintenance
+    if (f.targetKind === 'fleet') {
+      // Track the fleet we locked onto. If it died, fall back to retarget.
+      const locked = state.fleets.find(g => g._id === f.targetId);
+      if (locked) {
+        f.tx = locked.x; f.ty = locked.y;
+        // Swap to a closer hunt fleet only if it's significantly closer
+        if (huntFleet && huntFleet._id !== f.targetId) {
+          const curD = Math.hypot(locked.x - f.x, locked.y - f.y);
+          if (huntD < curD * DRONE_HUNT_SWITCH_RATIO) {
+            f.targetId = huntFleet._id;
+            f.tx = huntFleet.x; f.ty = huntFleet.y;
+          }
         }
-        state.fleets.splice(i, 1); continue;
+      } else {
+        // Locked fleet died — prefer another hunt; else fall back to nearest enemy static
+        if (huntFleet) {
+          f.targetId = huntFleet._id;
+          f.tx = huntFleet.x; f.ty = huntFleet.y;
+        } else {
+          f.targetKind = 'turret';            // reset; retargetDrone will pick the best
+          if (!retargetDrone(f)) {
+            for (let k = 0; k < 4; k++) {
+              const a = Math.random() * Math.PI * 2;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
+                life: 0.4, maxLife: 0.4, color: '#888',
+              });
+            }
+            state.fleets.splice(i, 1); continue;
+          }
+        }
+      }
+    } else {
+      // Primary target = turret/node. Re-target if it died.
+      if (!droneTargetExists(f)) {
+        if (!retargetDrone(f)) {
+          for (let k = 0; k < 4; k++) {
+            const a = Math.random() * Math.PI * 2;
+            state.particles.push({
+              x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
+              life: 0.4, maxLife: 0.4, color: '#888',
+            });
+          }
+          state.fleets.splice(i, 1); continue;
+        }
+      }
+      // Switch to a ground hunt if a fleet is significantly closer than the static target.
+      if (huntFleet) {
+        const primD = Math.hypot(f.tx - f.x, f.ty - f.y);
+        if (huntD < primD * DRONE_HUNT_SWITCH_RATIO || huntD < 50) {
+          f.targetKind = 'fleet';
+          f.targetId = huntFleet._id;
+          f.tx = huntFleet.x; f.ty = huntFleet.y;
+        }
       }
     }
+
+    // Approach / impact
     const dx = f.tx - f.x, dy = f.ty - f.y;
     const d = Math.hypot(dx, dy);
     if (d < 12) {
-      // Last-chance check (target may have died this tick)
+      if (f.targetKind === 'fleet') {
+        const fleet = state.fleets.find(g => g._id === f.targetId);
+        if (fleet) {
+          const hit = droneHitFleet(f, fleet);
+          if (hit) {
+            for (let k = 0; k < 10; k++) {
+              const a = Math.random() * Math.PI * 2;
+              const sp = 50 + Math.random() * 60;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: 0.4, maxLife: 0.4, color: '#ff8a3a',
+              });
+            }
+          } else {
+            // Net caught us — silent fizzle (tracer already drawn in droneHitFleet)
+            for (let k = 0; k < 5; k++) {
+              const a = Math.random() * Math.PI * 2;
+              state.particles.push({
+                x: f.x, y: f.y, vx: Math.cos(a) * 30, vy: Math.sin(a) * 30,
+                life: 0.3, maxLife: 0.3, color: '#a4d8ff',
+              });
+            }
+          }
+        }
+        state.fleets.splice(i, 1); continue;
+      }
+      // Static target impact
       const hit = droneHit(f);
       if (hit) {
         for (let k = 0; k < 12; k++) {
@@ -242,7 +461,6 @@ export function updateDrones(dt) {
           });
         }
       } else {
-        // Target evaporated at the last moment — smoke puff, no boom
         for (let k = 0; k < 4; k++) {
           const a = Math.random() * Math.PI * 2;
           state.particles.push({
@@ -256,6 +474,10 @@ export function updateDrones(dt) {
     const step = DRONE_SPEED * dt;
     f.x += (dx / d) * step;
     f.y += (dy / d) * step;
+  }
+  // Cleanup pass: remove fleets killed mid-loop by drone hunts
+  for (let i = state.fleets.length - 1; i >= 0; i--) {
+    if (state.fleets[i]._dead) state.fleets.splice(i, 1);
   }
 }
 

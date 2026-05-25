@@ -4,10 +4,10 @@
 // faction ids listed in config.NN_OWNERS.
 // =====================================================
 import { state } from './state.js';
-import { FLEET_SPEED, NN_OWNERS } from './config.js';
+import { FLEET_SPEED, NN_OWNERS, NET_LEVEL_MAX } from './config.js';
 import { dist } from './util.js';
 import { sendFleet } from './fleets.js';
-import { placeTurretAt } from './engineering.js';
+import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
 import { nnDecide, nnActionFor, isNNReady } from './nn.js';
 
 export function aiTick(owner, dt) {
@@ -83,12 +83,12 @@ export function aiTick(owner, dt) {
         return { dx: (dx / len) * 70, dy: (dy / len) * 70 };
       })();
       const tx = n.x + off.dx, ty = n.y + off.dy;
-      // Build priority order: AA → Tank (anti-ground!) → Factory → Net
+      // Build priority order: AA → Tank (anti-ground) → Factory
+      // (Nets are per-edge now, handled separately below.)
       if (!has('antiair')) { if (placeTurretAt(tx, ty, 'antiair', owner)) return; }
       else if (!has('tank')) { if (placeTurretAt(tx * 1.05, ty * 1.05, 'tank', owner)) return; }
       else if (!has('factory')) { if (placeTurretAt(n.x - off.dx * 0.5, n.y - off.dy * 0.5, 'factory', owner)) return; }
-      else if (!has('net')) { if (placeTurretAt(tx * 0.8 + n.x * 0.2, ty * 0.8 + n.y * 0.2, 'net', owner)) return; }
-      // Saturated empire & all four built nearby → place a second layer further toward the front
+      // Saturated empire & all three built nearby → place a second layer further toward the front
       else if (saturationRatio > 0.5 && toward) {
         const tx2 = n.x + (toward.x - n.x) * 0.45;
         const ty2 = n.y + (toward.y - n.y) * 0.45;
@@ -101,6 +101,33 @@ export function aiTick(owner, dt) {
         }
       }
     }
+  }
+
+  // ---- Net building: upgrade drone-nets on front-line edges ----
+  // Front edges = at least one endpoint is mine AND that endpoint touches an enemy.
+  // Nets only matter where troops actually march, so we score by exposure.
+  if (Math.random() < 0.10 + saturationRatio * 0.20) {
+    let cand = null, bestScore = -1;
+    for (const r of state.roads) {
+      const e = state.edgeData.get(ekey(r.a, r.b));
+      if (!e) continue;
+      if (e.netLevel >= NET_LEVEL_MAX) continue;
+      const aN = state.nodes[r.a], bN = state.nodes[r.b];
+      const aMine = aN.owner === owner, bMine = bN.owner === owner;
+      if (!aMine && !bMine) continue;
+      let exposure = 0;
+      for (const endpoint of [aN, bN]) {
+        if (endpoint.owner !== owner) continue;
+        for (const nb of state.adj.get(endpoint.id)) {
+          const o = state.nodes[nb].owner;
+          if (o !== owner && o !== 'neutral') exposure += 1;
+        }
+      }
+      if (exposure === 0) continue;
+      const score = exposure * (NET_LEVEL_MAX + 1 - e.netLevel);
+      if (score > bestScore) { bestScore = score; cand = r; }
+    }
+    if (cand && placeNetOnEdge(cand.a, cand.b, owner)) return;
   }
 
   function incomingTo(nodeId) {

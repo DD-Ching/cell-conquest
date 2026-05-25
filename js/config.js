@@ -39,9 +39,13 @@ export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;
 export const DF_PRODUCTION_T = 12;      // sec between drone spawns
 
-export const NET_BUILD_TIME = 8;
-export const NET_HP = 80;
-export const NET_DAMAGE_MULT = 0.2;     // drone damage multiplier on protected node
+// Drone Net (per-road segment). Engineer trips raise the level; each level grants
+// a finite "intercept" pool. Drones trying to attack troops on a netted road are
+// shot down by the net instead, consuming one charge per drone.
+export const NET_LEVEL_MAX       = 3;
+export const NET_CHARGES_LEVEL   = [0, 20, 40, 60]; // capacity at level 0/1/2/3
+export const NET_PICK_R          = 36;              // world-px tolerance when clicking near a road
+export const WRECK_CLEAR_PER_ENG = 0.4;             // blockage reduced per engineer trip
 
 // Tank / cannon — anti-ground (and anti-drone, anti-turret) generalist tower.
 // Longer range than AA but lower DPS per target.
@@ -54,6 +58,10 @@ export const TANK_DPS = 8;
 export const DRONE_HP_AIR = 30;
 export const DRONE_SPEED = 130;
 export const DRONE_DAMAGE = 50;
+// Drones now hunt enemy ground fleets they detect in flight.
+export const DRONE_DETECT_R = 110;      // scan radius for nearby ground fleets
+export const DRONE_HUNT_DMG = 18;       // damage to fleet on impact (less than fixed-target)
+export const DRONE_HUNT_SWITCH_RATIO = 0.7;  // switch from primary→hunt only if hunt is this much closer
 
 // Road blockage
 export const BLOCKAGE_DECAY = 0.01;     // per second

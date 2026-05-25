@@ -3,10 +3,13 @@
 // Reads from state; never mutates game data (only DOM + canvas).
 // =====================================================
 import { state } from './state.js';
-import { WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR, BLOCKAGE_HEAVY } from './config.js';
+import {
+  WORLD_W, WORLD_H, AA_RADIUS, TANK_RADIUS, DRONE_HP_AIR,
+  BLOCKAGE_HEAVY, NET_PICK_R, NET_LEVEL_MAX,
+} from './config.js';
 import { COLOR, GLOW, FACTIONS } from './factions.js';
 import { dist, formatTime } from './util.js';
-import { findPath, nodeAt } from './world.js';
+import { findPath, nodeAt, roadAt } from './world.js';
 import { getEdge, TURRET_RANGES } from './engineering.js';
 
 // =====================================================
@@ -141,6 +144,51 @@ export function render() {
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  // Drone nets on edges — drawn as a fence-like parallel line.
+  // Higher level = thicker; charge level fades alpha.
+  for (const r of state.roads) {
+    const e = getEdge(r.a, r.b);
+    if (!e || e.netLevel <= 0 || !e.netOwner) continue;
+    const a = state.nodes[r.a], b = state.nodes[r.b];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const ux = dx / len, uy = dy / len;
+    const px = -uy, py = ux;                    // perpendicular unit vector
+    const off = 6;
+    const x1 = a.x + px * off, y1 = a.y + py * off;
+    const x2 = b.x + px * off, y2 = b.y + py * off;
+    const maxCh = 60;                           // NET_CHARGES_LEVEL[NET_LEVEL_MAX] = 60
+    const chargeFrac = Math.max(0.25, Math.min(1, e.netCharges / maxCh));
+    ctx.strokeStyle = COLOR[e.netOwner];
+    ctx.globalAlpha = 0.5 + 0.45 * chargeFrac;
+    ctx.lineWidth = (1.1 + e.netLevel * 0.6) / zoom;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.stroke();
+    // Fence-post ticks along the net
+    const tickSpacing = 22;
+    const nTicks = Math.max(1, Math.floor(len / tickSpacing));
+    const tickH = 2 + e.netLevel * 0.6;
+    for (let k = 0; k < nTicks; k++) {
+      const t = (k + 0.5) / nTicks;
+      const cx = a.x * (1 - t) + b.x * t + px * off;
+      const cy = a.y * (1 - t) + b.y * t + py * off;
+      ctx.beginPath();
+      ctx.moveTo(cx + px * tickH, cy + py * tickH);
+      ctx.lineTo(cx - px * tickH, cy - py * tickH);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // Compact label near the midpoint
+    const mx = (a.x + b.x) / 2 + px * (off + 10);
+    const my = (a.y + b.y) / 2 + py * (off + 10);
+    ctx.fillStyle = COLOR[e.netOwner];
+    ctx.font = `bold ${10 / zoom}px ui-monospace, monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(`L${e.netLevel} ${e.netCharges}`, mx, my);
   }
 
   // AA tracer beams — render before nodes so beams pass behind icons.
@@ -290,27 +338,57 @@ export function render() {
     }
   }
 
-  // Placement preview (player choosing where to place a turret)
+  // Placement preview (player choosing where to place a turret or net).
   if (state.placeMode) {
     const wx = state.mousePos.x, wy = state.mousePos.y;
-    ctx.fillStyle = 'rgba(255, 220, 130, 0.6)';
-    ctx.beginPath(); ctx.arc(wx, wy, 8, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${12 / zoom}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const glyph = state.placeMode.type === 'antiair' ? 'A'
-                : state.placeMode.type === 'factory' ? 'F'
-                : state.placeMode.type === 'tank'    ? 'T' : 'N';
-    ctx.fillText(glyph, wx, wy);
-    const previewR = TURRET_RANGES[state.placeMode.type];
-    if (previewR) {
-      ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
-      ctx.lineWidth = 1 / zoom;
-      ctx.setLineDash([5 / zoom, 5 / zoom]);
-      ctx.beginPath();
-      ctx.arc(wx, wy, previewR, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+    if (state.placeMode.type === 'net') {
+      // Net targets a road segment — highlight nearest road within tolerance.
+      const r = roadAt(wx, wy, NET_PICK_R);
+      if (r) {
+        const a = state.nodes[r.a], b = state.nodes[r.b];
+        ctx.strokeStyle = 'rgba(160, 220, 255, 0.85)';
+        ctx.lineWidth = 4 / zoom;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        // Hint: show what this trip will do (clear wreck vs upgrade net)
+        const e = getEdge(r.a, r.b);
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        ctx.fillStyle = '#a4d8ff';
+        ctx.font = `bold ${11 / zoom}px ui-monospace, monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        let hint;
+        if (!e) hint = '';
+        else if (e.blockage >= 0.15) hint = `clear wreck (${(e.blockage * 100).toFixed(0)}%)`;
+        else if (e.netLevel < NET_LEVEL_MAX) hint = `+net L${e.netLevel + 1}`;
+        else hint = 'net maxed';
+        ctx.fillText(hint, mx, my - 10);
+      } else {
+        // No road nearby — show small dot at cursor
+        ctx.fillStyle = 'rgba(160, 220, 255, 0.4)';
+        ctx.beginPath(); ctx.arc(wx, wy, 4, 0, Math.PI * 2); ctx.fill();
+      }
+    } else {
+      // Turret world-point preview
+      ctx.fillStyle = 'rgba(255, 220, 130, 0.6)';
+      ctx.beginPath(); ctx.arc(wx, wy, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${12 / zoom}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const glyph = state.placeMode.type === 'antiair' ? 'A'
+                  : state.placeMode.type === 'factory' ? 'F'
+                  : 'T';
+      ctx.fillText(glyph, wx, wy);
+      const previewR = TURRET_RANGES[state.placeMode.type];
+      if (previewR) {
+        ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
+        ctx.lineWidth = 1 / zoom;
+        ctx.setLineDash([5 / zoom, 5 / zoom]);
+        ctx.beginPath();
+        ctx.arc(wx, wy, previewR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
   }
 

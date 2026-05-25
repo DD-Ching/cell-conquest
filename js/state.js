@@ -27,11 +27,12 @@ export const state = {
   dust: [],                  // atmospheric Mars dust (was 'snowflakes')
   tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
   turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
-  placeMode: null,           // {type:'antiair'|'factory'|'net', byOwner:'player'} when player is choosing placement
+  placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],
   adj: new Map(),
-  edgeData: new Map(),       // ekey(a,b) -> { blockage }
+  edgeData: new Map(),       // ekey(a,b) -> { blockage, netLevel, netCharges, netOwner }
   selectedIds: new Set(),
+  _nextFleetId: 1,           // monotonic; lets drones lock onto a specific fleet by id
 
   // Camera / view
   cameraX: 0,

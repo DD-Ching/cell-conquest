@@ -5,16 +5,17 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN, SPEEDS,
+  NET_PICK_R,
 } from './config.js';
 import { AIS, COLOR } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import {
-  placeNodes, buildRoads, adjustHubSizes, findPath, nodeAt,
+  placeNodes, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt,
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
-  resetEngineering, placeTurretAt,
+  resetEngineering, placeTurretAt, placeNetOnEdge,
   updateDrones, updateAntiAir, updateTanks, updateBuildings, updateTracers,
 } from './engineering.js';
 import { aiTick } from './ai.js';
@@ -215,10 +216,15 @@ function attachInput() {
     const wx = e.clientX / state.zoom + state.cameraX;
     const wy = e.clientY / state.zoom + state.cameraY;
 
-    // Placement mode: clicking confirms turret placement.
+    // Placement mode: clicking confirms placement.
+    // 'net' targets a road segment (per-edge); other types target a world point.
     if (state.placeMode) {
-      const ok = placeTurretAt(wx, wy, state.placeMode.type, state.placeMode.byOwner);
-      if (ok) state.placeMode = null;
+      if (state.placeMode.type === 'net') {
+        const r = roadAt(wx, wy, NET_PICK_R);
+        if (r && placeNetOnEdge(r.a, r.b, state.placeMode.byOwner)) state.placeMode = null;
+      } else {
+        if (placeTurretAt(wx, wy, state.placeMode.type, state.placeMode.byOwner)) state.placeMode = null;
+      }
       return;
     }
 

@@ -4,7 +4,7 @@
 // =====================================================
 import { state } from './state.js';
 import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
-import { dist } from './util.js';
+import { dist, pointToSegment } from './util.js';
 
 const NODE_MARGIN = 100;
 const BASE_GAP    = 80;
@@ -173,4 +173,15 @@ export function nodeAt(x, y) {
     if (Math.hypot(n.x - x, n.y - y) < n.size + 4) return n;
   }
   return null;
+}
+
+/** Nearest road segment to world coords (x,y) within tolerance. Returns road or null. */
+export function roadAt(x, y, tol = 36) {
+  let best = null, bestD = tol;
+  for (const r of state.roads) {
+    const a = state.nodes[r.a], b = state.nodes[r.b];
+    const d = pointToSegment(x, y, a.x, a.y, b.x, b.y);
+    if (d < bestD) { bestD = d; best = r; }
+  }
+  return best;
 }

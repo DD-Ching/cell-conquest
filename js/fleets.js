@@ -7,7 +7,10 @@ import { FLEET_SPEED } from './config.js';
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
 import { findPath } from './world.js';
-import { ENG_SPEED, edgeSpeedMul, engineerArrivedAtTurret } from './engineering.js';
+import {
+  ENG_SPEED, edgeSpeedMul,
+  engineerArrivedAtTurret, engineerArrivedAtNetEdge,
+} from './engineering.js';
 
 const OFFROAD_SPEED_MUL = 0.4;
 
@@ -24,6 +27,7 @@ export function sendFleet(from, to, amount) {
   }
   from.units -= amount;
   state.fleets.push({
+    _id: state._nextFleetId++,
     owner: from.owner, units: amount,
     path, segIdx: 0,
     x: from.x, y: from.y,
@@ -50,6 +54,7 @@ export function assaultTurret(from, turret, amount) {
   if (!path) { from.flash = Math.max(from.flash, 0.6); return false; }
   from.units -= amount;
   state.fleets.push({
+    _id: state._nextFleetId++,
     kind: 'assault', owner: from.owner, units: amount, path,
     segIdx: 0, segTraveled: 0,
     x: from.x, y: from.y,
@@ -72,7 +77,19 @@ export function simulateFleets(dt) {
       const d = Math.hypot(dx, dy);
       if (d < 4) {
         if (f.kind === 'deploy') {
-          engineerArrivedAtTurret(f);
+          // Net engineer (targets an edge) vs turret engineer (targets a turret site)
+          if (f.targetEdgeA !== undefined) {
+            const res = engineerArrivedAtNetEdge(f);
+            if (!res.consumed && res.redirect) {
+              // Engineer keeps working: walk off-road to another road that needs work.
+              const aN = state.nodes[res.redirect.a], bN = state.nodes[res.redirect.b];
+              f.targetEdgeA = res.redirect.a; f.targetEdgeB = res.redirect.b;
+              f.finalX = (aN.x + bN.x) / 2; f.finalY = (aN.y + bN.y) / 2;
+              continue;
+            }
+          } else {
+            engineerArrivedAtTurret(f);
+          }
         } else {
           // Assault — deliver damage equal to remaining units, then suicide.
           const t = state.turrets.find(tt => tt.id === f.targetTurretId);

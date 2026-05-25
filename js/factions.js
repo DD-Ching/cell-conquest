@@ -1,6 +1,9 @@
 // =====================================================
-// Faction roster + color tables.
-// Mars Front: player (cyan) vs Crimson (Martian red). 1v1.
+// Faction roster + per-game randomized lineup.
+// Each game picks 1-4 AI opponents from the pool (so 2-5 total players
+// including you), each with a random "strength" multiplier that affects
+// their aggression and build rate. Mars Front colors are warm rust /
+// sand to fit the planet's palette.
 // =====================================================
 
 function hexToRgba(hex, a) {
@@ -10,14 +13,59 @@ function hexToRgba(hex, a) {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
-export const FACTIONS = [
-  { id: 'player',  name: 'You',     color: '#5cb3ff' },
-  { id: 'red',     name: 'Crimson', color: '#ff6678' },
-  { id: 'neutral', name: 'Neutral', color: '#a08574' },   // sandy/dusty Mars rock
+// Master pool. AI opponents drawn from this; player is always 'player'.
+const AI_POOL = [
+  { id: 'red',     name: 'Crimson',  color: '#ff6678' },
+  { id: 'gold',    name: 'Ochre',    color: '#ffb343' },
+  { id: 'cyan',    name: 'Cyan',     color: '#5cffd6' },
+  { id: 'magenta', name: 'Violet',   color: '#d56cff' },
+  { id: 'lime',    name: 'Lime',     color: '#a8e060' },
 ];
+const PLAYER_DEF  = { id: 'player',  name: 'You',     color: '#5cb3ff' };
+const NEUTRAL_DEF = { id: 'neutral', name: 'Neutral', color: '#a08574' };
 
-export const COLOR = Object.fromEntries(FACTIONS.map(f => [f.id, f.color]));
-export const GLOW = Object.fromEntries(
-  FACTIONS.map(f => [f.id, hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.4)])
-);
-export const AIS = ['red'];     // single opponent
+// Live bindings — mutated in place by rollFactions so other modules
+// keep their imports valid. Initial values are placeholders until the
+// first rollFactions() call (which main.js runs at boot).
+export const AIS = [];
+export const COLOR = {};
+export const GLOW = {};
+export const FACTIONS = [];
+
+/** Per-faction behavior multipliers. strength=1.0 is baseline; higher
+ *  means more aggressive + builds faster. Player is always 1.0. */
+export const factionStats = {};
+
+/** Roll a new lineup. Called from newGame() before world placement. */
+export function rollFactions() {
+  AIS.length = 0;
+  for (const k of Object.keys(COLOR))   delete COLOR[k];
+  for (const k of Object.keys(GLOW))    delete GLOW[k];
+  for (const k of Object.keys(factionStats)) delete factionStats[k];
+  FACTIONS.length = 0;
+
+  // Pick 1-4 AIs (so total active = 2-5 with player)
+  const nAI = 1 + Math.floor(Math.random() * 4);
+  const shuffled = [...AI_POOL].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < nAI; i++) AIS.push(shuffled[i].id);
+
+  // Build the active faction list in display order: player, AIs, neutral
+  const active = [PLAYER_DEF, ...AIS.map(id => AI_POOL.find(f => f.id === id)), NEUTRAL_DEF];
+  for (const f of active) {
+    COLOR[f.id] = f.color;
+    GLOW[f.id]  = hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.40);
+    FACTIONS.push(f);
+  }
+
+  // Random behavior multipliers per AI; player is baseline
+  factionStats.player = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
+  for (const id of AIS) {
+    const strength = 0.85 + Math.random() * 0.35;   // 0.85 – 1.20
+    factionStats[id] = {
+      strength,
+      // Stronger factions push harder and build faster
+      aggressionMul:    0.85 + (strength - 0.85) * 1.5,   // 0.85 – 1.375
+      buildChanceMul:   0.85 + (strength - 0.85) * 1.5,
+    };
+  }
+}

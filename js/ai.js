@@ -12,6 +12,7 @@ import { dist } from './util.js';
 import { sendFleet } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
 import { nnDecide, nnActionFor, isNNReady } from './nn.js';
+import { factionStats } from './factions.js';
 
 export function aiTick(owner, dt) {
   state.aiTimers[owner] -= dt;
@@ -57,6 +58,9 @@ export function aiTick(owner, dt) {
   let aggression = 1.0 + Math.min(state.elapsed / 180, 2.0);
   if (iAmLeader && myShare > 0.40) aggression *= 1.4;
   else if (myShare < 0.20) aggression *= 1.3;
+  // Per-faction strength: aggression baseline scaled by the roll
+  const fstats = factionStats[owner] || { aggressionMul: 1.0, buildChanceMul: 1.0 };
+  aggression *= fstats.aggressionMul;
   // Wasted-regen drive: when ≥30% of my nodes are full, I push harder
   if (saturationRatio > 0.5) aggression *= 1.55;
   else if (saturationRatio > 0.3) aggression *= 1.25;
@@ -107,8 +111,8 @@ export function aiTick(owner, dt) {
   }
 
   // ---- Engineering: smart turret placement ----
-  // Build chance scales with saturation — full coffers should be spent on infrastructure.
-  const buildChance = 0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0);
+  // Build chance scales with saturation + per-faction strength.
+  const buildChance = (0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
   const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
 
   // Helper: refuse to send engineers into enemy tank kill zones

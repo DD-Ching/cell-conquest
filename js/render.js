@@ -100,21 +100,23 @@ export function updateParticles(dt) {
 export function render() {
   const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
 
-  // Martian sky — dusty rust gradient (warm rather than cold).
-  const bg = ctx.createRadialGradient(W / 2, H * 0.6, 0, W / 2, H * 0.6, Math.max(W, H) * 0.8);
-  bg.addColorStop(0, '#3a1a08');
-  bg.addColorStop(0.6, '#1f0d05');
-  bg.addColorStop(1, '#0d0703');
-  ctx.fillStyle = bg;
+  // Mars surface — uniform rust-brown ground (NOT a space sky).
+  // Subtle large-scale gradient suggests sun-baked terrain rather than vacuum.
+  ctx.fillStyle = '#3d1f0e';
+  ctx.fillRect(0, 0, W, H);
+  // Soft warm haze toward the middle to add depth
+  const haze = ctx.createRadialGradient(W * 0.5, H * 0.45, 0, W * 0.5, H * 0.45, Math.max(W, H) * 0.7);
+  haze.addColorStop(0, 'rgba(120, 60, 25, 0.25)');
+  haze.addColorStop(1, 'rgba(60, 30, 12, 0)');
+  ctx.fillStyle = haze;
   ctx.fillRect(0, 0, W, H);
 
-  // Mars dust (screen-space, blowing sideways)
+  // Wind-blown grit (screen-space, less twinkly than before — feels like sand
+  // grains being carried over the surface, not stars in space).
   for (const s of state.dust) {
-    ctx.globalAlpha = s.a;
-    ctx.fillStyle = `hsl(${s.hue}, 65%, 60%)`;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = s.a * 0.55;
+    ctx.fillStyle = `hsl(${s.hue}, 50%, 45%)`;
+    ctx.fillRect(s.x, s.y, s.r * 1.4, 0.6);   // short horizontal streaks
   }
   ctx.globalAlpha = 1;
 
@@ -123,10 +125,49 @@ export function render() {
   ctx.scale(zoom, zoom);
   ctx.translate(-state.cameraX, -state.cameraY);
 
-  // World boundary
-  ctx.strokeStyle = 'rgba(180, 130, 80, 0.25)';
+  // ---- Ground terrain (scrolls with the camera so you feel like you're moving over Mars) ----
+  // Big soft sand patches first
+  for (const t of state.terrain) {
+    if (t.kind !== 'patch') continue;
+    const g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r);
+    const inner = Math.floor(80 * t.shade);
+    g.addColorStop(0, `rgba(${inner + 30}, ${Math.floor(inner * 0.55)}, ${Math.floor(inner * 0.30)}, 0.22)`);
+    g.addColorStop(1, 'rgba(60, 30, 12, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Then craters (slightly raised dark rim + darker inside)
+  for (const t of state.terrain) {
+    if (t.kind !== 'crater') continue;
+    ctx.fillStyle = 'rgba(20, 10, 5, 0.45)';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${Math.floor(200 * t.shade)}, ${Math.floor(140 * t.shade)}, ${Math.floor(90 * t.shade)}, 0.35)`;
+    ctx.lineWidth = 0.8 / zoom;
+    ctx.stroke();
+  }
+  // Then rocks (small dark dots, slight highlight)
+  for (const t of state.terrain) {
+    if (t.kind !== 'rock') continue;
+    ctx.fillStyle = `rgba(${Math.floor(30 * t.shade)}, ${Math.floor(18 * t.shade)}, ${Math.floor(10 * t.shade)}, 0.8)`;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(${Math.floor(180 * t.shade)}, ${Math.floor(120 * t.shade)}, ${Math.floor(80 * t.shade)}, 0.35)`;
+    ctx.beginPath();
+    ctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // World boundary — subtle dotted line, doesn't dominate
+  ctx.strokeStyle = 'rgba(180, 130, 80, 0.18)';
   ctx.lineWidth = 1 / zoom;
+  ctx.setLineDash([8 / zoom, 6 / zoom]);
   ctx.strokeRect(0, 0, WORLD_W, WORLD_H);
+  ctx.setLineDash([]);
 
   // Roads — thick TD-style path with edge highlights
   for (const r of state.roads) {
@@ -224,8 +265,14 @@ export function render() {
     ctx.setLineDash([]);
   }
 
-  // Nodes
+  // Time reference for any animated visuals below (breathing pulses, rotors, etc.)
+  const now = performance.now();
+
+  // Nodes — fortified compounds with rim, glow, and inner structures
   for (const n of state.nodes) {
+    const degree = state.adj.get(n.id)?.size || 0;
+
+    // Outer glow halo
     const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.5, n.x, n.y, n.size * 2.4);
     grad.addColorStop(0, GLOW[n.owner]);
     grad.addColorStop(1, 'transparent');
@@ -234,6 +281,7 @@ export function render() {
     ctx.arc(n.x, n.y, n.size * 2.4, 0, Math.PI * 2);
     ctx.fill();
 
+    // Capture pulse (one-shot animation)
     if (n.pulse > 0) {
       ctx.strokeStyle = COLOR[n.owner];
       ctx.globalAlpha = n.pulse;
@@ -244,9 +292,21 @@ export function render() {
       ctx.globalAlpha = 1;
     }
 
+    // Ambient breathing pulse — owned nodes feel alive (different phase per node)
+    if (n.owner !== 'neutral') {
+      const breath = 0.35 + 0.25 * Math.sin(now / 600 + n.id * 0.7);
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.globalAlpha = breath * 0.45;
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size + 3 + breath * 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     if (state.selectedIds.has(n.id)) {
       ctx.strokeStyle = '#fff';
-      ctx.globalAlpha = 0.65 + Math.sin(performance.now() / 180) * 0.25;
+      ctx.globalAlpha = 0.65 + Math.sin(now / 180) * 0.25;
       ctx.lineWidth = 2 / zoom;
       ctx.beginPath();
       ctx.arc(n.x, n.y, n.size + 6, 0, Math.PI * 2);
@@ -254,15 +314,36 @@ export function render() {
       ctx.globalAlpha = 1;
     }
 
+    // Faction rim
     ctx.fillStyle = COLOR[n.owner];
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = 'rgba(5, 10, 20, 0.5)';
+    // Dark inner compound
+    ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
     ctx.beginPath();
-    ctx.arc(n.x, n.y, n.size - 3, 0, Math.PI * 2);
+    ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
     ctx.fill();
+
+    // Inner "buildings": a few small dots around the perimeter inside the dark area.
+    // Density scales with hub degree — bigger hubs look like more substantial compounds.
+    if (degree > 0) {
+      const buildings = Math.min(8, Math.max(3, degree + 2));
+      const innerR = n.size - 8;
+      const slowSpin = now / 6000;       // very slow rotation so it doesn't feel busy
+      for (let k = 0; k < buildings; k++) {
+        const a = slowSpin + (k / buildings) * Math.PI * 2;
+        const bx = n.x + Math.cos(a) * innerR;
+        const by = n.y + Math.sin(a) * innerR;
+        ctx.fillStyle = COLOR[n.owner];
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
 
     if (n.flash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${n.flash * 0.45})`;
@@ -297,7 +378,6 @@ export function render() {
   }
 
   // Turrets — distinct sprites per type
-  const now = performance.now();
   for (const t of state.turrets) {
     if (t.type === 'antiair') {
       drawAATurret(ctx, t.x, t.y, t.owner, t.active, zoom, now);

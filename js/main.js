@@ -7,11 +7,11 @@ import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN, SPEEDS,
   NET_PICK_R,
 } from './config.js';
-import { AIS, COLOR } from './factions.js';
+import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import {
-  placeNodes, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt,
+  placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt,
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
@@ -52,6 +52,10 @@ addEventListener('resize', () => { resize(); makeSnow(); });
 // =====================================================
 export function newGame() {
   nnResetGame();
+  // Roll the lineup (2-5 factions including you), each AI with a random
+  // strength multiplier. Rebuild the HUD to reflect the new roster.
+  rollFactions();
+  buildHUD();
   state.fleets = [];
   state.particles = [];
   state.selectedIds.clear();
@@ -64,6 +68,7 @@ export function newGame() {
   makeSnow();
 
   // World gen
+  placeTerrain();
   placeNodes();
   buildRoads();
   adjustHubSizes();
@@ -80,8 +85,13 @@ export function newGame() {
       if (minD > bestD) { bestD = minD; best = n; }
     }
     if (best) {
-      best.owner = owner; best.units = 48; best.size = 38;
-      best.capacity = 145; best.regenRate = 1.5;
+      const fs = factionStats[owner];
+      const strength = fs ? fs.strength : 1.0;
+      best.owner = owner;
+      best.units    = Math.floor(48 * strength);
+      best.size     = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
+      best.capacity = Math.floor(145 * strength);
+      best.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
     }
     return best;
   }
@@ -381,9 +391,8 @@ function attachInput() {
 // Boot
 // =====================================================
 resize();
-buildHUD();
 attachInput();
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
-newGame();
+newGame();              // rolls factions, builds HUD, generates world
 loop();
 nnLoad();

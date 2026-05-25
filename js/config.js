@@ -4,11 +4,11 @@
 // =====================================================
 
 // ---- World ----
-// Smaller arena → fewer nodes, faster decisive fights.
-export const WORLD_W = 1600;
-export const WORLD_H = 1200;
-export const N_NODES_MIN = 10;
-export const N_NODES_MAX = 16;
+// Larger Mars arena so 2-5 factions have room to maneuver.
+export const WORLD_W = 2400;
+export const WORLD_H = 1800;
+export const N_NODES_MIN = 18;
+export const N_NODES_MAX = 28;
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec

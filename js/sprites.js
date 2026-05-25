@@ -180,7 +180,9 @@ export function drawEngineerSprite(ctx, x, y, angle, owner, zoom) {
 }
 
 // =====================================================
-// Drone — delta-wing paper-airplane / Shahed-style suicide drone
+// Drone — clean isosceles triangle (top-down delta-wing silhouette).
+// We're looking straight down on the surface, so the drone reads as a
+// pure arrowhead with a faction-colored body and a thin dark outline.
 // =====================================================
 export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
   const c = COLOR[owner];
@@ -189,55 +191,50 @@ export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
   ctx.rotate(angle);
 
   if (Asset.drone?.ready) {
-    blitSprite(ctx, Asset.drone, 16, c);
+    blitSprite(ctx, Asset.drone, 18, c);
     ctx.restore();
     return;
   }
 
-  // Dark outline (paper-airplane / delta wing silhouette)
-  ctx.fillStyle = '#1a1206';
-  ctx.beginPath();
-  ctx.moveTo(9.5, 0);              // nose tip
-  ctx.lineTo(-6, -5);              // back-left wing tip
-  ctx.lineTo(-3.5, 0);             // tail crease
-  ctx.lineTo(-6, 5);               // back-right wing tip
-  ctx.closePath();
-  ctx.fill();
-
-  // Faction-tinted upper half — gives the side identification at a glance
+  // Filled isosceles triangle in faction color
   ctx.fillStyle = c;
   ctx.beginPath();
-  ctx.moveTo(8.5, 0);
-  ctx.lineTo(-5, -4);
-  ctx.lineTo(-3, 0);
+  ctx.moveTo(11, 0);               // nose
+  ctx.lineTo(-5, -7);              // back-left
+  ctx.lineTo(-5,  7);              // back-right
   ctx.closePath();
   ctx.fill();
 
-  // Center crease — paper-airplane spine
-  ctx.strokeStyle = 'rgba(255, 240, 220, 0.55)';
+  // Dark outline for contrast against the rust ground
+  ctx.strokeStyle = '#1a1206';
+  ctx.lineWidth = 1.1 / zoom;
+  ctx.stroke();
+
+  // Center crease — runs nose to tail
+  ctx.strokeStyle = 'rgba(255, 240, 220, 0.45)';
   ctx.lineWidth = 0.7 / zoom;
   ctx.beginPath();
-  ctx.moveTo(9.5, 0);
-  ctx.lineTo(-3.5, 0);
+  ctx.moveTo(11, 0);
+  ctx.lineTo(-5, 0);
   ctx.stroke();
 
-  // Small tail propeller disc — only thing rotating, faint
+  // Small spinning prop hint at the back
   const spin = (time / 25) % TAU;
-  ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
-  ctx.lineWidth = 0.8 / zoom;
+  ctx.strokeStyle = 'rgba(220, 220, 220, 0.55)';
+  ctx.lineWidth = 0.9 / zoom;
   ctx.beginPath();
-  ctx.moveTo(-4.5 + Math.cos(spin) * 1.4, Math.sin(spin) * 1.4);
-  ctx.lineTo(-4.5 - Math.cos(spin) * 1.4, -Math.sin(spin) * 1.4);
+  ctx.moveTo(-5 + Math.cos(spin) * 1.6, Math.sin(spin) * 1.6);
+  ctx.lineTo(-5 - Math.cos(spin) * 1.6, -Math.sin(spin) * 1.6);
   ctx.stroke();
 
-  // Tiny forward indicator
+  // Tiny orange nose marker
   ctx.fillStyle = '#ff8a3a';
-  ctx.beginPath(); ctx.arc(7, 0, 0.7, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(8, 0, 0.9, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
 // =====================================================
-// Turret: anti-air — radar dish + rotating antenna
+// Turret: anti-air — radar dish + rotating antenna (~30% larger)
 // =====================================================
 export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
   const c = active ? COLOR[owner] : '#7a6a55';
@@ -245,18 +242,18 @@ export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
   if (Asset.turret_aa?.ready) {
     ctx.save();
     ctx.translate(x, y);
-    blitSprite(ctx, Asset.turret_aa, 20, c);
+    blitSprite(ctx, Asset.turret_aa, 26, c);
     ctx.restore();
     return;
   }
 
   // Base
   ctx.fillStyle = '#1a1206';
-  ctx.beginPath(); ctx.arc(x, y, 9, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 12, 0, TAU); ctx.fill();
   ctx.fillStyle = c;
-  ctx.beginPath(); ctx.arc(x, y, 7.5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.fill();
   ctx.fillStyle = '#1a1206';
-  ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 5, 0, TAU); ctx.fill();
   // Rotating dish + antenna
   const rot = active ? (time / 700) % TAU : 0;
   ctx.save();
@@ -266,20 +263,20 @@ export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
   ctx.fillStyle = c;
   ctx.beginPath();
   ctx.moveTo(0, 0);
-  ctx.arc(0, 0, 6, -0.6, 0.6);
+  ctx.arc(0, 0, 8, -0.6, 0.6);
   ctx.closePath();
   ctx.fill();
   // Antenna stick
   ctx.strokeStyle = '#ffd066';
-  ctx.lineWidth = 1.2 / zoom;
+  ctx.lineWidth = 1.3 / zoom;
   ctx.beginPath();
-  ctx.moveTo(0, 0); ctx.lineTo(7, 0);
+  ctx.moveTo(0, 0); ctx.lineTo(9.5, 0);
   ctx.stroke();
   ctx.restore();
 }
 
 // =====================================================
-// Turret: tank — chassis + turret + cannon
+// Turret: tank — chassis + turret + cannon (~30% larger)
 // =====================================================
 export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
   const c = active ? COLOR[owner] : '#7a6a55';
@@ -287,36 +284,36 @@ export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
   if (Asset.turret_tank?.ready) {
     ctx.save();
     ctx.translate(x, y);
-    blitSprite(ctx, Asset.turret_tank, 22, c);
+    blitSprite(ctx, Asset.turret_tank, 28, c);
     ctx.restore();
     return;
   }
 
   // Chassis (square base with tread highlights)
   ctx.fillStyle = '#1a1206';
-  ctx.fillRect(x - 9, y - 8, 18, 16);
+  ctx.fillRect(x - 12, y - 10, 24, 20);
   ctx.fillStyle = c;
-  ctx.fillRect(x - 8, y - 7, 16, 14);
+  ctx.fillRect(x - 11, y - 9, 22, 18);
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(x - 9, y - 8, 18, 2);
-  ctx.fillRect(x - 9, y + 6, 18, 2);
+  ctx.fillRect(x - 12, y - 10, 24, 3);
+  ctx.fillRect(x - 12, y + 7, 24, 3);
   // Turret + cannon
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(aimAngle);
   ctx.fillStyle = '#1a1206';
-  ctx.beginPath(); ctx.arc(0, 0, 5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 0, 6.5, 0, TAU); ctx.fill();
   ctx.fillStyle = c;
-  ctx.beginPath(); ctx.arc(0, 0, 4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 0, 5.2, 0, TAU); ctx.fill();
   ctx.fillStyle = '#1a1206';
-  ctx.fillRect(2, -1.3, 11, 2.6);
+  ctx.fillRect(3, -1.7, 14, 3.4);
   ctx.fillStyle = c;
-  ctx.fillRect(2, -0.6, 10, 1.2);
+  ctx.fillRect(3, -0.7, 13, 1.5);
   ctx.restore();
 }
 
 // =====================================================
-// Turret: drone factory — hangar with door
+// Turret: drone factory — hangar with door (~30% larger)
 // =====================================================
 export function drawFactoryTurret(ctx, x, y, owner, active, zoom, time, producing = false) {
   const c = active ? COLOR[owner] : '#7a6a55';
@@ -324,34 +321,34 @@ export function drawFactoryTurret(ctx, x, y, owner, active, zoom, time, producin
   if (Asset.turret_factory?.ready) {
     ctx.save();
     ctx.translate(x, y);
-    blitSprite(ctx, Asset.turret_factory, 22, c);
+    blitSprite(ctx, Asset.turret_factory, 28, c);
     ctx.restore();
     return;
   }
 
   // Building outline
   ctx.fillStyle = '#1a1206';
-  ctx.fillRect(x - 9, y - 9, 18, 18);
+  ctx.fillRect(x - 12, y - 12, 24, 24);
   ctx.fillStyle = c;
-  ctx.fillRect(x - 8, y - 8, 16, 16);
+  ctx.fillRect(x - 11, y - 11, 22, 22);
   // Hangar door (front)
   ctx.fillStyle = '#0a0604';
-  ctx.fillRect(x - 5, y - 7, 10, 5);
+  ctx.fillRect(x - 7, y - 10, 14, 7);
   // Roof corrugation
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  for (let i = -7; i <= 6; i += 3) {
-    ctx.fillRect(x + i, y - 1, 1, 8);
+  for (let i = -9; i <= 8; i += 4) {
+    ctx.fillRect(x + i, y - 1, 1, 11);
   }
   // Antenna
   ctx.strokeStyle = '#3a2a18';
-  ctx.lineWidth = 1.2 / zoom;
+  ctx.lineWidth = 1.4 / zoom;
   ctx.beginPath();
-  ctx.moveTo(x + 6, y - 8); ctx.lineTo(x + 8, y - 11);
+  ctx.moveTo(x + 8, y - 10); ctx.lineTo(x + 11, y - 15);
   ctx.stroke();
   // Status light — pulses while active, brighter when actively producing
   const pulse = 0.6 + 0.4 * Math.sin(time / 200);
   if (active) {
     ctx.fillStyle = producing ? `rgba(155, 255, 125, ${pulse})` : `rgba(255, 200, 90, ${pulse})`;
-    ctx.beginPath(); ctx.arc(x + 6, y - 11, 1.4, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 8, y - 15, 1.8, 0, TAU); ctx.fill();
   }
 }

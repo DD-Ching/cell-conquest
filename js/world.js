@@ -21,6 +21,30 @@ function pickSize(rng) {
   return 56 + rng() * 12;
 }
 
+/** Scatter passive Mars terrain features (rocks, craters, sand patches)
+ *  across the world. Pure decoration — drawn under nodes/turrets so they
+ *  read as ground texture, not gameplay objects. */
+export function placeTerrain(rng = Math.random) {
+  state.terrain = [];
+  const area = WORLD_W * WORLD_H;
+  // Density: about 1 feature per 18000 world-px²
+  const total = Math.floor(area / 18000);
+  for (let i = 0; i < total; i++) {
+    const roll = rng();
+    let kind;
+    if (roll < 0.55)      kind = 'rock';
+    else if (roll < 0.80) kind = 'crater';
+    else                  kind = 'patch';
+    state.terrain.push({
+      x: rng() * WORLD_W,
+      y: rng() * WORLD_H,
+      r: kind === 'patch' ? 60 + rng() * 90 : 2 + rng() * 6,
+      kind,
+      shade: 0.7 + rng() * 0.6,             // per-feature brightness jitter
+    });
+  }
+}
+
 /** Place nodes with size-aware spacing into state.nodes. */
 export function placeNodes(rng = Math.random) {
   const N = N_TARGET(WORLD_W, WORLD_H);

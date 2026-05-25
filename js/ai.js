@@ -6,7 +6,7 @@
 import { state } from './state.js';
 import {
   FLEET_SPEED, NN_OWNERS, NET_LEVEL_MAX,
-  TANK_RADIUS, TANK_DPS,
+  AA_RADIUS, TANK_RADIUS, TANK_DPS,
 } from './config.js';
 import { dist } from './util.js';
 import { sendFleet } from './fleets.js';
@@ -106,60 +106,109 @@ export function aiTick(owner, dt) {
     return threat;
   }
 
-  // ---- Engineering: occasional turret placement near hub nodes, offset toward enemy ----
+  // ---- Engineering: smart turret placement ----
   // Build chance scales with saturation — full coffers should be spent on infrastructure.
   const buildChance = 0.12 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0);
   const buildMinUnits = saturationRatio > 0.4 ? 18 : 30;
-  // Anti-turtle: shrink the "already-built nearby" radius so we keep stacking
-  // factories along the front to drone-rush the walled-up enemy.
-  const factoryClusterR = antiTurtle ? 80 : 120;
+
+  // Helper: count enemy neighbors of a node (frontness)
+  function frontness(n) {
+    let count = 0;
+    for (const nb of state.adj.get(n.id)) {
+      const o = state.nodes[nb].owner;
+      if (o !== owner && o !== 'neutral') count++;
+    }
+    return count;
+  }
+  // Helper: refuse to send engineers into enemy tank kill zones
+  function isExposedToEnemyTank(x, y) {
+    for (const t of state.turrets) {
+      if (!t.active || t.owner === owner || t.type !== 'tank') continue;
+      if (Math.hypot(t.x - x, t.y - y) < TANK_RADIUS - 20) return true;
+    }
+    return false;
+  }
+
   if (Math.random() < buildChance && myNodes.length >= 2) {
     const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
+
     for (const n of byHub) {
       if (n.units < buildMinUnits) continue;
-      const nearAA = state.turrets.filter(t =>
-        t.owner === owner && Math.hypot(t.x - n.x, t.y - n.y) < 120);
-      const nearFact = state.turrets.filter(t =>
-        t.owner === owner && t.type === 'factory' && Math.hypot(t.x - n.x, t.y - n.y) < factoryClusterR);
-      const has = (type) => nearAA.some(t => t.type === type);
-      const hasNearFactory = nearFact.length > 0;
-      // Direction toward nearest enemy node (so turrets land between us and threat)
+
+      // Direction toward the nearest enemy (defines "front" vs "back")
       let toward = null, towardDist = Infinity;
       for (const en of state.nodes) {
         if (en.owner === owner || en.owner === 'neutral') continue;
         const d = dist(n, en);
         if (d < towardDist) { towardDist = d; toward = en; }
       }
-      const off = (() => {
-        if (!toward) return { dx: 50, dy: 0 };
-        const dx = toward.x - n.x, dy = toward.y - n.y;
-        const len = Math.hypot(dx, dy) || 1;
-        return { dx: (dx / len) * 70, dy: (dy / len) * 70 };
-      })();
-      const tx = n.x + off.dx, ty = n.y + off.dy;
-      // Build priority order: AA → Tank (anti-ground) → Factory.
-      // Nets are per-edge now, handled separately below.
-      // Anti-turtle bias: jump straight to factory if the player's walling up — drones bypass tanks.
-      if (antiTurtle && !hasNearFactory) {
-        if (placeTurretAt(n.x + off.dx * 0.7, n.y + off.dy * 0.7, 'factory', owner)) return;
+      if (!toward) continue;          // no enemies anywhere — nothing to defend against
+      const ddx = toward.x - n.x, ddy = toward.y - n.y;
+      const dlen = Math.hypot(ddx, ddy) || 1;
+      const dirX = ddx / dlen, dirY = ddy / dlen;
+      const off = { dx: dirX * 70, dy: dirY * 70 };
+
+      const isFront = frontness(n) > 0;
+
+      // Survey friendly infrastructure NEAR this hub
+      const ownAAsNear = state.turrets.filter(t =>
+        t.owner === owner && t.type === 'antiair' &&
+        Math.hypot(t.x - n.x, t.y - n.y) < 160);
+      const ownTanksNear = state.turrets.filter(t =>
+        t.owner === owner && t.type === 'tank' &&
+        Math.hypot(t.x - n.x, t.y - n.y) < 160);
+      const ownFactoriesNear = state.turrets.filter(t =>
+        t.owner === owner && t.type === 'factory' &&
+        Math.hypot(t.x - n.x, t.y - n.y) < 100);
+      // Is THIS hub within range of ANY friendly AA (umbrella coverage)?
+      const aaCoversThisHub = state.turrets.some(t =>
+        t.owner === owner && t.type === 'antiair' &&
+        Math.hypot(t.x - n.x, t.y - n.y) < AA_RADIUS * 0.8);
+
+      // Enemy pressure near this hub
+      const enemyTurretsNear = state.turrets.filter(t =>
+        t.owner !== owner && t.active &&
+        Math.hypot(t.x - n.x, t.y - n.y) < 280).length;
+
+      // ---- 1) First AA on a front hub ----
+      if (isFront && ownAAsNear.length === 0) {
+        const tx = n.x + off.dx, ty = n.y + off.dy;
+        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'antiair', owner)) return;
       }
-      if (!has('antiair')) { if (placeTurretAt(tx, ty, 'antiair', owner)) return; }
-      else if (!has('tank')) {
-        // Tank: slightly forward of AA (siege role) — use additive offset, not scaling.
-        if (placeTurretAt(n.x + off.dx * 1.4, n.y + off.dy * 1.4, 'tank', owner)) return;
+
+      // ---- 2) First Tank on a front hub (after AA is in place) ----
+      if (isFront && ownAAsNear.length >= 1 && ownTanksNear.length === 0) {
+        const tx = n.x + off.dx * 1.4, ty = n.y + off.dy * 1.4;
+        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'tank', owner)) return;
       }
-      else if (!hasNearFactory) { if (placeTurretAt(n.x + off.dx * 0.7, n.y + off.dy * 0.7, 'factory', owner)) return; }
-      // Saturated empire & all three built nearby → place a second layer further toward the front
-      else if (saturationRatio > 0.5 && toward) {
-        const tx2 = n.x + (toward.x - n.x) * 0.45;
-        const ty2 = n.y + (toward.y - n.y) * 0.45;
-        const farTurrets = state.turrets.filter(t =>
-          t.owner === owner && Math.hypot(t.x - tx2, t.y - ty2) < 100);
-        if (!farTurrets.some(t => t.type === 'antiair')) {
-          if (placeTurretAt(tx2, ty2, 'antiair', owner)) return;
-        } else if (!farTurrets.some(t => t.type === 'tank')) {
-          if (placeTurretAt(tx2, ty2, 'tank', owner)) return;
-        }
+
+      // ---- 3) Stack additional AAs with OVERLAPPING coverage ----
+      // 2nd / 3rd AA placed on perpendicular flanks so their ranges intersect
+      // the first AA — drones flying through the gap get hit by multiple AAs.
+      const stackThresh = antiTurtle ? 1 : 2;
+      if (isFront && ownAAsNear.length >= 1 && ownAAsNear.length < 3 && enemyTurretsNear >= stackThresh) {
+        const px = -dirY, py = dirX;          // perpendicular unit vector
+        const side = (ownAAsNear.length % 2 === 0) ? 1 : -1;
+        const tx = n.x + off.dx * 0.5 + px * side * 90;
+        const ty = n.y + off.dy * 0.5 + py * side * 90;
+        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'antiair', owner)) return;
+      }
+
+      // ---- 4) Factory — only at hubs already under our AA umbrella, placed BEHIND the hub ----
+      const factoryLimit = antiTurtle ? 2 : 1;
+      if (aaCoversThisHub && ownFactoriesNear.length < factoryLimit) {
+        const stackOff = 35 + ownFactoriesNear.length * 30;
+        const fx = n.x - dirX * stackOff;
+        const fy = n.y - dirY * stackOff;
+        if (!isExposedToEnemyTank(fx, fy) && placeTurretAt(fx, fy, 'factory', owner)) return;
+      }
+
+      // ---- 5) Second Tank on flank if heavy enemy turret pressure ----
+      if (isFront && ownTanksNear.length === 1 && enemyTurretsNear >= 3) {
+        const px = -dirY, py = dirX;
+        const tx = n.x + off.dx * 1.4 + px * 70;
+        const ty = n.y + off.dy * 1.4 + py * 70;
+        if (!isExposedToEnemyTank(tx, ty) && placeTurretAt(tx, ty, 'tank', owner)) return;
       }
     }
   }
@@ -185,7 +234,13 @@ export function aiTick(owner, dt) {
         }
       }
       if (exposure === 0) continue;
-      const score = exposure * (NET_LEVEL_MAX + 1 - e.netLevel);
+      // Don't send a net engineer into an enemy tank's kill zone — they'll die on approach.
+      const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
+      if (isExposedToEnemyTank(mx, my)) continue;
+      // Concentration bias: prefer maxing an existing partial net to L3 before
+      // starting a brand-new one. Spread-thin L1s don't stop drone swarms.
+      let score = exposure * (NET_LEVEL_MAX + 1 - e.netLevel);
+      score += e.netLevel * exposure * 1.8;
       if (score > bestScore) { bestScore = score; cand = r; }
     }
     if (cand && placeNetOnEdge(cand.a, cand.b, owner)) return;

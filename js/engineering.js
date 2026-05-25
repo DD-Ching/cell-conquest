@@ -333,15 +333,28 @@ function droneHitFleet(drone, fleet) {
   return true;
 }
 
-/** A vehicle (any non-drone fleet) dying on the road leaves a wreck on
- *  the segment it was traversing. Off-road / drone deaths produce nothing. */
+/** A vehicle (any non-drone fleet) dying on the road. Off-road / drone deaths
+ *  produce nothing. If the segment has an active drone-net, the net "absorbs"
+ *  the damage instead — one death = -20 charges, dropping the level as it
+ *  drains. Only after the net is fully gone does wreckage start to pile up
+ *  (death highway). This way you can't death-highway a netted road. */
 export function addWreckBlockage(f) {
   if (f.kind === 'drone') return;
   if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) return;
   if (!f.path || f.segIdx >= f.path.length - 1) return;
   const a = f.path[f.segIdx], b = f.path[f.segIdx + 1];
   const e = getEdge(a, b);
-  if (e) e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
+  if (!e) return;
+  if (e.netLevel > 0) {
+    // Net absorbs the death (one level worth of charges per casualty)
+    e.netCharges -= NET_CHARGES_LEVEL[1];
+    if (e.netCharges <= 0) {
+      e.netLevel = 0; e.netCharges = 0; e.netOwner = null;
+    } else if (e.netCharges <= NET_CHARGES_LEVEL[1]) e.netLevel = 1;
+    else if (e.netCharges <= NET_CHARGES_LEVEL[2]) e.netLevel = 2;
+    return;
+  }
+  e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
 }
 
 export function updateDrones(dt) {
@@ -605,6 +618,7 @@ export function updateBuildings(dt) {
             const d = Math.hypot(et.x - t.x, et.y - t.y);
             let score = 1500 / (d + 200);
             if (et.type === 'antiair') score *= 1.5;
+            if (et.type === 'factory') score *= 1.8;  // kill the production source
             if (!et.active) score *= 2.0;
             cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
           }

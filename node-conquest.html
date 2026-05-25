@@ -590,6 +590,7 @@ function nnBuildObs(meOwner) {
   }
 
   for (const f of fleets) {
+    if (!f.path) continue;
     const tgt = f.path[f.path.length - 1];
     if (tgt >= N) continue;
     let remaining = 0;
@@ -935,10 +936,14 @@ function aiTick(owner, dt) {
     let friendly = 0, hostile = 0, hostileSrc = null;
     const targetOwner = nodes[nodeId].owner;
     for (const f of fleets) {
-      const finalId = f.path[f.path.length - 1];
+      // Drones have no path — they have a direct targetNodeId
+      let finalId;
+      if (f.kind === 'drone') finalId = f.targetNodeId;
+      else if (f.path) finalId = f.path[f.path.length - 1];
+      else continue;
       if (finalId !== nodeId) continue;
       if (f.owner === targetOwner) friendly += f.units;
-      else { hostile += f.units; if (!hostileSrc) hostileSrc = f.path[0]; }
+      else { hostile += f.units; if (!hostileSrc && f.path) hostileSrc = f.path[0]; }
     }
     return { friendly, hostile, hostileSrc };
   }
@@ -997,7 +1002,10 @@ function aiTick(owner, dt) {
     let trueDefenders = target.units;
     if (target.owner !== 'neutral') trueDefenders += target.regenRate * minTime;
     for (const f of fleets) {
-      const finalId = f.path[f.path.length - 1];
+      let finalId;
+      if (f.kind === 'drone') finalId = f.targetNodeId;
+      else if (f.path) finalId = f.path[f.path.length - 1];
+      else continue;
       if (finalId !== tId) continue;
       if (f.owner === target.owner) trueDefenders += f.units;
       else if (f.owner === owner) trueDefenders -= f.units;

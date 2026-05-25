@@ -61,12 +61,12 @@ export const TANK_DPS = 8;
 export const ARTILLERY_BUILD_TIME    = 20;
 export const ARTILLERY_HP            = 120;
 export const ARTILLERY_RANGE         = 420;   // longest range in the game
-export const ARTILLERY_AOE           = 65;    // impact-circle radius
-export const ARTILLERY_INTERVAL      = 3.2;   // sec between shells
-export const ARTILLERY_INACCURACY    = 55;    // aim wobble — random within this
+export const ARTILLERY_AOE           = 42;    // tighter blast — only really hits a *tight* cluster
+export const ARTILLERY_INTERVAL      = 5.0;   // slower fire — bombardment, not autocannon
+export const ARTILLERY_INACCURACY    = 95;    // much wider wobble — relies on volume, not precision
 export const ARTILLERY_DAMAGE_TURRET = 35;    // damage per shell to each turret in AOE
 export const ARTILLERY_DAMAGE_FLEET  = 28;    // damage per shell to each ground fleet
-export const ARTILLERY_SHELL_FLIGHT  = 0.6;   // sec of flight before detonation
+export const ARTILLERY_SHELL_FLIGHT  = 0.7;   // sec of flight before detonation
 
 // Drone
 export const DRONE_HP_AIR = 30;

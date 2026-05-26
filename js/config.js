@@ -25,7 +25,6 @@ export const SPEEDS = [1, 2, 5, 10, 20];
 // Engineer (physical unit on map)
 export const ENG_HP = 60;
 export const ENG_SPEED = 70;            // world px/sec; slower than FLEET_SPEED
-export const ENG_BUILD_RATE = 1.0;      // fraction/sec/engineer toward site.total
 export const ENG_CLEAR_RATE = 0.6;      // wreck-pile-HP/sec/engineer (idle eng at node
                                         // chips away at piles on connected edges)
 export const ENG_COST = 12;             // units consumed at source node to dispatch
@@ -88,6 +87,10 @@ export const DRONE_HUNT_SWITCH_RATIO = 0.7;  // switch from primary→hunt only 
 // congestion organically. Engineers physically clear the piles to restore flow.
 export const WRECK_PILE_HP_INIT  = 4;   // engineer HP needed to remove one pile
 export const WRECK_RENDER_R      = 8;   // visual radius of one pile
+export const WRECK_MAX_PER_EDGE  = 18;  // perf cap — beyond this, new wrecks
+                                        // coalesce into the nearest existing
+                                        // pile (visually + HP-wise) so the
+                                        // per-tick detour scan stays bounded
 export const DETOUR_LOOKAHEAD    = 55;  // sec-ahead a vehicle "sees" a pile to dodge it
 export const DETOUR_OFFSET       = 22;  // peak lateral offset (px) when squeezing past
 export const DETOUR_SPEED_MIN    = 0.55; // slowdown factor at peak detour

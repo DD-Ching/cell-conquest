@@ -23,7 +23,7 @@ import {
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS,
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
-  WRECK_PILE_HP_INIT,
+  WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
 
@@ -55,6 +55,8 @@ export function resetEngineering() {
   state.turrets = [];
   state.shells = [];
   state.scorches = [];
+  state.turretById.clear();
+  state.fleetById.clear();
   // Wipe the permanent ground-scorch layer — fresh map for a new game.
   if (state.groundScorchCtx) {
     state.groundScorchCtx.clearRect(0, 0, state.groundScorch.width, state.groundScorch.height);
@@ -172,8 +174,9 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
 }
 
 /** Find a nearby road that still needs work (wreck piles to clear or net to upgrade)
- *  for an engineer whose original target is already done. */
-export function findNetWorkRedirect(byOwner, fromX, fromY) {
+ *  for an engineer whose original target is already done. Internal helper —
+ *  only consumed by engineerArrivedAtNetEdge. */
+function findNetWorkRedirect(byOwner, fromX, fromY) {
   let best = null, bestD = Infinity;
   for (const r of state.roads) {
     const e = state.edgeData.get(ekey(r.a, r.b));
@@ -192,12 +195,8 @@ export function findNetWorkRedirect(byOwner, fromX, fromY) {
 // =====================================================
 // Engineer arrival callbacks (called from fleets.js)
 // =====================================================
-export function engineerEnterOffroad(f) {
-  f.offroad = true;
-}
-
 export function engineerArrivedAtTurret(f) {
-  const t = state.turrets.find(t => t.id === f.targetTurretId);
+  const t = state.turretById.get(f.targetTurretId);
   if (!t || t.owner !== f.owner) return;
   t.engineers += 1;
 }
@@ -271,6 +270,22 @@ export function addWreckBlockage(f) {
   }
   // Physical pile at the death position. f.x/f.y is already the fleet's current
   // world position on the road (or near it, if it was mid-detour).
+  if (e.wrecks.length >= WRECK_MAX_PER_EDGE) {
+    // Edge is already saturated — coalesce this death into the nearest existing
+    // pile instead of growing the array. Keeps the detour scan bounded even
+    // on a road that gets pummeled in a long battle.
+    let bestIdx = 0, bestD2 = Infinity;
+    for (let k = 0; k < e.wrecks.length; k++) {
+      const w = e.wrecks[k];
+      const dx = w.x - f.x, dy = w.y - f.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; bestIdx = k; }
+    }
+    const w = e.wrecks[bestIdx];
+    w.hp    = Math.min(w.hpMax * 2, w.hp + WRECK_PILE_HP_INIT);  // grows tougher
+    w.hpMax = Math.max(w.hpMax, w.hp);
+    return;
+  }
   e.wrecks.push({
     x: f.x, y: f.y,
     hp: WRECK_PILE_HP_INIT, hpMax: WRECK_PILE_HP_INIT,

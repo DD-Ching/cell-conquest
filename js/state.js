@@ -50,6 +50,14 @@ export const state = {
   selectedIds: new Set(),
   _nextFleetId: 1,           // monotonic; lets drones lock onto a specific fleet by id
 
+  // Per-tick id-lookup caches. Rebuilt at the top of simulate() so any hot
+  // path that needs "give me X by id" is an O(1) Map.get instead of an O(N)
+  // array.find / .some. Stale only between simulate() calls — never used
+  // outside the sim window.
+  turretById: new Map(),     // id -> turret
+  fleetById:  new Map(),     // _id -> fleet (alive fleets only — built before
+                             //               drone/fleet death cleanups)
+
   // Camera / view
   cameraX: 0,
   cameraY: 0,

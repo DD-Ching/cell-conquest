@@ -98,7 +98,7 @@ export function simulateFleets(dt) {
           // Assault arrival: each unit can absorb 8 HP of the turret. Survivors
           // (the troops not needed to finish the kill) head home to the nearest
           // friendly node instead of vanishing.
-          const t = state.turrets.find(tt => tt.id === f.targetTurretId);
+          const t = state.turretById.get(f.targetTurretId);
           let consumed = 0;
           if (t && t.owner !== f.owner) {
             const possible = Math.max(0, f.units) * 8;
@@ -218,8 +218,9 @@ export function simulateFleets(dt) {
   }
 }
 
-/** Apply a troop fleet's arrival: capture, reinforce, or weaken. */
-export function arriveAt(fleet, target) {
+/** Apply a troop fleet's arrival: capture, reinforce, or weaken. Internal —
+ *  only called from simulateFleets above when a fleet hits its destination. */
+function arriveAt(fleet, target) {
   if (target.owner === fleet.owner) {
     target.units = Math.min(target.capacity * 1.5, target.units + fleet.units);
     target.flash = 0.5;
@@ -237,7 +238,7 @@ export function arriveAt(fleet, target) {
   }
 }
 
-export function spawnCaptureParticles(node, owner) {
+function spawnCaptureParticles(node, owner) {
   for (let i = 0; i < 24; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 80 + Math.random() * 140;

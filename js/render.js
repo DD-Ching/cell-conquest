@@ -1,6 +1,16 @@
 // =====================================================
 // All canvas rendering: main view + minimap + HUD updates.
 // Reads from state; never mutates game data (only DOM + canvas).
+//
+// Organization:
+//   • HUD (DOM-side faction roster / timer / zoom)
+//   • Atmosphere helpers (dust + particle update — happen each tick but
+//     they're presentation-only so they live here, not in the sim)
+//   • Layer renderers — each one paints a single visual layer in world or
+//     screen space, taking (ctx, ...) explicitly. Top-level render() is
+//     just orchestration: it sets up the canvas + transforms and calls
+//     the layers in painter order.
+//   • drawDragPreview, renderMinimap kept as-is at the bottom.
 // =====================================================
 import { state } from './state.js';
 import {
@@ -114,13 +124,12 @@ export function updateParticles(dt) {
 }
 
 // =====================================================
-// Main render
+// Layer renderers — called by render() in painter order.
+// Each one is responsible for ONE visual layer and reads from state.
 // =====================================================
-export function render() {
-  const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
 
-  // Mars surface — uniform rust-brown ground (NOT a space sky).
-  // Subtle large-scale gradient suggests sun-baked terrain rather than vacuum.
+// ---- Screen-space background (Mars surface + drifting dust) ----
+function drawBackground(ctx, W, H) {
   ctx.fillStyle = '#3d1f0e';
   ctx.fillRect(0, 0, W, H);
   // Soft warm haze toward the middle to add depth
@@ -129,26 +138,17 @@ export function render() {
   haze.addColorStop(1, 'rgba(60, 30, 12, 0)');
   ctx.fillStyle = haze;
   ctx.fillRect(0, 0, W, H);
-
-  // Wind-blown grit (screen-space, less twinkly than before — feels like sand
-  // grains being carried over the surface, not stars in space).
+  // Wind-blown grit — short horizontal streaks, not stars
   for (const s of state.dust) {
     ctx.globalAlpha = s.a * 0.55;
     ctx.fillStyle = `hsl(${s.hue}, 50%, 45%)`;
-    ctx.fillRect(s.x, s.y, s.r * 1.4, 0.6);   // short horizontal streaks
+    ctx.fillRect(s.x, s.y, s.r * 1.4, 0.6);
   }
   ctx.globalAlpha = 1;
+}
 
-  // World space
-  ctx.save();
-  ctx.scale(zoom, zoom);
-  ctx.translate(-state.cameraX, -state.cameraY);
-
-  // Time reference for animated visuals throughout the world layer
-  // (scorch flicker, breathing pulses, rotors, etc.)
-  const now = performance.now();
-
-  // ---- Ground terrain (scrolls with the camera so you feel like you're moving over Mars) ----
+// ---- World-space ground terrain (sand patches, craters, rocks) ----
+function drawTerrain(ctx, zoom) {
   // Big soft sand patches first
   for (const t of state.terrain) {
     if (t.kind !== 'patch') continue;
@@ -184,23 +184,17 @@ export function render() {
     ctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.5, 0, Math.PI * 2);
     ctx.fill();
   }
+}
 
-  // ---- Scorch marks (殘骸 / 灰燼 / 燃燒) ----
-  // Two layers, both beneath roads / units / turrets:
-  //   1. groundScorch — a single offscreen canvas holding every "settled"
-  //      burn mark in the match. Drawn as ONE drawImage (cheap, regardless
-  //      of how many burns have happened).
-  //   2. state.scorches — currently-burning marks, with flicker glow on top.
-  //      When each one expires, its smudge gets painted into the offscreen
-  //      canvas (see engineering.bakeScorchToGround) so the visual stays.
-  // Purely cosmetic — never queried by AI, pathing, or collision logic.
+// ---- Scorch marks: permanent ground-baked layer + currently-burning marks ----
+// See engineering.js (spawnScorch / updateScorches / bakeScorchToGround).
+function drawScorches(ctx, zoom, now) {
   if (state.groundScorch) {
     ctx.drawImage(state.groundScorch, 0, 0, WORLD_W, WORLD_H);
   }
   for (const s of state.scorches) {
-    // Constant-alpha smudge — matches the baked version, so when this entry
-    // expires and is handed off to the offscreen canvas, the pixels swap
-    // 1:1 with no visible pop.
+    // Constant-alpha smudge — same gradient as the baked version so the
+    // active→baked handoff is pixel-identical (no visual pop).
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(s.rot);
@@ -228,32 +222,35 @@ export function render() {
       ctx.fill();
     }
   }
+}
 
-  // World boundary — subtle dotted line, doesn't dominate
+// ---- World boundary (subtle dashed border so player knows where the map ends) ----
+function drawWorldBoundary(ctx, zoom) {
   ctx.strokeStyle = 'rgba(180, 130, 80, 0.18)';
   ctx.lineWidth = 1 / zoom;
   ctx.setLineDash([8 / zoom, 6 / zoom]);
   ctx.strokeRect(0, 0, WORLD_W, WORLD_H);
   ctx.setLineDash([]);
+}
 
-  // Roads — thick TD-style path with edge highlights
-  // Road "blockage" tint is derived purely from the pile count on the edge —
-  // it's a visual readout of how clogged a road is, not a speed multiplier
-  // (the actual slowdown now comes from fleets physically detouring off-road).
+// ---- Roads (TD-style path with sand-tint blockage readout) ----
+function drawRoads(ctx, zoom) {
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const e = getEdge(r.a, r.b);
+    // Tint derived purely from pile count — visual readout of congestion,
+    // not a speed multiplier (slowdown comes from physical detour).
     drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom);
   }
+}
 
-  // Wreck piles on roads — physical debris that fleets must steer around.
-  // Drawn after roads so they sit ON TOP of the path. Dark twisted metal
-  // chunks with a slight rim of dust.
+// ---- Wreck piles (physical debris fleets must steer around) ----
+function drawWreckPiles(ctx, zoom) {
   for (const r of state.roads) {
     const e = getEdge(r.a, r.b);
     if (!e || !e.wrecks || e.wrecks.length === 0) continue;
     for (const w of e.wrecks) {
-      const hpFrac = Math.max(0.4, w.hp / w.hpMax);   // fades a bit while being cleared
+      const hpFrac = Math.max(0.4, w.hp / w.hpMax);   // fades while being cleared
       ctx.save();
       ctx.translate(w.x, w.y);
       ctx.rotate(w.rot);
@@ -267,16 +264,16 @@ export function render() {
       ctx.fillRect(-7, -5, 14, 10);
       ctx.fillStyle = `rgba(70, 42, 22, ${hpFrac})`;
       ctx.fillRect(-5, -3, 10, 6);
-      // Tiny orange ember speck so it reads as still-smoldering
+      // Tiny orange ember speck — still-smoldering hint
       ctx.fillStyle = `rgba(255, 130, 50, ${0.7 * hpFrac})`;
       ctx.fillRect(-1, -1, 2, 2);
       ctx.restore();
     }
   }
+}
 
-  // Drone nets on edges — faction-agnostic infrastructure (like road wreckage).
-  // Higher level = thicker; charge level fades alpha. Drawn in a neutral
-  // cream / sand tone so it reads as terrain, not as faction property.
+// ---- Drone nets (faction-agnostic edge fences with charge readout) ----
+function drawNets(ctx, zoom) {
   const NET_COLOR = '#e8d6a8';
   for (const r of state.roads) {
     const e = getEdge(r.a, r.b);
@@ -320,12 +317,12 @@ export function render() {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`L${e.netLevel} ${e.netCharges}`, mx, my);
   }
+}
 
-  // Artillery shells in flight — parabolic arc + impact-warning circle.
-  // The warning telegraph gives the defender a chance to see incoming AOE.
+// ---- Artillery shells in flight (parabolic arc + impact-warning ring) ----
+function drawShells(ctx, zoom) {
   for (const s of state.shells) {
     const p = Math.min(1, s.t / s.maxT);
-    // Position: interpolate + arc lift (parabolic — peaks at p=0.5)
     const lx = s.x1 + (s.x2 - s.x1) * p;
     const ly = s.y1 + (s.y2 - s.y1) * p - 50 * Math.sin(p * Math.PI);
     // Trail
@@ -347,9 +344,10 @@ export function render() {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+}
 
-  // AA tracer beams — render before nodes so beams pass behind icons.
-  // Stacking AAs all draw beams → visible saturation interception.
+// ---- AA tracer beams (drawn before nodes/turrets so beams pass behind icons) ----
+function drawTracers(ctx, zoom) {
   for (const t of state.tracers) {
     const a = 1 - t.age / t.maxAge;
     ctx.strokeStyle = t.color;
@@ -361,8 +359,10 @@ export function render() {
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
+}
 
-  // Fleet trails (skip drones)
+// ---- Fleet trails (faint line from fleet to its next segment node) ----
+function drawFleetTrails(ctx, zoom) {
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (!f.path || f.segIdx >= f.path.length - 1) continue;
@@ -374,8 +374,10 @@ export function render() {
     ctx.lineTo(segB.x, segB.y);
     ctx.stroke();
   }
+}
 
-  // Range rings — AA and tank (active only). Tank ring slightly warmer alpha.
+// ---- Range rings around active AA / tank / artillery turrets ----
+function drawRangeRings(ctx, zoom) {
   for (const t of state.turrets) {
     if (!t.active) continue;
     const r = TURRET_RANGES[t.type];
@@ -389,8 +391,10 @@ export function render() {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+}
 
-  // Nodes — fortified compounds with rim, glow, and inner structures
+// ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
+function drawNodes(ctx, zoom, now) {
   for (const n of state.nodes) {
     const degree = state.adj.get(n.id)?.size || 0;
 
@@ -448,12 +452,12 @@ export function render() {
     ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Inner "buildings": a few small dots around the perimeter inside the dark area.
-    // Density scales with hub degree — bigger hubs look like more substantial compounds.
+    // Inner "buildings": small dots around perimeter inside the dark area.
+    // Density scales with hub degree — bigger hubs look more substantial.
     if (degree > 0) {
       const buildings = Math.min(8, Math.max(3, degree + 2));
       const innerR = n.size - 8;
-      const slowSpin = now / 6000;       // very slow rotation so it doesn't feel busy
+      const slowSpin = now / 6000;       // very slow rotation
       for (let k = 0; k < buildings; k++) {
         const a = slowSpin + (k / buildings) * Math.PI * 2;
         const bx = n.x + Math.cos(a) * innerR;
@@ -474,6 +478,7 @@ export function render() {
       ctx.fill();
     }
 
+    // Unit count label centered in compound
     ctx.fillStyle = '#fff';
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
@@ -498,8 +503,10 @@ export function render() {
       ctx.stroke();
     }
   }
+}
 
-  // Turrets — distinct sprites per type
+// ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----
+function drawTurrets(ctx, zoom, now) {
   for (const t of state.turrets) {
     if (t.type === 'antiair') {
       drawAATurret(ctx, t.x, t.y, t.owner, t.active, zoom, now);
@@ -527,7 +534,7 @@ export function render() {
         ctx.fillText(t.dronesReady, t.x + 21, t.y - 24);
       }
     } else if (t.type === 'artillery') {
-      // Aim toward the densest visible enemy point (rough — just nearest target)
+      // Aim toward nearest enemy turret (rough — just nearest)
       let aimAngle = 0, aimD = Infinity;
       for (const e of state.turrets) {
         if (e.owner === t.owner) continue;
@@ -557,64 +564,69 @@ export function render() {
       ctx.fillRect(t.x - bw / 2, t.y + 24, bw * frac, 3.5);
     }
   }
+}
 
-  // Placement preview (player choosing where to place a turret or net).
-  if (state.placeMode) {
-    const wx = state.mousePos.x, wy = state.mousePos.y;
-    if (state.placeMode.type === 'net') {
-      // Net targets a road segment — highlight nearest road within tolerance.
-      const r = roadAt(wx, wy, NET_PICK_R);
-      if (r) {
-        const a = state.nodes[r.a], b = state.nodes[r.b];
-        ctx.strokeStyle = 'rgba(160, 220, 255, 0.85)';
-        ctx.lineWidth = 4 / zoom;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        // Hint: show what this trip will do (clear wreck vs upgrade net)
-        const e = getEdge(r.a, r.b);
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        ctx.fillStyle = '#a4d8ff';
-        ctx.font = `bold ${11 / zoom}px ui-monospace, monospace`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        let hint;
-        if (!e) hint = '';
-        else if (e.wrecks && e.wrecks.length > 0) hint = `clear ${e.wrecks.length} wreck${e.wrecks.length > 1 ? 's' : ''}`;
-        else if (e.netLevel < NET_LEVEL_MAX) hint = `+net L${e.netLevel + 1}`;
-        else hint = 'net maxed';
-        ctx.fillText(hint, mx, my - 10);
-      } else {
-        // No road nearby — show small dot at cursor
-        ctx.fillStyle = 'rgba(160, 220, 255, 0.4)';
-        ctx.beginPath(); ctx.arc(wx, wy, 4, 0, Math.PI * 2); ctx.fill();
-      }
+// ---- Placement preview (semi-transparent ghost while player is in place-mode) ----
+function drawPlacementPreview(ctx, zoom, now) {
+  if (!state.placeMode) return;
+  const wx = state.mousePos.x, wy = state.mousePos.y;
+  if (state.placeMode.type === 'net') {
+    // Net targets a road segment — highlight nearest road within tolerance.
+    const r = roadAt(wx, wy, NET_PICK_R);
+    if (r) {
+      const a = state.nodes[r.a], b = state.nodes[r.b];
+      ctx.strokeStyle = 'rgba(160, 220, 255, 0.85)';
+      ctx.lineWidth = 4 / zoom;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      // Hint: show what this trip will do (clear wrecks vs upgrade net)
+      const e = getEdge(r.a, r.b);
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      ctx.fillStyle = '#a4d8ff';
+      ctx.font = `bold ${11 / zoom}px ui-monospace, monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      let hint;
+      if (!e) hint = '';
+      else if (e.wrecks && e.wrecks.length > 0) hint = `clear ${e.wrecks.length} wreck${e.wrecks.length > 1 ? 's' : ''}`;
+      else if (e.netLevel < NET_LEVEL_MAX) hint = `+net L${e.netLevel + 1}`;
+      else hint = 'net maxed';
+      ctx.fillText(hint, mx, my - 10);
     } else {
-      // Turret world-point preview — render the actual sprite (semi-transparent)
-      ctx.globalAlpha = 0.65;
-      if (state.placeMode.type === 'antiair') {
-        drawAATurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now);
-      } else if (state.placeMode.type === 'tank') {
-        drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0);
-      } else if (state.placeMode.type === 'factory') {
-        drawFactoryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now, false);
-      } else if (state.placeMode.type === 'artillery') {
-        drawArtilleryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0, 0);
-      }
-      ctx.globalAlpha = 1;
-      const previewR = TURRET_RANGES[state.placeMode.type];
-      if (previewR) {
-        ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
-        ctx.lineWidth = 1 / zoom;
-        ctx.setLineDash([5 / zoom, 5 / zoom]);
-        ctx.beginPath();
-        ctx.arc(wx, wy, previewR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      ctx.fillStyle = 'rgba(160, 220, 255, 0.4)';
+      ctx.beginPath(); ctx.arc(wx, wy, 4, 0, Math.PI * 2); ctx.fill();
+    }
+  } else {
+    // Turret world-point preview — render the actual sprite (semi-transparent)
+    ctx.globalAlpha = 0.65;
+    if (state.placeMode.type === 'antiair') {
+      drawAATurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now);
+    } else if (state.placeMode.type === 'tank') {
+      drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0);
+    } else if (state.placeMode.type === 'factory') {
+      drawFactoryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now, false);
+    } else if (state.placeMode.type === 'artillery') {
+      drawArtilleryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0, 0);
+    }
+    ctx.globalAlpha = 1;
+    const previewR = TURRET_RANGES[state.placeMode.type];
+    if (previewR) {
+      ctx.strokeStyle = 'rgba(255, 220, 130, 0.5)';
+      ctx.lineWidth = 1 / zoom;
+      ctx.setLineDash([5 / zoom, 5 / zoom]);
+      ctx.beginPath();
+      ctx.arc(wx, wy, previewR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
+}
 
-  // Ground fleets — distinct sprites per kind, size-tiered for troops
+// ---- Ground fleets — column of vehicles trailing a leader ----
+function drawTroopFleets(ctx, zoom) {
+  const COLUMN_MAX = 8;
+  const PER_VEH = 5;
+  const GAP = 13;       // px between adjacent vehicles along the column
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     let angle = 0;
@@ -626,7 +638,7 @@ export function render() {
     } else if (!f.path) {
       continue;
     }
-    // ENGINEERS / DEPLOY: single dozer sprite (they're individual vehicles, not squads)
+    // ENGINEERS / DEPLOY: single dozer (they're individual vehicles)
     if (f.kind === 'engineer' || f.kind === 'deploy') {
       drawEngineerSprite(ctx, f.x, f.y, angle, f.owner, zoom);
       ctx.fillStyle = COLOR[f.owner];
@@ -635,20 +647,14 @@ export function render() {
       ctx.fillText('⚙', f.x, f.y - 18);
       continue;
     }
-    // TROOPS / ASSAULT: render as a COLUMN of individual vehicles trailing the
-    // leader along the direction of travel. 5 units ≈ one visible vehicle.
-    // Cap at COLUMN_MAX so a 200-unit blob doesn't draw 40 sprites.
-    const COLUMN_MAX = 8;
-    const PER_VEH = 5;
-    const GAP = 13;       // px between adjacent vehicles along the column
+    // TROOPS / ASSAULT: column of individual vehicles (1 sprite ≈ 5 units, max 8)
     const totalUnits = Math.max(1, Math.floor(f.units));
     const showCount = Math.min(COLUMN_MAX, Math.max(1, Math.ceil(totalUnits / PER_VEH)));
-    const perVehUnits = totalUnits / showCount;  // for sprite-tier picking
-    // Reverse-heading basis (where vehicles trail behind the leader)
+    const perVehUnits = totalUnits / showCount;
     const backX = -Math.cos(angle), backY = -Math.sin(angle);
     const perpX = -Math.sin(angle), perpY = Math.cos(angle);
     for (let k = 0; k < showCount; k++) {
-      // Small alternating lateral jitter so the column doesn't look like a comb
+      // Alternating lateral jitter so it doesn't look like a comb
       const jitter = (k % 2 === 0 ? 1 : -1) * (k > 0 ? 1.6 : 0);
       const vx = f.x + backX * (k * GAP) + perpX * jitter;
       const vy = f.y + backY * (k * GAP) + perpY * jitter;
@@ -664,8 +670,10 @@ export function render() {
     ctx.textAlign = 'center';
     ctx.fillText(totalUnits, f.x, f.y - 18);
   }
+}
 
-  // Drones — quadcopter sprite with rotor blur
+// ---- Drones (delta-wing sprite + HP bar when damaged) ----
+function drawDroneFleets(ctx, zoom, now) {
   for (const f of state.fleets) {
     if (f.kind !== 'drone') continue;
     const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
@@ -678,8 +686,10 @@ export function render() {
       ctx.fillRect(f.x - bw / 2, f.y + 12, bw * frac, 3);
     }
   }
+}
 
-  // Particles
+// ---- Particles (life-based alpha fade) ----
+function drawParticles(ctx, zoom) {
   for (const p of state.particles) {
     const a = p.life / p.maxLife;
     ctx.globalAlpha = a;
@@ -689,69 +699,112 @@ export function render() {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
-
-  // Drag preview
-  if (state.drag && state.drag.moved) {
-    drawDragPreview(ctx, zoom);
-  }
-
-  // Salvo-target marker — pulsing crosshair on the designated enemy
-  if (state.holdFire && state.salvoTarget) {
-    const s = state.salvoTarget;
-    let tx = s.x, ty = s.y;
-    if (s.kind === 'turret') {
-      const t2 = state.turrets.find(tt => tt.id === s.id);
-      if (t2) { tx = t2.x; ty = t2.y; }
-    } else if (s.kind === 'node') {
-      const n = state.nodes[s.id];
-      if (n) { tx = n.x; ty = n.y; }
-    }
-    const pulse = 0.6 + 0.4 * Math.sin(now / 200);
-    ctx.strokeStyle = `rgba(255, 80, 60, ${pulse})`;
-    ctx.lineWidth = 2 / zoom;
-    ctx.setLineDash([6 / zoom, 4 / zoom]);
-    ctx.beginPath();
-    ctx.arc(tx, ty, 24, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.strokeStyle = `rgba(255, 80, 60, ${pulse * 0.9})`;
-    ctx.lineWidth = 1.4 / zoom;
-    ctx.beginPath();
-    ctx.moveTo(tx - 34, ty); ctx.lineTo(tx - 16, ty);
-    ctx.moveTo(tx + 16, ty); ctx.lineTo(tx + 34, ty);
-    ctx.moveTo(tx, ty - 34); ctx.lineTo(tx, ty - 16);
-    ctx.moveTo(tx, ty + 16); ctx.lineTo(tx, ty + 34);
-    ctx.stroke();
-  }
-
-  ctx.restore();
-
-  // Hold-Fire screen-space banner (drawn after world transform restored)
-  if (state.holdFire) {
-    let total = 0;
-    for (const t of state.turrets) {
-      if (t.owner === 'player' && t.type === 'factory') total += t.dronesReady || 0;
-    }
-    const targeted = !!state.salvoTarget;
-    const text = targeted
-      ? `⏸  HOLD-FIRE  ${total} drones  →  TARGET LOCKED  —  H to strike, Esc to clear`
-      : `⏸  HOLD-FIRE  ${total} drone${total === 1 ? '' : 's'} ready  —  click an enemy to lock target, H to auto-launch`;
-    const a = 0.85 + Math.sin(now / 250) * 0.15;
-    ctx.font = 'bold 14px ui-monospace, monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    const w = ctx.measureText(text).width + 28;
-    const cx = state.W / 2, cy = 52;
-    const baseTint = targeted ? '255, 110, 90' : '255, 200, 90';
-    ctx.fillStyle = `rgba(${baseTint}, ${a * 0.22})`;
-    ctx.fillRect(cx - w / 2, cy, w, 30);
-    ctx.strokeStyle = `rgba(${baseTint}, ${a})`;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(cx - w / 2, cy, w, 30);
-    ctx.fillStyle = targeted ? `rgba(255, 200, 180, ${a})` : `rgba(255, 220, 130, ${a})`;
-    ctx.fillText(text, cx, cy + 8);
-  }
 }
 
+// ---- Salvo-target marker (pulsing crosshair on designated enemy during Hold-Fire) ----
+function drawSalvoMarker(ctx, zoom, now) {
+  if (!(state.holdFire && state.salvoTarget)) return;
+  const s = state.salvoTarget;
+  let tx = s.x, ty = s.y;
+  if (s.kind === 'turret') {
+    const t2 = state.turretById.get(s.id);
+    if (t2) { tx = t2.x; ty = t2.y; }
+  } else if (s.kind === 'node') {
+    const n = state.nodes[s.id];
+    if (n) { tx = n.x; ty = n.y; }
+  }
+  const pulse = 0.6 + 0.4 * Math.sin(now / 200);
+  ctx.strokeStyle = `rgba(255, 80, 60, ${pulse})`;
+  ctx.lineWidth = 2 / zoom;
+  ctx.setLineDash([6 / zoom, 4 / zoom]);
+  ctx.beginPath();
+  ctx.arc(tx, ty, 24, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = `rgba(255, 80, 60, ${pulse * 0.9})`;
+  ctx.lineWidth = 1.4 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(tx - 34, ty); ctx.lineTo(tx - 16, ty);
+  ctx.moveTo(tx + 16, ty); ctx.lineTo(tx + 34, ty);
+  ctx.moveTo(tx, ty - 34); ctx.lineTo(tx, ty - 16);
+  ctx.moveTo(tx, ty + 16); ctx.lineTo(tx, ty + 34);
+  ctx.stroke();
+}
+
+// ---- Hold-Fire screen-space banner (drawn AFTER world transform restored) ----
+function drawHoldFireBanner(ctx, W, now) {
+  if (!state.holdFire) return;
+  let total = 0;
+  for (const t of state.turrets) {
+    if (t.owner === 'player' && t.type === 'factory') total += t.dronesReady || 0;
+  }
+  const targeted = !!state.salvoTarget;
+  const text = targeted
+    ? `⏸  HOLD-FIRE  ${total} drones  →  TARGET LOCKED  —  H to strike, Esc to clear`
+    : `⏸  HOLD-FIRE  ${total} drone${total === 1 ? '' : 's'} ready  —  click an enemy to lock target, H to auto-launch`;
+  const a = 0.85 + Math.sin(now / 250) * 0.15;
+  ctx.font = 'bold 14px ui-monospace, monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const w = ctx.measureText(text).width + 28;
+  const cx = W / 2, cy = 52;
+  const baseTint = targeted ? '255, 110, 90' : '255, 200, 90';
+  ctx.fillStyle = `rgba(${baseTint}, ${a * 0.22})`;
+  ctx.fillRect(cx - w / 2, cy, w, 30);
+  ctx.strokeStyle = `rgba(${baseTint}, ${a})`;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - w / 2, cy, w, 30);
+  ctx.fillStyle = targeted ? `rgba(255, 200, 180, ${a})` : `rgba(255, 220, 130, ${a})`;
+  ctx.fillText(text, cx, cy + 8);
+}
+
+// =====================================================
+// Main render — orchestration only. Set up the canvas + world transform,
+// then call each layer in painter order. Add / reorder layers HERE, never
+// inside this function's logic block — the layer renderers above are the
+// place to put rendering details.
+// =====================================================
+export function render() {
+  const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
+  const now = performance.now();
+
+  // Screen-space background (no world transform)
+  drawBackground(ctx, W, H);
+
+  // World space ------------------------------------------------
+  ctx.save();
+  ctx.scale(zoom, zoom);
+  ctx.translate(-state.cameraX, -state.cameraY);
+
+  drawTerrain(ctx, zoom);
+  drawScorches(ctx, zoom, now);
+  drawWorldBoundary(ctx, zoom);
+  drawRoads(ctx, zoom);
+  drawWreckPiles(ctx, zoom);
+  drawNets(ctx, zoom);
+  drawShells(ctx, zoom);
+  drawTracers(ctx, zoom);
+  drawFleetTrails(ctx, zoom);
+  drawRangeRings(ctx, zoom);
+  drawNodes(ctx, zoom, now);
+  drawTurrets(ctx, zoom, now);
+  drawPlacementPreview(ctx, zoom, now);
+  drawTroopFleets(ctx, zoom);
+  drawDroneFleets(ctx, zoom, now);
+  drawParticles(ctx, zoom);
+  if (state.drag && state.drag.moved) drawDragPreview(ctx, zoom);
+  drawSalvoMarker(ctx, zoom, now);
+
+  ctx.restore();
+  // --- end world space ----------------------------------------
+
+  drawHoldFireBanner(ctx, W, now);
+}
+
+// =====================================================
+// Drag preview (selection / send-arrow / box-select) — kept as a standalone
+// function so it can be added or removed from the render pipeline without
+// disturbing the layer order.
+// =====================================================
 function drawDragPreview(ctx, zoom) {
   const drag = state.drag;
   if (drag.mode === 'send' && drag.originNode) {
@@ -824,6 +877,9 @@ function drawDragPreview(ctx, zoom) {
   }
 }
 
+// =====================================================
+// Minimap
+// =====================================================
 export function renderMinimap() {
   const mctx = state.mctx;
   if (!mctx) return;

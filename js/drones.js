@@ -27,7 +27,9 @@ const DRONE_SWITCH_R2  = DRONE_HUNT_SWITCH_RATIO * DRONE_HUNT_SWITCH_RATIO;
 const HUNT_PROXIMITY2  = 50 * 50;     // huntD < 50 → huntD² < 2500
 
 // ---- Spawn ----
-export function spawnDrone(originX, originY, owner, target) {
+// Internal helper — drones are only spawned via launchOneDroneFrom (factory tick)
+// and releasePlayerStockpile (Hold-Fire flush). Both are in this file.
+function spawnDrone(originX, originY, owner, target) {
   state.fleets.push({
     _id: state._nextFleetId++,
     kind: 'drone', owner, units: 1,
@@ -45,7 +47,7 @@ export function spawnDrone(originX, originY, owner, target) {
  *  no longer hostile (node captured by an ally of the drone),
  *  or already worthless (node bombed down to ~0 units — another drone got it). */
 function droneTargetExists(drone) {
-  if (drone.targetKind === 'turret') return state.turrets.some(t => t.id === drone.targetId);
+  if (drone.targetKind === 'turret') return state.turretById.has(drone.targetId);
   if (drone.targetKind === 'node') {
     if (drone.targetId >= state.nodes.length) return false;
     const n = state.nodes[drone.targetId];
@@ -53,7 +55,7 @@ function droneTargetExists(drone) {
     if (n.units < 1) return false;                  // someone else cleaned it out
     return true;
   }
-  if (drone.targetKind === 'fleet')  return state.fleets.some(f => f._id === drone.targetId);
+  if (drone.targetKind === 'fleet')  return state.fleetById.has(drone.targetId);
   return false;
 }
 
@@ -86,7 +88,7 @@ function retargetDrone(drone) {
  *  nets only protect troops on roads (handled in droneHitFleet). */
 function droneHit(drone) {
   let target;
-  if (drone.targetKind === 'turret') target = state.turrets.find(t => t.id === drone.targetId);
+  if (drone.targetKind === 'turret') target = state.turretById.get(drone.targetId);
   else                                target = state.nodes[drone.targetId];
   if (!target) return false;
   const dmg = drone.damage;
@@ -130,11 +132,9 @@ function droneHitFleet(drone, fleet) {
 
 // ---- Per-tick ----
 export function updateDrones(dt) {
-  // Build a fleet-by-id Map once per tick so the per-drone target lookup is
-  // O(1) instead of O(N). Marked-dead fleets are still in the array (and
-  // therefore in this Map); they're cleared in the cleanup pass at the end.
-  const fleetById = new Map();
-  for (const g of state.fleets) fleetById.set(g._id, g);
+  // state.fleetById is built once per tick in simulate() — reuse it for
+  // O(1) "give me fleet X" lookups (the hottest part of this function).
+  const fleetById = state.fleetById;
 
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
@@ -321,7 +321,7 @@ function resolveSalvoTarget() {
   const s = state.salvoTarget;
   if (!s) return null;
   if (s.kind === 'turret') {
-    const t = state.turrets.find(tt => tt.id === s.id);
+    const t = state.turretById.get(s.id);
     if (t && t.owner !== 'player') return { kind: 'turret', id: t.id, x: t.x, y: t.y };
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];

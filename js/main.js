@@ -146,6 +146,16 @@ function endGame(win, sub) {
 // Main loop
 // =====================================================
 function simulate(dt) {
+  // Refresh id-lookup caches once per tick — every downstream system can do
+  // O(1) state.turretById.get(id) / state.fleetById.get(id) instead of an
+  // O(N) array.find. (Splices during this tick may leave deleted entries
+  // in the map; consumers gate on falsy result, which is the same check
+  // they already did before.)
+  state.turretById.clear();
+  for (const t of state.turrets) state.turretById.set(t.id, t);
+  state.fleetById.clear();
+  for (const f of state.fleets)  state.fleetById.set(f._id, f);
+
   // Regen + visual decays
   for (const n of state.nodes) {
     if (n.owner !== 'neutral') {

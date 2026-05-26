@@ -131,7 +131,7 @@ export function aiTick(owner, dt) {
 
   // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam,
   // plus long-range artillery for AOE counter-pressure against enemy clusters.
-  const AA_TARGET        = 4;                     // 4-AA wall in front of each hub
+  const AA_TARGET        = antiTurtle ? 9 : 7;    // thick AA wall with forward push
   const TANK_TARGET      = 2;                     // 2 tanks for siege + flank
   const FACTORY_TARGET   = antiTurtle ? 8 : 5;    // more drone throughput — was 6/4
   const ARTILLERY_TARGET = antiTurtle ? 3 : 2;    // more AOE counter-pressure — was 2/1
@@ -140,13 +140,20 @@ export function aiTick(owner, dt) {
   // Drones flying toward the hub get sieved by overlapping radars from multiple angles.
   function aaWallSpot(n, dirX, dirY, idx) {
     const px = -dirY, py = dirX;
+    // Idx 0-4 = the original 5-AA defensive wall hugging the hub. Idx 5-8 =
+    // forward-pushed positions that gradually extend the line toward the
+    // enemy, so as the wall thickens the AA umbrella also creeps forward.
     const layout = [
-      { fwd: 70, side:   0 },     // 0: center front
-      { fwd: 55, side:  80 },     // 1: right flank
-      { fwd: 55, side: -80 },     // 2: left flank
-      { fwd: 30, side: 130 },     // 3: far right
-      { fwd: 30, side:-130 },     // 4: far left
-    ][idx % 5];
+      { fwd:  70, side:    0 },   // 0: center front
+      { fwd:  55, side:   80 },   // 1: right flank
+      { fwd:  55, side:  -80 },   // 2: left flank
+      { fwd:  30, side:  130 },   // 3: far right
+      { fwd:  30, side: -130 },   // 4: far left
+      { fwd: 140, side:    0 },   // 5: forward push, center
+      { fwd: 125, side:   70 },   // 6: forward right
+      { fwd: 125, side:  -70 },   // 7: forward left
+      { fwd: 200, side:    0 },   // 8: deep push (antiTurtle only)
+    ][idx % 9];
     return { x: n.x + dirX * layout.fwd + px * layout.side,
              y: n.y + dirY * layout.fwd + py * layout.side };
   }
@@ -215,28 +222,22 @@ export function aiTick(owner, dt) {
       // Try a build at one of several layout positions — if the first is blocked
       // by enemy tank range, fall through to the next. Stops the AI from giving
       // up on AA construction the moment one spot is contested.
+      // Note: overlapping turrets is fine — clustered AAs = overlapping kill
+      // zones, which is exactly what a real AA doctrine wants.
       function tryBuild(type, makeSpot, baseIdx, maxAttempts = 6) {
         for (let a = 0; a < maxAttempts; a++) {
           const spot = makeSpot(n, dirX, dirY, baseIdx + a);
           if (isExposedToEnemyTank(spot.x, spot.y)) continue;
-          // Reject any spot too close to an existing turret — stops AI from
-          // stacking a new build on top of an old one (its own previous build,
-          // a player turret, or another AI's). Visual stacking AND artillery
-          // AOE both hate clustered turrets.
-          let overlaps = false;
-          for (const ex of state.turrets) {
-            const dx = ex.x - spot.x, dy = ex.y - spot.y;
-            if (dx * dx + dy * dy < 22 * 22) { overlaps = true; break; }
-          }
-          if (overlaps) continue;
           if (placeTurretAt(spot.x, spot.y, type, owner)) return true;
         }
         return false;
       }
 
       // ---- 1) AA WALL — keep stacking until we hit AA_TARGET ----
+      // Sweep all 9 layout positions (defensive 0-4 + forward 5-8) so a
+      // single blocked spot doesn't stall the wall thickening.
       if (ownAAsNear.length < AA_TARGET) {
-        if (tryBuild('antiair', aaWallSpot, ownAAsNear.length, 5)) return;
+        if (tryBuild('antiair', aaWallSpot, ownAAsNear.length, 9)) return;
       }
 
       // ---- 2) Tanks — start as soon as we have at least 2 AAs ----

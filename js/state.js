@@ -28,6 +28,9 @@ export const state = {
   terrain: [],               // world-space ground features: rocks, craters, sand patches
   tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
   shells: [],                // artillery shells in flight: {x1,y1,x2,y2,t,maxT,owner}
+  scorches: [],              // persistent burn marks on the ground (殘骸/灰燼/燃燒).
+                             // {x,y,r,age,maxAge,kind,sparkAcc,rot}. Purely cosmetic —
+                             // NEVER queried by AI, pathing, or collision.
   turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],

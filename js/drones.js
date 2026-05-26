@@ -18,7 +18,7 @@ import {
   DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
 } from './config.js';
 import { dist } from './util.js';
-import { addWreckBlockage, spawnBigExplosion, getEdge } from './engineering.js';
+import { addWreckBlockage, spawnBigExplosion, spawnScorch, getEdge } from './engineering.js';
 
 // Pre-squared distances — comparisons use dx²+dy² < r² to avoid sqrt in the
 // hottest per-tick loops (drone hunt scan runs once per drone per sub-step).
@@ -122,6 +122,7 @@ function droneHitFleet(drone, fleet) {
   if (fleet.units < 0.5) {
     addWreckBlockage(fleet);
     spawnBigExplosion(fleet.x, fleet.y, '#ff8a3a', 10);
+    spawnScorch(fleet.x, fleet.y, 'medium');
     fleet._dead = true;
   }
   return true;
@@ -147,6 +148,7 @@ export function updateDrones(dt) {
           life: 0.3, maxLife: 0.3, color: '#aaa',
         });
       }
+      spawnScorch(f.x, f.y, 'small');
       state.fleets.splice(i, 1); continue;
     }
 

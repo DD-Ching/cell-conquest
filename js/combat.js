@@ -15,7 +15,7 @@ import {
   ARTILLERY_SHELL_FLIGHT,
 } from './config.js';
 import { COLOR } from './factions.js';
-import { addWreckBlockage, spawnBigExplosion } from './engineering.js';
+import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
 
 // Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
 const AA_R2          = AA_RADIUS * AA_RADIUS;
@@ -69,6 +69,7 @@ export function updateTanks(dt) {
       if (f.units < 0.5) {
         addWreckBlockage(f);
         spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
+        spawnScorch(f.x, f.y, 'medium');
         state.fleets.splice(i, 1);
         continue;
       }
@@ -177,6 +178,7 @@ function detonateArtillery(x, y, owner) {
     f.units -= ARTILLERY_DAMAGE_FLEET;
     if (f.units < 0.5) {
       addWreckBlockage(f);
+      spawnScorch(f.x, f.y, 'medium');
       f._dead = true;
     }
   }
@@ -185,6 +187,7 @@ function detonateArtillery(x, y, owner) {
     if (state.fleets[i]._dead) state.fleets.splice(i, 1);
   }
   spawnBigExplosion(x, y, '#ffcc66', 30);
+  spawnScorch(x, y, 'big');
   state.tracers.push({
     x1: x, y1: y, x2: x, y2: y,
     age: 0, maxAge: 0.35, color: '#ffd066',

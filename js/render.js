@@ -144,6 +144,10 @@ export function render() {
   ctx.scale(zoom, zoom);
   ctx.translate(-state.cameraX, -state.cameraY);
 
+  // Time reference for animated visuals throughout the world layer
+  // (scorch flicker, breathing pulses, rotors, etc.)
+  const now = performance.now();
+
   // ---- Ground terrain (scrolls with the camera so you feel like you're moving over Mars) ----
   // Big soft sand patches first
   for (const t of state.terrain) {
@@ -179,6 +183,42 @@ export function render() {
     ctx.beginPath();
     ctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // ---- Scorch marks (殘骸 / 灰燼 / 燃燒) ----
+  // Persistent dark burn smudges on the ground where units / turrets died.
+  // Drawn here so roads + units render ON TOP of them. Burning scorches also
+  // emit a soft flicker glow (rendered after the smudge, before everything else).
+  // Purely cosmetic — never queried by AI, pathing, or collision logic.
+  for (const s of state.scorches) {
+    const a = 1 - s.age / s.maxAge;
+    // Dark burn smudge — ellipse with soft fade-out edge
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.rot);
+    const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, s.r);
+    sg.addColorStop(0,   `rgba(8, 4, 2, ${0.78 * a})`);
+    sg.addColorStop(0.55, `rgba(22, 11, 5, ${0.48 * a})`);
+    sg.addColorStop(1,   'rgba(60, 30, 15, 0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s.r, s.r * 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // Flickering ember glow during the burning phase (first ~60% of life)
+    const burnFrac = Math.max(0, 1 - s.age / (s.maxAge * 0.6));
+    if (burnFrac > 0) {
+      const flick = 0.55 + 0.45 * Math.sin(now / 70 + s.x * 0.13 + s.y * 0.07);
+      const gR = s.r * 0.42 * (0.85 + flick * 0.18);
+      const gg = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, gR);
+      gg.addColorStop(0, `rgba(255, 170, 70, ${0.55 * burnFrac * flick})`);
+      gg.addColorStop(0.55, `rgba(255, 110, 35, ${0.25 * burnFrac * flick})`);
+      gg.addColorStop(1, 'rgba(255, 80, 20, 0)');
+      ctx.fillStyle = gg;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, gR, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // World boundary — subtle dotted line, doesn't dominate
@@ -310,9 +350,6 @@ export function render() {
     ctx.stroke();
     ctx.setLineDash([]);
   }
-
-  // Time reference for any animated visuals below (breathing pulses, rotors, etc.)
-  const now = performance.now();
 
   // Nodes — fortified compounds with rim, glow, and inner structures
   for (const n of state.nodes) {

@@ -16,7 +16,7 @@ import {
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
   resetEngineering, placeTurretAt, placeNetOnEdge,
-  updateBuildings, updateTracers,
+  updateBuildings, updateTracers, updateScorches,
 } from './engineering.js';
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
@@ -201,6 +201,7 @@ function loop() {
       for (const ai of AIS) aiTick(ai, subDt);
       updateParticles(subDt);
       updateTracers(subDt);
+      updateScorches(subDt);
     }
     state.elapsed += gameDt;
     checkVictory();

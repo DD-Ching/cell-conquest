@@ -52,6 +52,7 @@ export function resetEngineering() {
   }
   state.turrets = [];
   state.shells = [];
+  state.scorches = [];
   state.placeMode = null;
   state.holdFire = false;
   state.salvoTarget = null;
@@ -278,6 +279,70 @@ export function updateTracers(dt) {
 }
 
 // =====================================================
+// Scorch marks (殘骸 / 灰燼 / 燃燒) — cosmetic-only.
+//
+// When anything blows up we leave a persistent dark smudge on the ground,
+// plus a small ember/smoke emitter that burns for the first chunk of the
+// scorch's life. NEVER queried by AI, pathing, or collision: this is just
+// visual texture so the battlefield looks "lived in" after a long fight.
+// Capped so the scene doesn't accumulate hundreds of marks during long games.
+// =====================================================
+const MAX_SCORCHES = 80;
+export function spawnScorch(x, y, kind = 'small') {
+  let r, life;
+  if (kind === 'big')         { r = 34 + Math.random() * 16; life = 32; }
+  else if (kind === 'medium') { r = 18 + Math.random() *  8; life = 22; }
+  else                        { r = 10 + Math.random() *  5; life = 14; }
+  state.scorches.push({
+    x, y, r,
+    age: 0, maxAge: life,
+    kind,
+    sparkAcc: 0,
+    rot: Math.random() * Math.PI,
+  });
+  if (state.scorches.length > MAX_SCORCHES) {
+    state.scorches.splice(0, state.scorches.length - MAX_SCORCHES);
+  }
+}
+
+export function updateScorches(dt) {
+  for (let i = state.scorches.length - 1; i >= 0; i--) {
+    const s = state.scorches[i];
+    s.age += dt;
+    if (s.age >= s.maxAge) { state.scorches.splice(i, 1); continue; }
+    // Emit embers + smoke during the burning phase (first 55% of life)
+    const burnFrac = 1 - s.age / (s.maxAge * 0.55);
+    if (burnFrac <= 0) continue;
+    const rate = (s.kind === 'big' ? 14 : s.kind === 'medium' ? 7 : 3) * burnFrac;
+    s.sparkAcc += rate * dt;
+    while (s.sparkAcc >= 1) {
+      s.sparkAcc -= 1;
+      const jx = (Math.random() - 0.5) * s.r * 1.3;
+      const jy = (Math.random() - 0.5) * s.r * 0.7;
+      if (Math.random() < 0.6) {
+        // Ember — small orange/yellow spark drifting up
+        state.particles.push({
+          x: s.x + jx, y: s.y + jy,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -22 - Math.random() * 26,
+          life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+          color: Math.random() < 0.3 ? '#ffe6a0' : '#ff8a3a',
+        });
+      } else {
+        // Smoke / ash — dim gray, slower drift
+        state.particles.push({
+          x: s.x + jx, y: s.y + jy,
+          vx: (Math.random() - 0.5) * 6,
+          vy: -10 - Math.random() * 10,
+          life: 1.0 + Math.random() * 0.7, maxLife: 1.7,
+          color: '#8a7864',
+        });
+      }
+    }
+  }
+}
+
+// =====================================================
 // Buildings tick — construction, factory production, decay, dead-turret cleanup
 // =====================================================
 export function updateBuildings(dt) {
@@ -286,6 +351,7 @@ export function updateBuildings(dt) {
     if (t.hp <= 0) {
       spawnBigExplosion(t.x, t.y, t.type === 'tank' ? '#ffaa55' : '#ff8a3a',
                         t.type === 'tank' ? 32 : 18);
+      spawnScorch(t.x, t.y, 'big');
       state.turrets.splice(i, 1); continue;
     }
     if (!t.active) {

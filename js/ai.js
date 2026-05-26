@@ -215,12 +215,21 @@ export function aiTick(owner, dt) {
       // Try a build at one of several layout positions — if the first is blocked
       // by enemy tank range, fall through to the next. Stops the AI from giving
       // up on AA construction the moment one spot is contested.
-      function tryBuild(type, makeSpot, baseIdx, maxAttempts = 4) {
+      function tryBuild(type, makeSpot, baseIdx, maxAttempts = 6) {
         for (let a = 0; a < maxAttempts; a++) {
           const spot = makeSpot(n, dirX, dirY, baseIdx + a);
-          if (!isExposedToEnemyTank(spot.x, spot.y) && placeTurretAt(spot.x, spot.y, type, owner)) {
-            return true;
+          if (isExposedToEnemyTank(spot.x, spot.y)) continue;
+          // Reject any spot too close to an existing turret — stops AI from
+          // stacking a new build on top of an old one (its own previous build,
+          // a player turret, or another AI's). Visual stacking AND artillery
+          // AOE both hate clustered turrets.
+          let overlaps = false;
+          for (const ex of state.turrets) {
+            const dx = ex.x - spot.x, dy = ex.y - spot.y;
+            if (dx * dx + dy * dy < 22 * 22) { overlaps = true; break; }
           }
+          if (overlaps) continue;
+          if (placeTurretAt(spot.x, spot.y, type, owner)) return true;
         }
         return false;
       }

@@ -16,7 +16,7 @@ import {
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
 
-const OFFROAD_SPEED_MUL = 0.1;
+const OFFROAD_SPEED_MUL = 0.01;
 
 /** Try to dispatch a troop fleet (own-territory path). Returns true on success. */
 export function sendFleet(from, to, amount) {

@@ -93,7 +93,7 @@ export const WRECK_MAX_PER_EDGE  = 18;  // perf cap — beyond this, new wrecks
                                         // per-tick detour scan stays bounded
 export const DETOUR_LOOKAHEAD    = 55;  // sec-ahead a vehicle "sees" a pile to dodge it
 export const DETOUR_OFFSET       = 22;  // peak lateral offset (px) when squeezing past
-export const DETOUR_SPEED_MIN    = 0.14; // slowdown factor at peak detour (wasteland crawl)
+export const DETOUR_SPEED_MIN    = 0.014; // slowdown factor at peak detour (wasteland crawl)
 
 // ---- NN integration ----
 export const NN_OWNERS = new Set(['red']);

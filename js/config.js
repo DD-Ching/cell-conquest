@@ -26,7 +26,8 @@ export const SPEEDS = [1, 2, 5, 10, 20];
 export const ENG_HP = 60;
 export const ENG_SPEED = 70;            // world px/sec; slower than FLEET_SPEED
 export const ENG_BUILD_RATE = 1.0;      // fraction/sec/engineer toward site.total
-export const ENG_CLEAR_RATE = 0.15;     // blockage/sec/engineer (decreases edge.blockage)
+export const ENG_CLEAR_RATE = 0.6;      // wreck-pile-HP/sec/engineer (idle eng at node
+                                        // chips away at piles on connected edges)
 export const ENG_COST = 12;             // units consumed at source node to dispatch
 
 // Buildings: build time (sec), HP
@@ -46,7 +47,9 @@ export const FACTORY_MAX_STOCKPILE = 6; // max held drones per factory while Hol
 export const NET_LEVEL_MAX       = 3;
 export const NET_CHARGES_LEVEL   = [0, 20, 40, 60]; // capacity at level 0/1/2/3
 export const NET_PICK_R          = 36;              // world-px tolerance when clicking near a road
-export const WRECK_CLEAR_PER_ENG = 0.4;             // blockage reduced per engineer trip
+// Net-engineer trip removes this many wreck piles from the targeted edge.
+// (Idle engineers stationed at a node clear piles continuously at ENG_CLEAR_RATE.)
+export const NET_ENG_WRECK_CLEAR = 2;
 
 // Tank / cannon — anti-ground (and anti-drone, anti-turret) generalist tower.
 // Longer range than AA but lower DPS per target.
@@ -78,10 +81,16 @@ export const DRONE_DETECT_R = 110;      // scan radius for nearby ground fleets
 export const DRONE_HUNT_DMG = 18;       // damage to fleet on impact (less than fixed-target)
 export const DRONE_HUNT_SWITCH_RATIO = 0.7;  // switch from primary→hunt only if hunt is this much closer
 
-// Road blockage
-export const BLOCKAGE_DECAY = 0.01;     // per second
-export const BLOCKAGE_HEAVY = 0.8;      // threshold for dashed-red visualization
-export const BLOCKAGE_PER_WRECK = 0.35; // amount added when a drone hits
+// ---- Road wreckage (replaces the old abstract "blockage" speed-mult system) ----
+// When a vehicle dies on a road segment it leaves a physical pile at its death
+// position. Fleets behind it must steer AROUND the pile (lateral offset off
+// the road centerline); the natural off-road tax slows them down, producing
+// congestion organically. Engineers physically clear the piles to restore flow.
+export const WRECK_PILE_HP_INIT  = 4;   // engineer HP needed to remove one pile
+export const WRECK_RENDER_R      = 8;   // visual radius of one pile
+export const DETOUR_LOOKAHEAD    = 55;  // sec-ahead a vehicle "sees" a pile to dodge it
+export const DETOUR_OFFSET       = 22;  // peak lateral offset (px) when squeezing past
+export const DETOUR_SPEED_MIN    = 0.55; // slowdown factor at peak detour
 
 // ---- NN integration ----
 export const NN_OWNERS = new Set(['red']);

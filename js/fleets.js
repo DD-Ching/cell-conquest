@@ -3,12 +3,16 @@
 // Drones live in engineering.js (different motion model).
 // =====================================================
 import { state } from './state.js';
-import { FLEET_SPEED } from './config.js';
+import {
+  FLEET_SPEED,
+  DETOUR_LOOKAHEAD, DETOUR_OFFSET, DETOUR_SPEED_MIN,
+  WRECK_RENDER_R,
+} from './config.js';
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
 import { findPath } from './world.js';
 import {
-  ENG_SPEED, edgeSpeedMul,
+  ENG_SPEED, getEdge,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
 
@@ -139,11 +143,48 @@ export function simulateFleets(dt) {
     }
 
     const baseSpeed = (f.kind === 'engineer' || f.kind === 'deploy') ? ENG_SPEED : FLEET_SPEED;
-    let segMul = 1.0;
+    // Detour: peek ahead on the current segment for any wreck pile in our path
+    // and compute a lateral offset around it. While offset is non-zero we move
+    // slower (off-road tax — natural cause of congestion behind a wreck cluster).
+    let speedMul = 1.0;
+    let lateralX = 0, lateralY = 0;
+    let segDirX = 0, segDirY = 0;
     if (f.segIdx < f.path.length - 1) {
-      segMul = edgeSpeedMul(f.path[f.segIdx], f.path[f.segIdx + 1]);
+      const aN = state.nodes[f.path[f.segIdx]];
+      const bN = state.nodes[f.path[f.segIdx + 1]];
+      const dx = bN.x - aN.x, dy = bN.y - aN.y;
+      const segLen = Math.hypot(dx, dy) || 1;
+      segDirX = dx / segLen; segDirY = dy / segLen;
+      // perpendicular (90° CCW)
+      const pxn = -segDirY, pyn = segDirX;
+      const e = getEdge(f.path[f.segIdx], f.path[f.segIdx + 1]);
+      if (e && e.wrecks && e.wrecks.length > 0) {
+        // Find the nearest pile AHEAD on this segment (within DETOUR_LOOKAHEAD)
+        let nearestAhead = Infinity, nearestPerp = 0;
+        for (const w of e.wrecks) {
+          const wDx = w.x - aN.x, wDy = w.y - aN.y;
+          const wt = wDx * segDirX + wDy * segDirY;        // proj onto seg
+          const wperp = wDx * pxn + wDy * pyn;             // perpendicular signed
+          const ahead = wt - f.segTraveled;
+          if (ahead > -WRECK_RENDER_R && ahead < DETOUR_LOOKAHEAD && ahead < nearestAhead) {
+            nearestAhead = ahead;
+            nearestPerp = wperp;
+          }
+        }
+        if (nearestAhead < Infinity) {
+          // Approach factor — full at closest pass, fades at edges of lookahead
+          const approach = 1 - Math.min(1, Math.abs(nearestAhead) / DETOUR_LOOKAHEAD);
+          // Steer to the OPPOSITE side of where the pile sits
+          const side = nearestPerp >= 0 ? -1 : 1;
+          const off = DETOUR_OFFSET * approach;
+          lateralX = pxn * side * off;
+          lateralY = pyn * side * off;
+          // Slower while off-centerline — peak slowdown at peak detour
+          speedMul = DETOUR_SPEED_MIN + (1 - DETOUR_SPEED_MIN) * (1 - approach);
+        }
+      }
     }
-    f.segTraveled += baseSpeed * segMul * dt;
+    f.segTraveled += baseSpeed * speedMul * dt;
 
     while (f.segIdx < f.path.length - 1) {
       const segLen = dist(state.nodes[f.path[f.segIdx]], state.nodes[f.path[f.segIdx + 1]]);
@@ -171,8 +212,9 @@ export function simulateFleets(dt) {
     const segB = state.nodes[f.path[f.segIdx + 1]];
     const segLen = dist(segA, segB);
     const t = Math.min(1, f.segTraveled / Math.max(1, segLen));
-    f.x = segA.x + (segB.x - segA.x) * t;
-    f.y = segA.y + (segB.y - segA.y) * t;
+    // Centerline position, then layer the detour offset on top.
+    f.x = segA.x + (segB.x - segA.x) * t + lateralX;
+    f.y = segA.y + (segB.y - segA.y) * t + lateralY;
   }
 }
 

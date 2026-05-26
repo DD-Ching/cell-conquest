@@ -10,7 +10,7 @@ import {
 import { COLOR, GLOW, FACTIONS, factionStats } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { findPath, nodeAt, roadAt } from './world.js';
-import { getEdge, TURRET_RANGES } from './engineering.js';
+import { getEdge, edgeVisualBlockage, TURRET_RANGES } from './engineering.js';
 import {
   drawRoadStyled, drawTroopSprite, drawEngineerSprite, drawDroneSprite,
   drawAATurret, drawTankTurret, drawFactoryTurret, drawArtilleryTurret,
@@ -237,10 +237,41 @@ export function render() {
   ctx.setLineDash([]);
 
   // Roads — thick TD-style path with edge highlights
+  // Road "blockage" tint is derived purely from the pile count on the edge —
+  // it's a visual readout of how clogged a road is, not a speed multiplier
+  // (the actual slowdown now comes from fleets physically detouring off-road).
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const e = getEdge(r.a, r.b);
-    drawRoadStyled(ctx, a, b, e ? e.blockage : 0, zoom);
+    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom);
+  }
+
+  // Wreck piles on roads — physical debris that fleets must steer around.
+  // Drawn after roads so they sit ON TOP of the path. Dark twisted metal
+  // chunks with a slight rim of dust.
+  for (const r of state.roads) {
+    const e = getEdge(r.a, r.b);
+    if (!e || !e.wrecks || e.wrecks.length === 0) continue;
+    for (const w of e.wrecks) {
+      const hpFrac = Math.max(0.4, w.hp / w.hpMax);   // fades a bit while being cleared
+      ctx.save();
+      ctx.translate(w.x, w.y);
+      ctx.rotate(w.rot);
+      // Soot halo on the sand around the pile
+      ctx.fillStyle = `rgba(20, 10, 4, ${0.55 * hpFrac})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      // Twisted-metal chunk (dark core)
+      ctx.fillStyle = `rgba(40, 24, 12, ${hpFrac})`;
+      ctx.fillRect(-7, -5, 14, 10);
+      ctx.fillStyle = `rgba(70, 42, 22, ${hpFrac})`;
+      ctx.fillRect(-5, -3, 10, 6);
+      // Tiny orange ember speck so it reads as still-smoldering
+      ctx.fillStyle = `rgba(255, 130, 50, ${0.7 * hpFrac})`;
+      ctx.fillRect(-1, -1, 2, 2);
+      ctx.restore();
+    }
   }
 
   // Drone nets on edges — faction-agnostic infrastructure (like road wreckage).
@@ -548,7 +579,7 @@ export function render() {
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
         let hint;
         if (!e) hint = '';
-        else if (e.blockage >= 0.15) hint = `clear wreck (${(e.blockage * 100).toFixed(0)}%)`;
+        else if (e.wrecks && e.wrecks.length > 0) hint = `clear ${e.wrecks.length} wreck${e.wrecks.length > 1 ? 's' : ''}`;
         else if (e.netLevel < NET_LEVEL_MAX) hint = `+net L${e.netLevel + 1}`;
         else hint = 'net maxed';
         ctx.fillText(hint, mx, my - 10);
@@ -595,20 +626,43 @@ export function render() {
     } else if (!f.path) {
       continue;
     }
+    // ENGINEERS / DEPLOY: single dozer sprite (they're individual vehicles, not squads)
     if (f.kind === 'engineer' || f.kind === 'deploy') {
       drawEngineerSprite(ctx, f.x, f.y, angle, f.owner, zoom);
-    } else if (f.kind === 'assault') {
-      // Assault wave — render as the heaviest troop tier regardless of unit count
-      drawTroopSprite(ctx, f.x, f.y, angle, Math.max(40, f.units), f.owner, zoom);
-    } else {
-      drawTroopSprite(ctx, f.x, f.y, angle, f.units, f.owner, zoom);
+      ctx.fillStyle = COLOR[f.owner];
+      ctx.font = `bold ${12 / zoom}px ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('⚙', f.x, f.y - 18);
+      continue;
     }
-    // Unit count label — positioned well above the bigger sprite
+    // TROOPS / ASSAULT: render as a COLUMN of individual vehicles trailing the
+    // leader along the direction of travel. 5 units ≈ one visible vehicle.
+    // Cap at COLUMN_MAX so a 200-unit blob doesn't draw 40 sprites.
+    const COLUMN_MAX = 8;
+    const PER_VEH = 5;
+    const GAP = 13;       // px between adjacent vehicles along the column
+    const totalUnits = Math.max(1, Math.floor(f.units));
+    const showCount = Math.min(COLUMN_MAX, Math.max(1, Math.ceil(totalUnits / PER_VEH)));
+    const perVehUnits = totalUnits / showCount;  // for sprite-tier picking
+    // Reverse-heading basis (where vehicles trail behind the leader)
+    const backX = -Math.cos(angle), backY = -Math.sin(angle);
+    const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+    for (let k = 0; k < showCount; k++) {
+      // Small alternating lateral jitter so the column doesn't look like a comb
+      const jitter = (k % 2 === 0 ? 1 : -1) * (k > 0 ? 1.6 : 0);
+      const vx = f.x + backX * (k * GAP) + perpX * jitter;
+      const vy = f.y + backY * (k * GAP) + perpY * jitter;
+      if (f.kind === 'assault') {
+        drawTroopSprite(ctx, vx, vy, angle, Math.max(40, perVehUnits), f.owner, zoom);
+      } else {
+        drawTroopSprite(ctx, vx, vy, angle, perVehUnits, f.owner, zoom);
+      }
+    }
+    // Total-count label above the column leader
     ctx.fillStyle = COLOR[f.owner];
     ctx.font = `bold ${12 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    if (f.kind === 'engineer' || f.kind === 'deploy') ctx.fillText('⚙', f.x, f.y - 21);
-    else ctx.fillText(Math.floor(f.units), f.x, f.y - 21);
+    ctx.fillText(totalUnits, f.x, f.y - 18);
   }
 
   // Drones — quadcopter sprite with rotor blur

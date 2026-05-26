@@ -43,7 +43,10 @@ export const state = {
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],
   adj: new Map(),
-  edgeData: new Map(),       // ekey(a,b) -> { blockage, netLevel, netCharges, netOwner }
+  edgeData: new Map(),       // ekey(a,b) -> { wrecks, netLevel, netCharges, netOwner }
+                             //   wrecks: [{x,y,hp,hpMax,rot}] — physical piles on
+                             //   the road segment. Fleets detour around them; engineers
+                             //   chip away at hp until pile is removed.
   selectedIds: new Set(),
   _nextFleetId: 1,           // monotonic; lets drones lock onto a specific fleet by id
 

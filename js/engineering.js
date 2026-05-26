@@ -22,22 +22,23 @@ import {
   DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS,
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
-  NET_LEVEL_MAX, NET_CHARGES_LEVEL, WRECK_CLEAR_PER_ENG,
-  BLOCKAGE_DECAY, BLOCKAGE_PER_WRECK,
+  NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
+  WRECK_PILE_HP_INIT,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
 
 export { ENG_SPEED } from './config.js';
 
 // =====================================================
-// Edges (road blockage + drone nets)
+// Edges (wreck piles + drone nets)
 // =====================================================
 export function ekey(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
 export function getEdge(a, b) { return state.edgeData.get(ekey(a, b)); }
-export function edgeSpeedMul(a, b) {
-  const e = getEdge(a, b);
-  if (!e) return 1.0;
-  return Math.max(0.2, 1.0 - e.blockage);
+/** Visual "blockage" 0..1 for road-darkening purposes — derived from pile count.
+ *  No longer affects movement speed (that's now physical: detour off centerline). */
+export function edgeVisualBlockage(e) {
+  if (!e || !e.wrecks) return 0;
+  return Math.min(1, e.wrecks.length * 0.18);
 }
 
 // =====================================================
@@ -47,7 +48,7 @@ export function resetEngineering() {
   state.edgeData.clear();
   for (const r of state.roads) {
     state.edgeData.set(ekey(r.a, r.b), {
-      blockage: 0,
+      wrecks: [],
       netLevel: 0, netCharges: 0, netOwner: null,
     });
   }
@@ -170,14 +171,15 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
   return true;
 }
 
-/** Find a nearby road that still needs work (blockage to clear or net to upgrade)
- *  for an engineer whose original target is already maxed. */
+/** Find a nearby road that still needs work (wreck piles to clear or net to upgrade)
+ *  for an engineer whose original target is already done. */
 export function findNetWorkRedirect(byOwner, fromX, fromY) {
   let best = null, bestD = Infinity;
   for (const r of state.roads) {
     const e = state.edgeData.get(ekey(r.a, r.b));
     if (!e) continue;
-    if (e.blockage < 0.15 && e.netLevel >= NET_LEVEL_MAX) continue;
+    const hasWrecks = e.wrecks && e.wrecks.length > 0;
+    if (!hasWrecks && e.netLevel >= NET_LEVEL_MAX) continue;
     const aN = state.nodes[r.a], bN = state.nodes[r.b];
     if (aN.owner !== byOwner && bN.owner !== byOwner) continue;
     const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
@@ -201,15 +203,17 @@ export function engineerArrivedAtTurret(f) {
 }
 
 /** Net engineer arrival. Performs ONE action:
- *  - If the edge has heavy wreckage (blockage >= 0.15), clear it.
+ *  - If the edge has wreck piles, physically remove up to NET_ENG_WRECK_CLEAR
+ *    of them (instantly — the engineer is here to do that job).
  *  - Else if net not maxed, raise net level by 1 and refill charges.
  *  - Else (nothing to do here): redirect to nearest road that needs work.
- * Nets are faction-agnostic: any engineer can upgrade any net. */
+ *  Nets are faction-agnostic: any engineer can clear / upgrade any edge. */
 export function engineerArrivedAtNetEdge(f) {
   const edge = getEdge(f.targetEdgeA, f.targetEdgeB);
   if (!edge) return { consumed: true };
-  if (edge.blockage >= 0.15) {
-    edge.blockage = Math.max(0, edge.blockage - WRECK_CLEAR_PER_ENG);
+  if (edge.wrecks && edge.wrecks.length > 0) {
+    const n = Math.min(NET_ENG_WRECK_CLEAR, edge.wrecks.length);
+    edge.wrecks.splice(0, n);    // remove the n oldest piles
     flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#ffd066');
     return { consumed: true };
   }
@@ -244,7 +248,12 @@ function flashEdgeWork(a, b, color) {
 /** A vehicle (any non-drone fleet) dying on the road. Off-road / drone deaths
  *  produce nothing. If the segment has an active drone-net, the net "absorbs"
  *  the damage instead — one death = -20 charges, dropping the level as it
- *  drains. Only after the net is fully gone does wreckage start to pile up. */
+ *  drains. Only after the net is fully gone does an actual wreck pile spawn
+ *  at the vehicle's exact death position.
+ *
+ *  (Kept exported as `addWreckBlockage` for back-compat with combat.js / drones.js
+ *  call sites — internally creates a physical pile instead of bumping an
+ *  abstract blockage counter.) */
 export function addWreckBlockage(f) {
   if (f.kind === 'drone') return;
   if ((f.kind === 'deploy' || f.kind === 'assault') && f.offroad) return;
@@ -260,7 +269,13 @@ export function addWreckBlockage(f) {
     else if (e.netCharges <= NET_CHARGES_LEVEL[2]) e.netLevel = 2;
     return;
   }
-  e.blockage = Math.min(1, e.blockage + BLOCKAGE_PER_WRECK);
+  // Physical pile at the death position. f.x/f.y is already the fleet's current
+  // world position on the road (or near it, if it was mid-detour).
+  e.wrecks.push({
+    x: f.x, y: f.y,
+    hp: WRECK_PILE_HP_INIT, hpMax: WRECK_PILE_HP_INIT,
+    rot: Math.random() * Math.PI,
+  });
 }
 
 /** Cinematic "爆肥" explosion when a turret (esp. tank) dies. */
@@ -432,20 +447,30 @@ export function updateBuildings(dt) {
       }
     }
   }
-  // Idle engineers stationed at a node clear blockage on connected edges
+  // Idle engineers stationed at a node chip away at the nearest wreck pile on
+  // each connected edge. When a pile's hp hits zero it physically disappears
+  // (removed from the edge.wrecks array) so traffic flows freely past it again.
   for (const n of state.nodes) {
     if (n.engineers > 0) {
+      const chip = ENG_CLEAR_RATE * dt * n.engineers;
       for (const j of state.adj.get(n.id) || []) {
         const e = getEdge(n.id, j);
-        if (e && e.blockage > 0) {
-          e.blockage = Math.max(0, e.blockage - ENG_CLEAR_RATE * dt * n.engineers);
+        if (!e || !e.wrecks || e.wrecks.length === 0) continue;
+        // Pick the pile closest to THIS node (engineers work outward from base)
+        let bestIdx = -1, bestD2 = Infinity;
+        for (let k = 0; k < e.wrecks.length; k++) {
+          const w = e.wrecks[k];
+          const dx = w.x - n.x, dy = w.y - n.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestD2) { bestD2 = d2; bestIdx = k; }
+        }
+        if (bestIdx >= 0) {
+          const w = e.wrecks[bestIdx];
+          w.hp -= chip;
+          if (w.hp <= 0) e.wrecks.splice(bestIdx, 1);
         }
       }
     }
     if (n.flashBuild > 0) n.flashBuild -= dt * 1.5;
-  }
-  // Blockage natural decay
-  for (const [, e] of state.edgeData) {
-    e.blockage = Math.max(0, e.blockage - BLOCKAGE_DECAY * dt);
   }
 }

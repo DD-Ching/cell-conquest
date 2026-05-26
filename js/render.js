@@ -508,6 +508,9 @@ function drawNodes(ctx, zoom, now) {
 // ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----
 function drawTurrets(ctx, zoom, now) {
   for (const t of state.turrets) {
+    // Pending sites (engineer en route) render as ghost placeholders — visual
+    // mirror of the gameplay rule that they're not yet attackable.
+    if (t.pendingEngineer) ctx.globalAlpha = 0.35;
     if (t.type === 'antiair') {
       drawAATurret(ctx, t.x, t.y, t.owner, t.active, zoom, now);
     } else if (t.type === 'tank') {
@@ -547,8 +550,9 @@ function drawTurrets(ctx, zoom, now) {
         : 0;
       drawArtilleryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle, flash);
     }
-    // Progress arc while building (any type)
-    if (!t.active) {
+    // Progress arc only when an engineer has arrived and started building;
+    // pending sites show no arc (nothing's happening there yet).
+    if (!t.active && !t.pendingEngineer) {
       ctx.strokeStyle = '#ffd066';
       ctx.lineWidth = 3 / zoom;
       ctx.beginPath();
@@ -563,6 +567,7 @@ function drawTurrets(ctx, zoom, now) {
       ctx.fillStyle = frac > 0.5 ? '#7be57b' : frac > 0.25 ? '#ffd066' : '#ff6678';
       ctx.fillRect(t.x - bw / 2, t.y + 24, bw * frac, 3.5);
     }
+    if (t.pendingEngineer) ctx.globalAlpha = 1.0;
   }
 }
 

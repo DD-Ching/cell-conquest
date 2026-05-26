@@ -361,6 +361,7 @@ function attachInput() {
       // converges on this single point.
       if (state.holdFire) {
         const turretAt = state.turrets.find(tt => tt.owner !== 'player'
+          && !tt.pendingEngineer
           && Math.hypot(tt.x - wx, tt.y - wy) < 14);
         if (turretAt) {
           state.salvoTarget = { kind: 'turret', id: turretAt.id, x: turretAt.x, y: turretAt.y };
@@ -387,7 +388,10 @@ function attachInput() {
     } else if (d.mode === 'send') {
       const releaseNode = nodeAt(wx, wy);
       // First check: did we release on an enemy turret? → assault dispatch.
+      // Pending sites (engineer en route) are dirt placeholders, not real
+      // structures — can't assault what isn't there yet.
       const targetTurret = state.turrets.find(t => t.owner !== 'player'
+        && !t.pendingEngineer
         && Math.hypot(t.x - wx, t.y - wy) < 14);
       const sources = state.selectedIds.has(d.originNode.id)
         ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')

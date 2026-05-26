@@ -115,6 +115,7 @@ function fireArtilleryShell(t) {
   const cands = [];
   for (const e of state.turrets) {
     if (e.owner === t.owner) continue;
+    if (e.pendingEngineer) continue;        // dirt placeholder, not a real target
     const dx = e.x - t.x, dy = e.y - t.y;
     if (dx * dx + dy * dy > ARTILLERY_R2) continue;
     cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
@@ -167,6 +168,7 @@ export function updateShells(dt) {
 function detonateArtillery(x, y, owner) {
   for (const t of state.turrets) {
     if (t.owner === owner) continue;
+    if (t.pendingEngineer) continue;        // nothing to destroy yet
     const dx = t.x - x, dy = t.y - y;
     if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
   }

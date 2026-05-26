@@ -121,6 +121,12 @@ export function placeTurretAt(x, y, type, byOwner) {
     progress: 0, active: false,
     total: spec.time, prodCooldown: 0,
     engineers: 0,
+    // The site doesn't physically exist yet — it's just a marker on the
+    // ground where the engineer is heading. Drones / assaults skip it until
+    // the engineer arrives and construction actually begins. (Cleared in
+    // engineerArrivedAtTurret.) Stops the "drones bomb empty dirt patch
+    // before the engineer gets there" exploit.
+    pendingEngineer: true,
   };
   state.turrets.push(turret);
   source.units -= ENG_COST;
@@ -202,6 +208,8 @@ export function engineerArrivedAtTurret(f) {
   const t = state.turretById.get(f.targetTurretId);
   if (!t || t.owner !== f.owner) return;
   t.engineers += 1;
+  // Engineer has physically arrived — site is now real and attackable.
+  t.pendingEngineer = false;
 }
 
 /** Net engineer arrival. Performs ONE action:

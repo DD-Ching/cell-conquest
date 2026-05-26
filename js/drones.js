@@ -64,6 +64,7 @@ function retargetDrone(drone) {
   let best = null, bestD2 = Infinity;
   for (const t of state.turrets) {
     if (t.owner === drone.owner) continue;
+    if (t.pendingEngineer) continue;     // dirt placeholder — engineer not arrived
     const dx = t.x - drone.x, dy = t.y - drone.y;
     const d2 = dx * dx + dy * dy;
     if (d2 < bestD2) { bestD2 = d2; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
@@ -287,11 +288,14 @@ function pickDroneTargetsFor(t) {
   const cands = [];
   for (const et of state.turrets) {
     if (et.owner === t.owner) continue;
+    // Pending sites = engineer not arrived yet — the place is just dirt,
+    // not a real structure. Don't waste drones on it.
+    if (et.pendingEngineer) continue;
     const d = Math.hypot(et.x - t.x, et.y - t.y);
     let score = 1500 / (d + 200);
     if (et.type === 'antiair') score *= 1.5;
     if (et.type === 'factory') score *= 1.8;
-    if (!et.active) score *= 2.0;
+    if (!et.active) score *= 2.0;     // under construction (engineer there) = soft target
     cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
   }
   if (cands.length === 0) {

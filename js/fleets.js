@@ -16,7 +16,11 @@ import {
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
 
-const OFFROAD_SPEED_MUL = 0.01;
+// Short final-leg off-road speed (engineer→build-site, assault→turret,
+// return→home). These are 30–150 px hops, not the "stuck behind a wreck
+// pile" mechanic — that one lives in DETOUR_SPEED_MIN (config.js) and
+// stays at 0.014 so wreck-pile detours genuinely choke a road.
+const OFFROAD_SPEED_MUL = 0.35;
 
 /** Try to dispatch a troop fleet (own-territory path). Returns true on success. */
 export function sendFleet(from, to, amount) {

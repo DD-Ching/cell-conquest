@@ -67,6 +67,7 @@ export function resetEngineering() {
   state.aiHoldFire = {};
   state.aiSalvoT0 = {};
   state.aiSalvoTarget = {};
+  state.aiFocus = {};
   state._nextFleetId = 1;
   for (const n of state.nodes) {
     n.engineers = 0;

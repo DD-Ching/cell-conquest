@@ -131,10 +131,10 @@ export function aiTick(owner, dt) {
 
   // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam,
   // plus long-range artillery for AOE counter-pressure against enemy clusters.
-  const AA_TARGET       = 4;                      // 4-AA wall in front of each hub
-  const TANK_TARGET     = 2;                      // 2 tanks for siege + flank
-  const FACTORY_TARGET  = antiTurtle ? 6 : 4;     // drone spam goal per hub
-  const ARTILLERY_TARGET = antiTurtle ? 2 : 1;    // 1-2 cannons at deep rear
+  const AA_TARGET        = 4;                     // 4-AA wall in front of each hub
+  const TANK_TARGET      = 2;                     // 2 tanks for siege + flank
+  const FACTORY_TARGET   = antiTurtle ? 8 : 5;    // more drone throughput — was 6/4
+  const ARTILLERY_TARGET = antiTurtle ? 3 : 2;    // more AOE counter-pressure — was 2/1
 
   // Position helpers — spread AAs across the front arc to form a WALL (not a circle).
   // Drones flying toward the hub get sieved by overlapping radars from multiple angles.
@@ -305,18 +305,28 @@ export function aiTick(owner, dt) {
     }
     const degree = state.adj.get(node.id).size;
     const isCentral = degree >= 3;
-    // Central hubs (degree >= 3) MUST keep a minimum garrison — losing one
-    // splits our territory. This is the lesson from the recorded loss: AI
-    // drained its central hub for attacks and got counter-punched.
-    const centralFloor = isCentral ? node.capacity * 0.40 : 0;
-    // Saturated node — sitting on units is wasted regen, so dump most of them.
+    // Central hubs (degree >= 3) keep a garrison — losing one splits our
+    // territory. But when most of the empire is full, holding back is just
+    // wasted regen; relax the floor sharply so the player can't out-mass us.
+    const centralFloorBase = isCentral ? 0.40 : 0;
+    const centralFloorRatio = saturationRatio > 0.5 ? centralFloorBase * 0.55
+                            : saturationRatio > 0.3 ? centralFloorBase * 0.75
+                            : centralFloorBase;
+    const centralFloor = node.capacity * centralFloorRatio;
+    // Saturated node — sitting on units is pure regen waste, so dump almost
+    // everything. Only leave a thin skeleton in case a counter-wave hits.
     if (node.units >= node.capacity * 0.95) {
-      const garrison = 6 + enemyNeighbors * 4 + (isCentral ? 18 : 0);
+      const garrison = 4 + enemyNeighbors * 3 + (isCentral ? 10 : 0);
       return Math.max(0, node.units - Math.max(garrison, centralFloor));
     }
-    const reserveRatio = 0.15 + enemyNeighbors * 0.18;
-    const reserveAbs = 5 + enemyNeighbors * 9;
-    const normalAvail = node.units * (1 - reserveRatio) - reserveAbs;
+    // Non-saturated: scale reserves down when empire-wide saturation is high
+    // (we're committing all-in, not playing safe).
+    const reserveScale = saturationRatio > 0.5 ? 0.55
+                       : saturationRatio > 0.3 ? 0.75
+                       : 1.0;
+    const reserveRatio = (0.15 + enemyNeighbors * 0.18) * reserveScale;
+    const reserveAbs   = (5 + enemyNeighbors * 9) * reserveScale;
+    const normalAvail  = node.units * (1 - reserveRatio) - reserveAbs;
     return Math.max(0, Math.min(normalAvail, node.units - centralFloor));
   }
 
@@ -378,9 +388,21 @@ export function aiTick(owner, dt) {
     const lostMass   = myFactories.length < 2 && stocked > 0;
     // Release condition: enough mass to matter, aged-out, or lost factories.
     if (fullCount >= 2 || stocked >= 10 || aged > 35 || lostMass) {
-      // Focus target: highest-value enemy turret near our factory cluster.
-      // null target = drones auto-diversify (still simultaneous though).
+      // First preference: aim at the strategic focus (the hub Phase 2 is
+      // currently grinding into). Drone salvo + ground wave hit the same
+      // point in the same beat → combined arms. Drop focus if stale/captured.
       let target = null, targetVal = 0;
+      const focus = state.aiFocus[owner];
+      if (focus) {
+        const fNode = state.nodes[focus.targetId];
+        const focusAge = state.elapsed - (focus.since || 0);
+        if (fNode && fNode.owner !== owner && focusAge < 20) {
+          target = { kind: 'node', id: fNode.id, x: fNode.x, y: fNode.y };
+          targetVal = Infinity;       // lock — don't override below
+        } else {
+          state.aiFocus[owner] = null;
+        }
+      }
       const cx = myFactories.length
         ? myFactories.reduce((s, t) => s + t.x, 0) / myFactories.length
         : myNodes[0].x;
@@ -495,6 +517,13 @@ export function aiTick(owner, dt) {
     score *= (1.0 + 0.6 * (1.0 - sat));         // opportunism: emptier targets first
     const avgDist = attackers.reduce((s, a) => s + dist(a, target), 0) / attackers.length;
     score *= 1.0 / (1.0 + avgDist / 600);
+    // Stickiness: heavy bonus for staying on the strategic focus (the node
+    // we already committed forces to last tick). Stops the "1 wave per node
+    // per tick" thrashing that lets defenders regen between hits.
+    const focus = state.aiFocus[owner];
+    if (focus && focus.targetId === tId && (state.elapsed - focus.since) < 20) {
+      score *= 2.5;
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -504,7 +533,10 @@ export function aiTick(owner, dt) {
 
   if (bestAtt) {
     bestAtt.attackers.sort((a, b) => dist(a, bestAtt.target) - dist(b, bestAtt.target));
-    let toSend = bestAtt.required + 6;
+    // Overcommit by 40% + 12 buffer so attacks roll through with mass, not
+    // just barely-passing margin. Player tactic: send way more than needed,
+    // captured node still has units to keep pressing the next target.
+    let toSend = bestAtt.required * 1.4 + 12;
     for (const a of bestAtt.attackers) {
       if (toSend <= 0) break;
       const max = Math.floor(attackerAvail(a));
@@ -512,18 +544,50 @@ export function aiTick(owner, dt) {
       const send = Math.min(max, Math.ceil(toSend));
       if (send >= 3) { sendFleet(a, bestAtt.target, send); toSend -= send; }
     }
+    // Combined arms: if Phase 1.5 found a high-value turret near this target,
+    // it would have fired earlier. But if there's a tank specifically covering
+    // THIS target and we have spare assault capacity at a sibling node, also
+    // dispatch an assault to that tank in the same beat — drone salvo plus
+    // ground wave plus tank-killer all converge on the same hub.
+    if (bestAtt.target) {
+      const tgt = bestAtt.target;
+      for (const t of state.turrets) {
+        if (!t.active || t.pendingEngineer) continue;
+        if (t.owner === owner || t.owner === 'neutral') continue;
+        if (t.type !== 'tank') continue;
+        if (Math.hypot(t.x - tgt.x, t.y - tgt.y) > TANK_RADIUS + 80) continue;
+        // Pick an own node not already attacking, with enough surplus
+        let assaultFrom = null, fromDist = Infinity;
+        for (const n of myNodes) {
+          if (bestAtt.attackers.includes(n)) continue;
+          const d = Math.hypot(n.x - t.x, n.y - t.y);
+          if (d > 460) continue;
+          const cost = Math.ceil(t.hp / 8) + 6;
+          if (attackerAvail(n) < cost) continue;
+          if (d < fromDist) { fromDist = d; assaultFrom = n; }
+        }
+        if (assaultFrom) {
+          assaultTurret(assaultFrom, t, Math.ceil(t.hp / 8) + 6);
+          break;        // one combined-arms assault per tick is enough
+        }
+      }
+    }
+    // Remember this target for the salvo phase next tick (drones converge here).
+    state.aiFocus[owner] = { targetId: bestAtt.target.id, since: state.elapsed };
     return;
   }
 
-  // Phase 3: cap-aware reinforce frontline — lower threshold when empire is saturated
-  const dumpThresh = saturationRatio > 0.4 ? 0.70 : 0.85;
+  // Phase 3: cap-aware reinforce frontline. Goal: rear-hub regen flows to
+  // the front continuously, so the front never runs dry mid-attack.
+  // Lower threshold + bigger send fraction = faster funneling.
+  const dumpThresh = saturationRatio > 0.4 ? 0.55 : 0.65;
   for (const my of myNodes) {
     if (my.units < my.capacity * dumpThresh) continue;
     let bestRecip = null, bestRecipScore = 0;
     for (const nbId of state.adj.get(my.id)) {
       const nb = state.nodes[nbId];
       if (nb.owner !== owner) continue;
-      if (nb.units >= nb.capacity * 0.85) continue;
+      if (nb.units >= nb.capacity * 0.95) continue;     // only skip when nearly full
       let frontness = 0;
       for (const nbnbId of state.adj.get(nb.id)) {
         const nnb = state.nodes[nbnbId];
@@ -535,7 +599,7 @@ export function aiTick(owner, dt) {
     }
     if (bestRecip && bestRecipScore > 0) {
       const room = Math.max(0, bestRecip.capacity * 1.4 - bestRecip.units);
-      const send = Math.min(Math.floor(my.units * 0.5), Math.floor(room));
+      const send = Math.min(Math.floor(my.units * 0.7), Math.floor(room));
       if (send >= 5) { sendFleet(my, bestRecip, send); return; }
     }
   }

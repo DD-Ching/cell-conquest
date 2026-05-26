@@ -91,6 +91,11 @@ export const state = {
   aiHoldFire: {},
   aiSalvoT0: {},
   aiSalvoTarget: {},
+  // Per-AI strategic focus — the node currently being attacked. Persists
+  // across ticks so drone salvos, ground waves, and assaults all converge
+  // on the same hub instead of dispersing across re-evaluations. Cleared
+  // when target falls into owner's hands, becomes overdefended, or ages out.
+  aiFocus: {},
 
   // Time
   gameOver: false,

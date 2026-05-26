@@ -66,7 +66,9 @@ export function newGame() {
   state.startTime = performance.now();
   state.elapsed = 0;
   state.aiTimers = {};
-  for (const ai of AIS) state.aiTimers[ai] = 4.0 + Math.random() * 2.5;
+  // Short opening window — AI starts land-grabbing almost immediately so the
+  // player can't quietly take every neutral while the AI sleeps.
+  for (const ai of AIS) state.aiTimers[ai] = 1.5 + Math.random() * 1.0;
   makeSnow();
 
   // World gen

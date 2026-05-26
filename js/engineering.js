@@ -64,6 +64,9 @@ export function resetEngineering() {
   state.placeMode = null;
   state.holdFire = false;
   state.salvoTarget = null;
+  state.aiHoldFire = {};
+  state.aiSalvoT0 = {};
+  state.aiSalvoTarget = {};
   state._nextFleetId = 1;
   for (const n of state.nodes) {
     n.engineers = 0;
@@ -446,14 +449,18 @@ export function updateBuildings(dt) {
         if (t.progress >= 1.0) { t.progress = 1.0; t.active = true; }
       }
     } else {
-      // Factory: produce drones. Player factories accumulate while Hold-Fire
-      // is on instead of launching; release happens via releasePlayerStockpile().
+      // Factory: produce drones. Both player and AI factories can stockpile
+      // while their owner's Hold-Fire flag is on (player → state.holdFire,
+      // AI → state.aiHoldFire[owner]); release flushes the whole salvo.
       if (t.type === 'factory') {
         if (t.dronesReady === undefined) t.dronesReady = 0;
         t.prodCooldown -= dt;
         if (t.prodCooldown <= 0) {
           t.prodCooldown = DF_PRODUCTION_T;
-          if (t.owner === 'player' && state.holdFire && t.dronesReady < FACTORY_MAX_STOCKPILE) {
+          const stockpiling = (t.owner === 'player')
+            ? state.holdFire
+            : !!state.aiHoldFire[t.owner];
+          if (stockpiling && t.dronesReady < FACTORY_MAX_STOCKPILE) {
             t.dronesReady += 1;
           } else {
             launchOneDroneFrom(t);

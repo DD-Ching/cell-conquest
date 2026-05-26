@@ -82,6 +82,16 @@ export const state = {
   // of turrets / nets without clicking N separate times. Cleared on mouseup.
   painting: null,
 
+  // Per-AI salvo state. Mirrors the player's holdFire/salvoTarget pair but
+  // keyed by faction owner so each enemy stockpiles its drones independently
+  // and releases them as a single saturation strike (the player's H trick).
+  // - aiHoldFire[owner]: true while owner's factories accumulate dronesReady
+  // - aiSalvoT0[owner]: state.elapsed when this stockpile began (for max-age release)
+  // - aiSalvoTarget[owner]: { kind, id, x, y } | null — focus target on release
+  aiHoldFire: {},
+  aiSalvoT0: {},
+  aiSalvoTarget: {},
+
   // Time
   gameOver: false,
   startTime: 0,

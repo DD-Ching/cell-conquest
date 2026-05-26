@@ -316,28 +316,29 @@ export function launchOneDroneFrom(t) {
   spawnDrone(t.x, t.y, t.owner, pick.target);
 }
 
-/** Resolve the player's salvoTarget against current state. */
-function resolveSalvoTarget() {
-  const s = state.salvoTarget;
+/** Resolve a stored salvo target (player or AI) against current state.
+ *  Drops it if the entity died / was captured by the salvo owner. */
+function resolveSalvoTarget(s, salvoOwner) {
   if (!s) return null;
   if (s.kind === 'turret') {
     const t = state.turretById.get(s.id);
-    if (t && t.owner !== 'player') return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+    if (t && t.owner !== salvoOwner) return { kind: 'turret', id: t.id, x: t.x, y: t.y };
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];
-    if (n && n.owner !== 'player') return { kind: 'node', id: n.id, x: n.x, y: n.y };
+    if (n && n.owner !== salvoOwner) return { kind: 'node', id: n.id, x: n.x, y: n.y };
   }
   return null;
 }
 
-/** Flush every player factory's stockpile in one big salvo. If the player
- *  designated a salvoTarget (clicked an enemy while Hold-Fire was on), ALL
- *  drones go there. Otherwise, diversify across top-5 auto-picked targets. */
-export function releasePlayerStockpile() {
-  const fixedTarget = resolveSalvoTarget();
+/** Generic stockpile flush for any owner. If a fixed salvo target was set
+ *  (player clicked a turret/node during Hold-Fire, AI picked a focus point),
+ *  every drone goes there. Otherwise drones diversify across the top auto-
+ *  scored targets. Internal — both releasePlayerStockpile and
+ *  releaseAIStockpile delegate here. */
+function releaseStockpileFor(owner, fixedTarget) {
   let launched = 0;
   for (const t of state.turrets) {
-    if (t.owner !== 'player' || t.type !== 'factory') continue;
+    if (t.owner !== owner || t.type !== 'factory') continue;
     if (!t.dronesReady) continue;
 
     let pool;
@@ -359,6 +360,23 @@ export function releasePlayerStockpile() {
     t.dronesReady = 0;
     t.prodCooldown = DF_PRODUCTION_T;
   }
+  return launched;
+}
+
+/** Player-facing release — driven by the second H press. */
+export function releasePlayerStockpile() {
+  const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player');
+  const launched = releaseStockpileFor('player', fixedTarget);
   state.salvoTarget = null;
+  return launched;
+}
+
+/** AI-facing release — fired from aiTick when stockpile is large enough or
+ *  has aged out. The AI may have pre-picked a focus target during Phase 1.5;
+ *  if not, drones auto-diversify. */
+export function releaseAIStockpile(owner) {
+  const fixedTarget = resolveSalvoTarget(state.aiSalvoTarget[owner], owner);
+  const launched = releaseStockpileFor(owner, fixedTarget);
+  state.aiSalvoTarget[owner] = null;
   return launched;
 }

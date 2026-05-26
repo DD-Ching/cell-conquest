@@ -9,18 +9,21 @@ import {
   AA_RADIUS, TANK_RADIUS, TANK_DPS,
 } from './config.js';
 import { dist } from './util.js';
-import { sendFleet } from './fleets.js';
+import { sendFleet, assaultTurret } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
+import { releaseAIStockpile } from './drones.js';
 import { nnDecide, nnActionFor, isNNReady } from './nn.js';
 import { factionStats } from './factions.js';
+import { FACTORY_MAX_STOCKPILE } from './config.js';
 
 export function aiTick(owner, dt) {
   state.aiTimers[owner] -= dt;
   if (state.aiTimers[owner] > 0) return;
-  // NN player decides every ~0.3s (matches training cadence); heuristic stays slower
+  // NN player decides every ~0.3s (matches training cadence); heuristic is
+  // ~0.5–0.9s so the AI stays responsive in tempo with the player's clicks.
   state.aiTimers[owner] = NN_OWNERS.has(owner)
     ? (0.25 + Math.random() * 0.15)
-    : (1.2 + Math.random() * 0.7);
+    : (0.5 + Math.random() * 0.4);
 
   // ---- NN-controlled faction: apply cached action, dispatch async inference for next tick
   if (NN_OWNERS.has(owner) && isNNReady()) {
@@ -55,7 +58,9 @@ export function aiTick(owner, dt) {
   }
   const leaderEntry = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
   const iAmLeader = leaderEntry && leaderEntry[0] === owner;
-  let aggression = 1.0 + Math.min(state.elapsed / 180, 2.0);
+  // Higher baseline so the AI commits to attacks from the start instead of
+  // hoarding for the first few minutes (which lets the player turtle).
+  let aggression = 1.3 + Math.min(state.elapsed / 180, 2.0);
   if (iAmLeader && myShare > 0.40) aggression *= 1.4;
   else if (myShare < 0.20) aggression *= 1.3;
   // Per-faction strength: aggression baseline scaled by the roll
@@ -356,6 +361,92 @@ export function aiTick(owner, dt) {
     if (send >= 5) { sendFleet(donor, my, send); return; }
   }
 
+  // Drone salvo: stockpile across all factories then release as a saturation
+  // strike — mimics the player's Hold-Fire (H, click target, H again) trick.
+  // Single trickling drones get sieved by AA walls; a 10–18 drone wave
+  // overwhelms them. We never bother stockpiling when only one factory exists
+  // or when we're behind on the map (need drones in the air NOW).
+  const myFactories = state.turrets.filter(t =>
+    t.owner === owner && t.type === 'factory' && t.active);
+  if (state.aiHoldFire[owner]) {
+    // Once stockpiling, check release conditions every tick regardless of
+    // current factory count — if a factory got blown up mid-stockpile we
+    // still want to fire whatever we have rather than hoarding forever.
+    const stocked    = myFactories.reduce((s, t) => s + (t.dronesReady || 0), 0);
+    const fullCount  = myFactories.filter(t => (t.dronesReady || 0) >= FACTORY_MAX_STOCKPILE).length;
+    const aged       = state.elapsed - (state.aiSalvoT0[owner] || 0);
+    const lostMass   = myFactories.length < 2 && stocked > 0;
+    // Release condition: enough mass to matter, aged-out, or lost factories.
+    if (fullCount >= 2 || stocked >= 10 || aged > 35 || lostMass) {
+      // Focus target: highest-value enemy turret near our factory cluster.
+      // null target = drones auto-diversify (still simultaneous though).
+      let target = null, targetVal = 0;
+      const cx = myFactories.length
+        ? myFactories.reduce((s, t) => s + t.x, 0) / myFactories.length
+        : myNodes[0].x;
+      const cy = myFactories.length
+        ? myFactories.reduce((s, t) => s + t.y, 0) / myFactories.length
+        : myNodes[0].y;
+      for (const t of state.turrets) {
+        if (!t.active) continue;
+        if (t.owner === owner || t.owner === 'neutral') continue;
+        const d = Math.hypot(t.x - cx, t.y - cy);
+        if (d > 700) continue;
+        let v = 1.0;
+        if (t.type === 'tank')           v = 3.0;
+        else if (t.type === 'factory')   v = 2.8;
+        else if (t.type === 'artillery') v = 2.2;
+        else if (t.type === 'antiair')   v = 1.8;
+        v *= 1 / (1 + d / 300);
+        if (v > targetVal) {
+          targetVal = v;
+          target = { kind: 'turret', id: t.id, x: t.x, y: t.y };
+        }
+      }
+      state.aiSalvoTarget[owner] = target;
+      releaseAIStockpile(owner);
+      state.aiHoldFire[owner] = false;
+      return;
+    }
+  } else if (myFactories.length >= 2 && !farBehind) {
+    // Not stockpiling yet — start now. (Skipping when behind keeps drone
+    // pressure flowing instead of disappearing for 25s.)
+    state.aiHoldFire[owner] = true;
+    state.aiSalvoT0[owner] = state.elapsed;
+  }
+
+  // Phase 1.5: ASSAULT enemy turrets — break the player's defensive wall the
+  // same way the player breaks ours. Frontal attacks against a tank-guarded
+  // hub get shredded; the answer is to dismantle the screen first. Suicide
+  // troops walk to the nearest own anchor then off-road to detonate on the
+  // turret (each unit absorbs 8 HP).
+  if (Math.random() < 0.25 + saturationRatio * 0.20) {
+    let pick = null, pickScore = 0;
+    for (const t of state.turrets) {
+      if (!t.active) continue;
+      if (t.owner === owner || t.owner === 'neutral') continue;
+      // Closest own node to this turret — assault path starts there.
+      let near = null, nearD = Infinity;
+      for (const n of myNodes) {
+        const d = Math.hypot(n.x - t.x, n.y - t.y);
+        if (d < nearD) { nearD = d; near = n; }
+      }
+      if (!near || nearD > 480) continue;
+      const cost = Math.ceil(t.hp / 8) + 6;       // HP/8 damage per troop, +safety
+      if (attackerAvail(near) < cost) continue;
+      // Value by type: tanks block our attacks (highest priority), then
+      // factories (drone-spam source), then artillery (cluster-busters), then AA.
+      let typeVal = 1.0;
+      if (t.type === 'tank')        typeVal = 3.5;
+      else if (t.type === 'factory')   typeVal = 2.5;
+      else if (t.type === 'artillery') typeVal = 2.2;
+      else if (t.type === 'antiair')   typeVal = 1.8;
+      const score = (typeVal / (cost + 5)) * (1 / (1 + nearD / 200));
+      if (score > pickScore) { pickScore = score; pick = { from: near, t, cost }; }
+    }
+    if (pick && assaultTurret(pick.from, pick.t, pick.cost)) return;
+  }
+
   // Phase 2: coordinated attack
   const targetMap = new Map();
   for (const my of myNodes) {
@@ -390,9 +481,10 @@ export function aiTick(owner, dt) {
     const minThreshold = required / aggression;
     const availForce = attackers.reduce((s, a) => s + attackerAvail(a), 0);
     if (availForce < minThreshold) continue;
-    // Hard skip: if the target is heavily protected by tanks (the wall trap),
-    // don't feed the meat grinder. Wait for drones to chip the wall down.
-    if (tankThreat > 0 && tankThreat > availForce * 0.45) continue;
+    // Hard skip only when tanks are overwhelmingly dominant. Phase 1.5 above
+    // is now dismantling the wall via assault, so Phase 2 doesn't need to be
+    // ultra-conservative — modest tank presence is just a price tag.
+    if (tankThreat > 0 && tankThreat > availForce * 0.75) continue;
 
     const adjCount = state.adj.get(tId).size;
     const sat = target.units / Math.max(1, target.capacity);

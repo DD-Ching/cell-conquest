@@ -16,6 +16,7 @@ import { state } from './state.js';
 import { dist } from './util.js';
 import { findPath } from './world.js';
 import {
+  WORLD_W, WORLD_H,
   ENG_HP, ENG_CLEAR_RATE, ENG_COST,
   AA_BUILD_TIME, AA_HP, AA_RADIUS,
   DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
@@ -53,6 +54,10 @@ export function resetEngineering() {
   state.turrets = [];
   state.shells = [];
   state.scorches = [];
+  // Wipe the permanent ground-scorch layer — fresh map for a new game.
+  if (state.groundScorchCtx) {
+    state.groundScorchCtx.clearRect(0, 0, state.groundScorch.width, state.groundScorch.height);
+  }
   state.placeMode = null;
   state.holdFire = false;
   state.salvoTarget = null;
@@ -281,18 +286,60 @@ export function updateTracers(dt) {
 // =====================================================
 // Scorch marks (殘骸 / 灰燼 / 燃燒) — cosmetic-only.
 //
-// When anything blows up we leave a persistent dark smudge on the ground,
-// plus a small ember/smoke emitter that burns for the first chunk of the
-// scorch's life. NEVER queried by AI, pathing, or collision: this is just
-// visual texture so the battlefield looks "lived in" after a long fight.
-// Capped so the scene doesn't accumulate hundreds of marks during long games.
+// Two layers, both rendered beneath roads / units:
+//   • state.scorches[]          — ACTIVE marks, burning + emitting embers + glow.
+//                                 Capped so explosive moments don't unbound the array.
+//   • state.groundScorch        — OFFSCREEN canvas of "settled" marks that have
+//                                 already finished burning. Memory is fixed
+//                                 (≈ 4 MB at half-res) regardless of how many
+//                                 burns happen — old marks bake into pixels,
+//                                 not JS objects.
+//
+// Lifecycle: spawn → burn (with active smudge + flicker + embers) → at maxAge,
+// the same smudge is painted onto groundScorch and the array entry is dropped.
+// Since the active smudge alpha is constant (not faded toward 0), the handoff
+// from "active layer" to "baked layer" is visually seamless.
+//
+// NEVER queried by AI, pathing, or collision: pure visual texture.
 // =====================================================
-const MAX_SCORCHES = 80;
+const MAX_ACTIVE_SCORCHES = 80;
+const GROUND_SCORCH_SCALE = 0.5;       // half-resolution offscreen → ~4 MB
+
+function ensureGroundScorch() {
+  if (state.groundScorch) return;
+  const c = document.createElement('canvas');
+  c.width  = Math.ceil(WORLD_W * GROUND_SCORCH_SCALE);
+  c.height = Math.ceil(WORLD_H * GROUND_SCORCH_SCALE);
+  state.groundScorch = c;
+  state.groundScorchCtx = c.getContext('2d');
+}
+
+/** Paint `s` permanently onto the ground canvas. Same gradient as the active
+ *  render so there's no visual pop when the active entry is removed. */
+function bakeScorchToGround(s) {
+  ensureGroundScorch();
+  const gctx = state.groundScorchCtx;
+  const k = GROUND_SCORCH_SCALE;
+  gctx.save();
+  gctx.translate(s.x * k, s.y * k);
+  gctx.rotate(s.rot);
+  const r = s.r * k;
+  const g = gctx.createRadialGradient(0, 0, 0, 0, 0, r);
+  g.addColorStop(0,    'rgba(8, 4, 2, 0.78)');
+  g.addColorStop(0.55, 'rgba(22, 11, 5, 0.48)');
+  g.addColorStop(1,    'rgba(60, 30, 15, 0)');
+  gctx.fillStyle = g;
+  gctx.beginPath();
+  gctx.ellipse(0, 0, r, r * 0.72, 0, 0, Math.PI * 2);
+  gctx.fill();
+  gctx.restore();
+}
+
 export function spawnScorch(x, y, kind = 'small') {
   let r, life;
-  if (kind === 'big')         { r = 34 + Math.random() * 16; life = 32; }
-  else if (kind === 'medium') { r = 18 + Math.random() *  8; life = 22; }
-  else                        { r = 10 + Math.random() *  5; life = 14; }
+  if (kind === 'big')         { r = 34 + Math.random() * 16; life = 18; }
+  else if (kind === 'medium') { r = 18 + Math.random() *  8; life = 12; }
+  else                        { r = 10 + Math.random() *  5; life =  8; }
   state.scorches.push({
     x, y, r,
     age: 0, maxAge: life,
@@ -300,8 +347,10 @@ export function spawnScorch(x, y, kind = 'small') {
     sparkAcc: 0,
     rot: Math.random() * Math.PI,
   });
-  if (state.scorches.length > MAX_SCORCHES) {
-    state.scorches.splice(0, state.scorches.length - MAX_SCORCHES);
+  // Active-array safety cap — bake any overflow straight to ground so we never
+  // visually lose a burn mark even if a thousand things die in one frame.
+  while (state.scorches.length > MAX_ACTIVE_SCORCHES) {
+    bakeScorchToGround(state.scorches.shift());
   }
 }
 
@@ -309,9 +358,15 @@ export function updateScorches(dt) {
   for (let i = state.scorches.length - 1; i >= 0; i--) {
     const s = state.scorches[i];
     s.age += dt;
-    if (s.age >= s.maxAge) { state.scorches.splice(i, 1); continue; }
-    // Emit embers + smoke during the burning phase (first 55% of life)
-    const burnFrac = 1 - s.age / (s.maxAge * 0.55);
+    if (s.age >= s.maxAge) {
+      // Burn phase over — settle the mark into the permanent ground layer
+      // and drop the JS object so the active array stays small.
+      bakeScorchToGround(s);
+      state.scorches.splice(i, 1);
+      continue;
+    }
+    // Embers + ash during the burning phase (first 65% of life)
+    const burnFrac = 1 - s.age / (s.maxAge * 0.65);
     if (burnFrac <= 0) continue;
     const rate = (s.kind === 'big' ? 14 : s.kind === 'medium' ? 7 : 3) * burnFrac;
     s.sparkAcc += rate * dt;

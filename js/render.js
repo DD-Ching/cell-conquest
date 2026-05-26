@@ -186,27 +186,35 @@ export function render() {
   }
 
   // ---- Scorch marks (殘骸 / 灰燼 / 燃燒) ----
-  // Persistent dark burn smudges on the ground where units / turrets died.
-  // Drawn here so roads + units render ON TOP of them. Burning scorches also
-  // emit a soft flicker glow (rendered after the smudge, before everything else).
+  // Two layers, both beneath roads / units / turrets:
+  //   1. groundScorch — a single offscreen canvas holding every "settled"
+  //      burn mark in the match. Drawn as ONE drawImage (cheap, regardless
+  //      of how many burns have happened).
+  //   2. state.scorches — currently-burning marks, with flicker glow on top.
+  //      When each one expires, its smudge gets painted into the offscreen
+  //      canvas (see engineering.bakeScorchToGround) so the visual stays.
   // Purely cosmetic — never queried by AI, pathing, or collision logic.
+  if (state.groundScorch) {
+    ctx.drawImage(state.groundScorch, 0, 0, WORLD_W, WORLD_H);
+  }
   for (const s of state.scorches) {
-    const a = 1 - s.age / s.maxAge;
-    // Dark burn smudge — ellipse with soft fade-out edge
+    // Constant-alpha smudge — matches the baked version, so when this entry
+    // expires and is handed off to the offscreen canvas, the pixels swap
+    // 1:1 with no visible pop.
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(s.rot);
     const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, s.r);
-    sg.addColorStop(0,   `rgba(8, 4, 2, ${0.78 * a})`);
-    sg.addColorStop(0.55, `rgba(22, 11, 5, ${0.48 * a})`);
-    sg.addColorStop(1,   'rgba(60, 30, 15, 0)');
+    sg.addColorStop(0,    'rgba(8, 4, 2, 0.78)');
+    sg.addColorStop(0.55, 'rgba(22, 11, 5, 0.48)');
+    sg.addColorStop(1,    'rgba(60, 30, 15, 0)');
     ctx.fillStyle = sg;
     ctx.beginPath();
     ctx.ellipse(0, 0, s.r, s.r * 0.72, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    // Flickering ember glow during the burning phase (first ~60% of life)
-    const burnFrac = Math.max(0, 1 - s.age / (s.maxAge * 0.6));
+    // Flickering ember glow during the burning phase (first ~65% of life)
+    const burnFrac = Math.max(0, 1 - s.age / (s.maxAge * 0.65));
     if (burnFrac > 0) {
       const flick = 0.55 + 0.45 * Math.sin(now / 70 + s.x * 0.13 + s.y * 0.07);
       const gR = s.r * 0.42 * (0.85 + flick * 0.18);

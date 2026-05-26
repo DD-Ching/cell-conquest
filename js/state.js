@@ -28,9 +28,17 @@ export const state = {
   terrain: [],               // world-space ground features: rocks, craters, sand patches
   tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
   shells: [],                // artillery shells in flight: {x1,y1,x2,y2,t,maxT,owner}
-  scorches: [],              // persistent burn marks on the ground (殘骸/灰燼/燃燒).
+  scorches: [],              // ACTIVE burn marks (still burning + emitting embers).
                              // {x,y,r,age,maxAge,kind,sparkAcc,rot}. Purely cosmetic —
-                             // NEVER queried by AI, pathing, or collision.
+                             // NEVER queried by AI, pathing, or collision. When an
+                             // entry's life expires it is BAKED onto groundScorch
+                             // (below) and removed from this array, so the array
+                             // length stays small no matter how long the game runs.
+  groundScorch: null,        // OFFSCREEN canvas storing every "settled" burn mark
+                             // for the rest of the match. Half-res relative to the
+                             // world (WORLD_W/2 × WORLD_H/2 ≈ 4 MB) so memory stays
+                             // bounded — old burns never accumulate as JS objects.
+  groundScorchCtx: null,
   turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],

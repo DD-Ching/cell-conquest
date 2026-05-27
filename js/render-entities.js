@@ -9,6 +9,7 @@
 import { state } from './state.js';
 import { DRONE_HP_AIR, ARTILLERY_INTERVAL } from './config.js';
 import { COLOR, GLOW } from './factions.js';
+import { catchUpRegen } from './world.js';
 import {
   drawTroopSprite, drawEngineerSprite, drawDroneSprite,
   drawAATurret, drawTankTurret, drawFactoryTurret, drawArtilleryTurret,
@@ -32,6 +33,7 @@ export function drawNodes(ctx, zoom, now) {
     for (const n of state.nodes) {
       const r = Math.max(n.size, minR);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
+      catchUpRegen(n);                       // visible-only refresh
       ctx.fillStyle = COLOR[n.owner];
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
@@ -47,6 +49,7 @@ export function drawNodes(ctx, zoom, now) {
     // Nodes have a 2.4× glow halo around them — cull with that margin.
     const halo = n.size * 2.4;
     if (n.x + halo < vL || n.x - halo > vR || n.y + halo < vT || n.y - halo > vB) continue;
+    catchUpRegen(n);                         // fresh units for the label render
     const degree = state.adj.get(n.id)?.size || 0;
 
     // Outer glow halo
@@ -396,6 +399,7 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
   ctx.textBaseline = 'middle';
   for (const n of state.nodes) {
     if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+    catchUpRegen(n);                         // fresh units for the top-layer label
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;

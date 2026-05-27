@@ -7,6 +7,7 @@
 import { state } from './state.js';
 import { FACTIONS, factionStats } from './factions.js';
 import { formatTime } from './util.js';
+import { catchUpAllNodes } from './world.js';
 
 // Cached DOM refs — populated by buildHUD, reused by updateHUD so we don't
 // re-getElementById 10+ times per frame.
@@ -64,6 +65,9 @@ export function updateHUD() {
   if (now - _hudLastT < 100) return;
   _hudLastT = now;
 
+  // Lazy regen catch-up — HUD displays summed unit counts so all nodes
+  // need fresh values. ~10 Hz pacing keeps this cheap.
+  catchUpAllNodes();
   const c = {};
   for (const f of FACTIONS) c[f.id] = [0, 0];
   for (const n of state.nodes) {

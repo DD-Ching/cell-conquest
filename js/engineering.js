@@ -14,7 +14,7 @@
 // =====================================================
 import { state } from './state.js';
 import { dist } from './util.js';
-import { findPath } from './world.js';
+import { findPath, catchUpAllNodes } from './world.js';
 import {
   WORLD_W, WORLD_H,
   ENG_HP, ENG_CLEAR_RATE, ENG_COST,
@@ -104,6 +104,9 @@ let nextTurretId = 1;
 export function placeTurretAt(x, y, type, byOwner) {
   const spec = BUILD_SPECS[type];
   if (!spec) return false;
+  // Lazy regen: walk the world fresh so the source-candidate test below
+  // sees current unit counts. Cheap (O(N), called only on placement).
+  catchUpAllNodes();
   // Single pass: track BOTH the nearest own node (anchor — start of the
   // off-road final leg) AND the nearest own node with enough units to pay
   // ENG_COST (source — where the engineer fleet is dispatched from). They
@@ -154,6 +157,7 @@ export function placeTurretAt(x, y, type, byOwner) {
 export function placeNetOnEdge(roadA, roadB, byOwner) {
   const edge = getEdge(roadA, roadB);
   if (!edge) return false;
+  catchUpAllNodes();                         // fresh units count for source test
   let source = null, srcD = Infinity;
   for (const n of state.nodes) {
     if (n.owner !== byOwner) continue;

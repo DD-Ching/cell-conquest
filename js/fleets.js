@@ -10,7 +10,7 @@ import {
 } from './config.js';
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
-import { findPath } from './world.js';
+import { findPath, catchUpRegen } from './world.js';
 import {
   ENG_SPEED, getEdge,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
@@ -26,6 +26,7 @@ const OFFROAD_SPEED_MUL = 0.35;
 export function sendFleet(from, to, amount) {
   amount = Math.floor(amount);
   if (amount < 1) return false;
+  catchUpRegen(from);                       // fresh units count before subtracting
   amount = Math.min(amount, Math.floor(from.units));
   if (amount < 1) return false;
   const path = findPath(from.id, to.id, from.owner);
@@ -49,6 +50,7 @@ export function sendFleet(from, to, amount) {
 export function assaultTurret(from, turret, amount) {
   amount = Math.floor(amount);
   if (amount < 1) return false;
+  catchUpRegen(from);                       // fresh units count before subtracting
   amount = Math.min(amount, Math.floor(from.units));
   if (amount < 1) return false;
   // Anchor: nearest own node to the turret.
@@ -225,6 +227,10 @@ export function simulateFleets(dt) {
 /** Apply a troop fleet's arrival: capture, reinforce, or weaken. Internal —
  *  only called from simulateFleets above when a fleet hits its destination. */
 function arriveAt(fleet, target) {
+  // Capture-or-reinforce combat needs the current defender count — pull
+  // the regen accrual into target.units before the comparison so a node
+  // last touched 30 game-seconds ago doesn't fight at stale strength.
+  catchUpRegen(target);
   if (target.owner === fleet.owner) {
     target.units = Math.min(target.capacity * 1.5, target.units + fleet.units);
     target.flash = 0.5;
@@ -234,6 +240,9 @@ function arriveAt(fleet, target) {
       target.units = fleet.units - target.units;
       target.flash = 1;
       target.pulse = 1;
+      // Owner changed — reset the lazy-regen baseline so the new owner
+      // doesn't get a back-dated free-regen bonus.
+      target.lastRegenT = state.elapsed;
       spawnCaptureParticles(target, fleet.owner);
     } else {
       target.units -= fleet.units;

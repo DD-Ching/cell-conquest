@@ -9,6 +9,7 @@ import {
   AA_RADIUS, TANK_RADIUS, TANK_DPS,
 } from './config.js';
 import { dist } from './util.js';
+import { catchUpAllNodes } from './world.js';
 import { sendFleet, assaultTurret } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
 import { releaseAIStockpile } from './drones.js';
@@ -40,6 +41,10 @@ export function aiTick(owner, dt) {
 
   const myNodes = state.nodes.filter(n => n.owner === owner);
   if (myNodes.length === 0) return;
+  // Lazy regen: bring every node up to date once so subsequent reads of
+  // n.units / n.capacity see fresh values. One pass beats sprinkling
+  // catchUp around the dozen places below that read units.
+  catchUpAllNodes();
 
   // ---- Saturation: how much of my regen is being wasted because nodes are full ----
   // Full nodes (>= 95% cap) gain nothing from sitting still. The more of my empire

@@ -186,11 +186,12 @@ function simulate(dt) {
     fBucket.push(f);
   }
 
-  // Regen + visual decays
+  // Visual decays only. Unit regen is now LAZY — see world.catchUpRegen.
+  // Owned nodes accrue on-demand at every read/write site (AI tick, HUD
+  // sum, render of visible node, sendFleet, arriveAt) so the per-sub-tick
+  // ALL-nodes regen pass goes away. At 1200 Hz × 900 nodes that pass was
+  // ~1.08M ops/sec; lazy refresh runs at ~14 Hz aggregate (AI + HUD).
   for (const n of state.nodes) {
-    if (n.owner !== 'neutral') {
-      n.units = Math.min(n.capacity, n.units + n.regenRate * dt);
-    }
     if (n.pulse > 0) n.pulse -= dt * 1.6;
     if (n.flash > 0) n.flash -= dt * 2.5;
   }

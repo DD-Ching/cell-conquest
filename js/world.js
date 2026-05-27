@@ -80,6 +80,12 @@ export function placeNodes(rng = Math.random) {
         capacity: Math.floor(size * 3.6),
         regenRate: size / 30,
         pulse: 0, flash: 0,
+        // Lazy-regen bookkeeping: instead of `units += rate * dt` every
+        // sub-tick on every node (1200 Hz × 900 nodes), we now catch up
+        // ONLY when a node is read or written. lastRegenT is the game time
+        // of the most recent units-update. catchUpRegen() computes the
+        // missing accrual at access time.
+        lastRegenT: 0,
       });
     }
   }
@@ -242,6 +248,27 @@ export function roadAt(x, y, tol = 36) {
     if (d < bestD) { bestD = d; best = r; }
   }
   return best;
+}
+
+/** Lazy regen — bring a single node up to date with the current game time.
+ *  Called at every site that reads or writes node.units (AI tick, HUD,
+ *  render of a visible node, fleet dispatch/arrival, turret placement).
+ *  Replaces the old 1200-Hz × all-nodes regen loop with on-demand work. */
+export function catchUpRegen(n) {
+  // Neutral nodes don't regen (matches the original per-tick logic).
+  if (n.owner === 'neutral') { n.lastRegenT = state.elapsed; return; }
+  if (n.units >= n.capacity) { n.lastRegenT = state.elapsed; return; }
+  const dt = state.elapsed - (n.lastRegenT || 0);
+  if (dt <= 0) return;
+  n.units = Math.min(n.capacity, n.units + n.regenRate * dt);
+  n.lastRegenT = state.elapsed;
+}
+
+/** Bulk version. Used at AI tick top + HUD sum, where many node reads
+ *  happen back-to-back and walking the array once is cheaper than guarding
+ *  every individual read. */
+export function catchUpAllNodes() {
+  for (const n of state.nodes) catchUpRegen(n);
 }
 
 /** Topmost non-pending enemy turret near world coords for assault / salvo

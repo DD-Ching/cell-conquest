@@ -14,6 +14,7 @@ import {
   placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt, turretAt,
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
+import { isAlly } from './alliance.js';
 import {
   resetEngineering, placeTurretAt, placeNetOnEdge,
   updateBuildings, updateTracers, updateScorches,
@@ -21,13 +22,15 @@ import {
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
+import * as aiBridge from './ai-worker-bridge.js';
+import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render, renderMinimap,
   makeSnow, updateSnow, updateParticles, bakeTerrain,
 } from './render.js';
 import { loadAssets } from './sprites.js';
-import { loadWasm } from './wasm-bridge.js';
+import { loadWasm, toggleWasm } from './wasm-bridge.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -58,6 +61,7 @@ export function newGame() {
   // Roll the lineup (2-5 factions including you), each AI with a random
   // strength multiplier. Rebuild the HUD to reflect the new roster.
   rollFactions();
+  ensureLieutenantRegistered();    // ally1 joins the lineup (zero bases until G-press)
   buildHUD();
   // Start every overlay panel in the faded state — the map is what matters
   // right after a (re)start. Mouse-over un-fades each panel individually.
@@ -180,6 +184,7 @@ function simulate(dt, combatDt = dt) {
   state.droneGrid.clear();
   state.groundFleetGrid.clear();
   state.droneCountByOwner.clear();
+  state.inboundDronesByTarget.clear();
   for (const f of state.fleets) {
     state.fleetById.set(f._id, f);
     const fKey = Math.floor(f.x / GRID_CELL) * 10000 + Math.floor(f.y / GRID_CELL);
@@ -187,12 +192,41 @@ function simulate(dt, combatDt = dt) {
       let bucket = state.droneGrid.get(fKey);
       if (!bucket) { bucket = []; state.droneGrid.set(fKey, bucket); }
       bucket.push(f);
-      // Per-owner active-drone tally for the factory production cap
+      // Per-owner active-drone tally for the factory production cap.
       state.droneCountByOwner.set(f.owner, (state.droneCountByOwner.get(f.owner) || 0) + 1);
+      // Inbound-per-target tally so the target picker can avoid overkill.
+      if (f.targetKind && f.targetId !== undefined) {
+        const tKey = f.targetKind + ':' + f.targetId;
+        state.inboundDronesByTarget.set(tKey, (state.inboundDronesByTarget.get(tKey) || 0) + 1);
+      }
     } else {
       let bucket = state.groundFleetGrid.get(fKey);
       if (!bucket) { bucket = []; state.groundFleetGrid.set(fKey, bucket); }
       bucket.push(f);
+    }
+  }
+
+  // Stripped-owner tally: an owner is "stripped" (no longer worth a suicide
+  // drone strike) when they have ZERO active production turrets AND total
+  // units < 60. Those bases regen-and-die in the 10↔10 oscillation pattern —
+  // dumping drones in is wasted ordnance, ground troops will mop up. The
+  // suicide-drone judgment sites in drones.js consult this set.
+  state.strippedOwners.clear();
+  {
+    const activeTurretsByOwner = new Map();
+    for (const t of state.turrets) {
+      if (!t.active) continue;
+      activeTurretsByOwner.set(t.owner, (activeTurretsByOwner.get(t.owner) || 0) + 1);
+    }
+    const unitsByOwner = new Map();
+    for (const n of state.nodes) {
+      if (n.owner === 'neutral') continue;
+      unitsByOwner.set(n.owner, (unitsByOwner.get(n.owner) || 0) + n.units);
+    }
+    for (const [owner, units] of unitsByOwner) {
+      if ((activeTurretsByOwner.get(owner) || 0) === 0 && units < 60) {
+        state.strippedOwners.add(owner);
+      }
     }
   }
 
@@ -266,7 +300,14 @@ function loop() {
     for (let s = 0; s < subSteps; s++) {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
-      for (const ai of AIS) aiTick(ai, subDt);
+      // AI tick: when the worker is enabled, it handles every owner except
+      // NN-controlled factions (NN still needs main-thread access to
+      // onnxruntime + DOM). Worker maintains its own ~100 ms snapshot
+      // cadence — tickFrame is cheap when nothing's due.
+      aiBridge.tickFrame(subDt);
+      for (const ai of AIS) {
+        if (aiBridge.shouldMainThreadTick(ai)) aiTick(ai, subDt);
+      }
       updateParticles(subDt);
       updateTracers(subDt);
       updateScorches(subDt);
@@ -416,7 +457,11 @@ function attachInput() {
       const thresh = 25 / (state.zoom * state.zoom);
       if (dx * dx + dy * dy > thresh) {
         state.drag.moved = true;
-        if (state.drag.originNode && state.drag.originNode.owner === 'player') state.drag.mode = 'send';
+        // Drag from EITHER a player node OR a Lieutenant node = command-send.
+        // The Lieutenant is conceptually the player's AI; player retains
+        // override authority. Fleet owner remains the source-node owner
+        // (ally1's drag → ally1's fleet → combat behaves the same).
+        if (state.drag.originNode && isAlly(state.drag.originNode.owner, 'player')) state.drag.mode = 'send';
         else if (!state.drag.originNode) state.drag.mode = 'box';
         else state.drag.mode = 'none';
       }
@@ -448,7 +493,7 @@ function attachInput() {
           state.drag = null;
           return;
         }
-        if (d.originNode && d.originNode.owner !== 'player') {
+        if (d.originNode && !isAlly(d.originNode.owner, 'player')) {
           state.salvoTarget = { kind: 'node', id: d.originNode.id, x: d.originNode.x, y: d.originNode.y };
           state.drag = null;
           return;
@@ -456,7 +501,9 @@ function attachInput() {
       }
       if (!d.originNode) {
         if (!d.shift && !d.ctrl) state.selectedIds.clear();
-      } else if (d.originNode.owner === 'player') {
+      } else if (isAlly(d.originNode.owner, 'player')) {
+        // Player + Lieutenant nodes are selectable / command-able from the
+        // player's UI (the Lieutenant is the player's AI agent — same side).
         if (d.ctrl) {
           if (state.selectedIds.has(d.originNode.id)) state.selectedIds.delete(d.originNode.id);
           else state.selectedIds.add(d.originNode.id);
@@ -473,17 +520,17 @@ function attachInput() {
       // both the pendingEngineer filter and zoom-aware pick tolerance.
       const targetTurret = turretAt(wx, wy, 'player');
       const sources = state.selectedIds.has(d.originNode.id)
-        ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
+        ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && isAlly(nd.owner, 'player'))
         : [d.originNode];
       if (targetTurret) {
         for (const from of sources) {
-          if (!from || from.owner !== 'player' || from.units < 2) continue;
+          if (!from || !isAlly(from.owner, 'player') || from.units < 2) continue;
           const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
           assaultTurret(from, targetTurret, amt);
         }
       } else if (releaseNode && releaseNode.id !== d.originNode.id) {
         for (const from of sources) {
-          if (!from || from.owner !== 'player' || from.id === releaseNode.id || from.units < 2) continue;
+          if (!from || !isAlly(from.owner, 'player') || from.id === releaseNode.id || from.units < 2) continue;
           const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
           sendFleet(from, releaseNode, amt);
         }
@@ -493,7 +540,8 @@ function attachInput() {
       const x1 = Math.min(d.startX, wx), x2 = Math.max(d.startX, wx);
       const y1 = Math.min(d.startY, wy), y2 = Math.max(d.startY, wy);
       for (const nd of state.nodes) {
-        if (nd.owner === 'player' && nd.x >= x1 && nd.x <= x2 && nd.y >= y1 && nd.y <= y2) {
+        // Box-select pulls in both player and Lieutenant nodes (same side).
+        if (isAlly(nd.owner, 'player') && nd.x >= x1 && nd.x <= x2 && nd.y >= y1 && nd.y <= y2) {
           state.selectedIds.add(nd.id);
         }
       }
@@ -503,7 +551,8 @@ function attachInput() {
 
   c.addEventListener('dblclick', () => {
     state.selectedIds.clear();
-    for (const n of state.nodes) if (n.owner === 'player') state.selectedIds.add(n.id);
+    // Double-click selects ALL friendly bases (player + Lieutenant).
+    for (const n of state.nodes) if (isAlly(n.owner, 'player')) state.selectedIds.add(n.id);
   });
 
   c.addEventListener('mouseleave', () => {
@@ -537,6 +586,20 @@ function attachInput() {
       e.preventDefault();
       document.body.classList.toggle('minimap-hidden');
     }
+    // Debug: Shift+W toggles wasm hot loops on/off so the player can A/B
+    // compare the perf overlay (ms sim) between Rust and JS paths.
+    if (e.shiftKey && k === 'w') {
+      e.preventDefault();
+      toggleWasm();
+    }
+    // G — transfer base(s) between you and your lieutenant. If you have
+    // bases selected (box-select / Ctrl-click / Dbl-click), the whole
+    // selection flips in one keystroke; otherwise just the hovered base.
+    // Lieutenant is a real faction running the full enemy AI brain — you
+    // two are allies, neither side attacks the other.
+    if (k === 'g') {
+      toggleDelegationAt(nodeAt(state.mousePos.x, state.mousePos.y));
+    }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
     if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);
@@ -567,6 +630,19 @@ function attachInput() {
         state.holdFire = false;
       } else {
         state.holdFire = true;
+      }
+    }
+    // AI Worker toggle: Y moves the per-faction aiTick off the main thread.
+    // Main thread keeps rendering / sim / combat / drones; the worker just
+    // owns AI decisions and ships back action queues. NN-controlled factions
+    // stay main-thread (onnxruntime + DOM). See AI_WORKER_BLUEPRINT.md.
+    if (k === 'y') {
+      if (aiBridge.isEnabled()) {
+        aiBridge.disable();
+        console.log('[ai-worker] disabled (main-thread aiTick)');
+      } else {
+        aiBridge.enable();
+        console.log('[ai-worker] enabled');
       }
     }
   });

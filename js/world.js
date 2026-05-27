@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
 import { dist, pointToSegment } from './util.js';
+import { isAlly } from './alliance.js';
 
 const NODE_MARGIN = 100;
 // Minimum spacing between node rims. Tightened from 80 to 50 so 1800 nodes
@@ -192,7 +193,10 @@ export function adjustHubSizes() {
   }
 }
 
-/** Dijkstra constrained to own territory (final hop may land on any owner). */
+/** Dijkstra constrained to own-or-allied territory (final hop may land on
+ *  any owner). Allied transit lets a player fleet legitimately march A → B
+ *  through Lieutenant-controlled nodes — otherwise the friendly base in the
+ *  middle of the front line acts as a roadblock for its own side. */
 export function findPath(fromId, toId, traveler) {
   const { nodes, adj } = state;
   if (fromId === toId) return [fromId];
@@ -208,7 +212,7 @@ export function findPath(fromId, toId, traveler) {
     if (visited.has(id)) continue;
     visited.add(id);
     for (const nb of adj.get(id)) {
-      if (nb !== toId && nodes[nb].owner !== traveler) continue;
+      if (nb !== toId && !isAlly(nodes[nb].owner, traveler)) continue;
       const w = dist(nodes[id], nodes[nb]);
       const nd = distMap.get(id) + w;
       if (nd < distMap.get(nb)) {
@@ -278,7 +282,7 @@ export function turretAt(x, y, owner = 'player', filter = null) {
   const tol = Math.max(14, 14 / state.zoom);
   const tol2 = tol * tol;
   for (const t of state.turrets) {
-    if (t.owner === owner) continue;
+    if (isAlly(t.owner, owner)) continue;        // own or ally — not attackable
     if (t.pendingEngineer) continue;
     if (filter && !filter(t)) continue;
     const dx = t.x - x, dy = t.y - y;

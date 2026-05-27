@@ -176,7 +176,7 @@
     box-shadow: 0 0 24px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 200, 140, 0.08) inset;
   }
 
-  /* ---- NN load badge ---- */
+  /* ---- NPC load badge ---- */
   #nn-badge {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     padding: 5px 14px;
@@ -197,7 +197,7 @@
   <div class="title">MARS<span class="accent">FRONT</span></div>
   <div class="sub">Crimson Sector · Tactical Command</div>
 </div>
-<div id="nn-badge" class="loading">NN loading…</div>
+<div id="nn-badge" class="loading">NPC model loading…</div>
 <div id="hud"></div>
 <div id="topright"><div id="timer">00:00</div><div id="speed" class="sub">Speed 1×</div><div id="zoom" class="sub">100%</div><div id="perf" class="sub">— fps · — ms</div></div>
 <canvas id="minimap"></canvas>
@@ -212,7 +212,9 @@
     <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
     <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a turret (Anti-Air / Tank / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
     <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
+    <div><kbd>G</kbd> = hand the base under the cursor (or every selected base) to your Lieutenant 🤖 — an allied NPC that uses the full enemy AI brain. Press G on a Lieutenant base to take it back. Box-select first to delegate many at once.</div>
     <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>M</kbd> toggle minimap &middot; <kbd>?</kbd> toggle this help</div>
+    <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

@@ -1,0 +1,246 @@
+// =====================================================
+// Main-thread proxy for the AI Web Worker.
+//
+// Responsibilities (see AI_WORKER_BLUEPRINT.md):
+//   - Construct + own the Worker instance.
+//   - Build a minimal sim-state snapshot every ~100 ms.
+//   - Decide which owners the worker should tick (skips NN-controlled
+//     factions — those still use the main-thread aiTick because nn.js
+//     touches the DOM and onnxruntime-web).
+//   - On worker response: validate + re-apply each action against
+//     authoritative main-thread state (the world has moved during the
+//     ~100 ms round-trip, so apply-time checks gate stale actions).
+//   - Merge AI control state (aiFocus / aiSalvoTarget / aiHoldFire /
+//     aiSalvoT0 / aiTimers / aiMetrics) back into the main thread.
+//
+// Public surface:
+//   - enable()  / disable()   — toggle worker mode (Y-key in main.js)
+//   - tickFrame(dt)           — called from simulate() once per frame.
+//                               No-ops if disabled. Dispatches a snapshot
+//                               every SNAPSHOT_INTERVAL_SEC.
+//   - isEnabled()
+//   - lastWorkerMs            — worker-side aiTick budget for perf overlay
+//
+// Snapshot cadence: SNAPSHOT_INTERVAL_SEC = 0.10 s (10 Hz). AI ticks are
+// internally rate-limited to ~0.5–0.9 s per faction, so missing some 60 Hz
+// sub-step ticks is invisible. The Worker round-trip adds ≤16 ms latency.
+// =====================================================
+import { state } from './state.js';
+import { sendFleet, assaultTurret } from './fleets.js';
+import { placeTurretAt, placeNetOnEdge } from './engineering.js';
+import { releaseAIStockpile } from './drones.js';
+import { AIS, factionStats } from './factions.js';
+import { NN_OWNERS } from './config.js';
+import { listAlliances } from './alliance.js';
+
+const SNAPSHOT_INTERVAL_SEC = 0.10;
+
+let worker = null;
+let workerReady = false;
+let enabled = false;
+let lastDispatchT = -Infinity;
+let lastWorkerMs = 0;
+let pendingResponse = false;    // simple back-pressure: don't dispatch a
+                                // new snapshot until the previous one's
+                                // actions are back. Prevents queue bloat
+                                // when the main thread is unloaded.
+
+/** Build the lightweight snapshot that the worker hydrates from. We only
+ *  ship the fields aiTick reads (and the AI control state it mutates) —
+ *  particles, terrain, dust, scorches, canvases, perf buffers, etc. are
+ *  all skipped. ~5–20 KB depending on entity count. */
+function buildSnapshot() {
+  return {
+    elapsed: state.elapsed,
+    // Nodes: aiTick reads owner, units, capacity, regenRate, size, kind,
+    // x/y, lastRegenT (catchUpAllNodes uses it). id is the array index.
+    nodes: state.nodes.map(n => ({
+      id: n.id, x: n.x, y: n.y, owner: n.owner,
+      units: n.units, capacity: n.capacity, regenRate: n.regenRate,
+      size: n.size, kind: n.kind, lastRegenT: n.lastRegenT,
+    })),
+    // Adjacency: ship as array of [id, neighborIds[]]. Sets aren't
+    // structuredClone-portable in all browser combos; arrays always are.
+    adj: Array.from(state.adj.entries(), ([id, set]) => [id, Array.from(set)]),
+    // Turrets: aiTick reads owner, type, x/y, hp/hpMax, active,
+    // pendingEngineer, dronesReady. Skip render-only fields.
+    turrets: state.turrets.map(t => ({
+      id: t.id, owner: t.owner, type: t.type,
+      x: t.x, y: t.y, hp: t.hp, hpMax: t.hpMax,
+      active: t.active, pendingEngineer: t.pendingEngineer,
+      dronesReady: t.dronesReady, prodCooldown: t.prodCooldown,
+    })),
+    // Fleets: aiTick reads owner, kind, units, targetKind, targetId,
+    // targetNodeId, path[], segIdx for the per-target bucketing.
+    fleets: state.fleets.map(f => ({
+      _id: f._id, owner: f.owner, kind: f.kind,
+      x: f.x, y: f.y, units: f.units,
+      targetKind: f.targetKind, targetId: f.targetId,
+      targetNodeId: f.targetNodeId,
+      path: f.path, segIdx: f.segIdx,
+      hp: f.hp, spawnT: f.spawnT,
+    })),
+    roads: state.roads.map(r => ({ a: r.a, b: r.b })),
+    edgeData: Array.from(state.edgeData.entries(), ([k, v]) => [k, {
+      netLevel: v.netLevel, netCharges: v.netCharges, netOwner: v.netOwner,
+    }]),
+    // AI control state (worker mutates these — bridge re-merges on return).
+    aiHoldFire:    { ...state.aiHoldFire },
+    aiSalvoT0:     { ...state.aiSalvoT0 },
+    aiSalvoTarget: { ...state.aiSalvoTarget },
+    aiFocus:       { ...state.aiFocus },
+    aiTimers:      { ...state.aiTimers },
+    aiMetrics:     JSON.parse(JSON.stringify(state.aiMetrics || {})),  // nested objects
+    strippedOwners: Array.from(state.strippedOwners),
+    // Faction membership — AIS / factionStats / alliances can mutate
+    // mid-game (G-key delegates a base to ally1, which calls
+    // ensureLieutenantRegistered). Snapshot the current view.
+    AIS: Array.from(AIS),
+    factionStats: { ...factionStats },
+    alliances: listAlliances(),
+  };
+}
+
+/** Validate + apply a single action descriptor against the main-thread
+ *  authoritative state. The worker decided based on a 100 ms-old snapshot,
+ *  so each action is rechecked against current ownership / unit counts /
+ *  entity presence. Stale actions are silently dropped. */
+function applyAction(a) {
+  switch (a.type) {
+    case 'sendFleet': {
+      const from = state.nodes[a.fromId];
+      const to   = state.nodes[a.toId];
+      if (!from || !to) return;
+      // Owner shifted (we captured the node, or lost it) — skip.
+      // We can't easily ask "is this the right faction?" without knowing
+      // who sent it; the cleanest gate is units availability + same owner.
+      if (from.units < Math.min(3, a.count * 0.5)) return;
+      const count = Math.min(a.count, Math.floor(from.units));
+      if (count < 3) return;
+      sendFleet(from, to, count);
+      return;
+    }
+    case 'assaultTurret': {
+      const from   = state.nodes[a.fromId];
+      const turret = state.turretById.get(a.turretId);
+      if (!from || !turret) return;
+      if (from.units < Math.min(3, a.count * 0.5)) return;
+      const count = Math.min(a.count, Math.floor(from.units));
+      if (count < 3) return;
+      assaultTurret(from, turret, count);
+      return;
+    }
+    case 'placeTurret': {
+      placeTurretAt(a.x, a.y, a.kind, a.owner);
+      return;
+    }
+    case 'placeNet': {
+      placeNetOnEdge(a.a, a.b, a.owner);
+      return;
+    }
+    case 'releaseAIStockpile': {
+      // The worker chose the salvo target alongside the release call; mirror
+      // that choice on the main thread BEFORE invoking, since releaseAIStockpile
+      // reads state.aiSalvoTarget[owner].
+      state.aiSalvoTarget[a.owner] = a.salvoTarget;
+      releaseAIStockpile(a.owner);
+      return;
+    }
+  }
+}
+
+function onWorkerMessage(e) {
+  const msg = e.data;
+  if (msg.type === 'ready') { workerReady = true; return; }
+  if (msg.type !== 'actions') return;
+
+  pendingResponse = false;
+  lastWorkerMs = msg.workerMs;
+
+  // Apply actions in order. validation inside applyAction gates stale ones.
+  for (const a of msg.actions) applyAction(a);
+
+  // Merge AI control state back. The worker's view is authoritative for
+  // these (they're its own bookkeeping). Per-key copy avoids dropping
+  // entries for owners the worker didn't tick this batch.
+  Object.assign(state.aiHoldFire,    msg.aiHoldFire);
+  Object.assign(state.aiSalvoT0,     msg.aiSalvoT0);
+  Object.assign(state.aiSalvoTarget, msg.aiSalvoTarget);
+  Object.assign(state.aiFocus,       msg.aiFocus);
+  Object.assign(state.aiTimers,      msg.aiTimers);
+  Object.assign(state.aiMetrics,     msg.aiMetrics);
+}
+
+export function enable() {
+  if (enabled) return;
+  if (typeof Worker === 'undefined') {
+    console.warn('[ai-worker] Worker API unavailable; staying main-thread');
+    return;
+  }
+  try {
+    worker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = onWorkerMessage;
+    worker.onerror = (e) => {
+      console.error('[ai-worker] error, falling back to main thread:', e.message);
+      disable();
+    };
+    worker.postMessage({ type: 'init' });
+    enabled = true;
+    workerReady = false;
+    pendingResponse = false;
+    state.aiInWorker = true;
+  } catch (e) {
+    console.error('[ai-worker] enable failed:', e);
+    worker = null;
+    enabled = false;
+    state.aiInWorker = false;
+  }
+}
+
+export function disable() {
+  if (!enabled) return;
+  if (worker) { worker.terminate(); worker = null; }
+  enabled = false;
+  workerReady = false;
+  pendingResponse = false;
+  state.aiInWorker = false;
+}
+
+export function isEnabled() { return enabled && workerReady; }
+export function getLastWorkerMs() { return lastWorkerMs; }
+
+/** Called from simulate() once per frame. Returns true if the worker
+ *  handled (or will handle) AI ticking — caller should then SKIP the
+ *  main-thread aiTick loop for non-NN owners. */
+export function tickFrame(dt) {
+  if (!enabled || !workerReady) return false;
+  if (pendingResponse) return true;             // still waiting on previous batch
+  if (state.elapsed - lastDispatchT < SNAPSHOT_INTERVAL_SEC) return true;
+
+  // Gather the owners the worker should tick — skip NN owners (they need
+  // main-thread aiTick because onnxruntime-web loads the DOM).
+  const tickOwners = [];
+  for (const o of AIS) {
+    if (!NN_OWNERS.has(o)) tickOwners.push(o);
+  }
+  if (tickOwners.length === 0) return false;    // nobody for the worker → caller does it all
+
+  const snapshot = buildSnapshot();
+  worker.postMessage({
+    type: 'tick',
+    dt,
+    tickOwners,
+    snapshot,
+  });
+  pendingResponse = true;
+  lastDispatchT = state.elapsed;
+  return true;
+}
+
+/** Whether main.js should run aiTick(owner) for `owner` this frame.
+ *  When the worker is enabled and `owner` is non-NN, the worker handles
+ *  it. NN owners always run main-thread. */
+export function shouldMainThreadTick(owner) {
+  if (!enabled || !workerReady) return true;
+  return NN_OWNERS.has(owner);
+}

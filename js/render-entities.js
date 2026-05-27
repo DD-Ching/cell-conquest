@@ -16,6 +16,7 @@ import {
 } from './sprites.js';
 
 const CELL = 250;                          // matches the spatial-grid cell size
+const _warnedOwners = new Set();           // dedupe console warnings per owner
 
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
 export function drawNodes(ctx, zoom, now) {
@@ -52,9 +53,18 @@ export function drawNodes(ctx, zoom, now) {
     catchUpRegen(n);                         // fresh units for the label render
     const degree = state.adj.get(n.id)?.size || 0;
 
-    // Outer glow halo
+    // Outer glow halo — defensive fallback so an unknown owner never
+    // breaks the entire frame; log once per unknown owner to surface
+    // the underlying faction-setup gap.
+    const glow = GLOW[n.owner] || GLOW.neutral || 'rgba(160,135,116,0.3)';
+    if (!GLOW[n.owner]) {
+      if (!_warnedOwners.has(n.owner)) {
+        console.warn('[render] no GLOW for owner', n.owner, '— check rollFactions');
+        _warnedOwners.add(n.owner);
+      }
+    }
     const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.5, n.x, n.y, n.size * 2.4);
-    grad.addColorStop(0, GLOW[n.owner]);
+    grad.addColorStop(0, glow);
     grad.addColorStop(1, 'transparent');
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -83,6 +93,11 @@ export function drawNodes(ctx, zoom, now) {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    // Lieutenant-managed bases share the player's faction colour (they're
+    // the player's AI agent, not a separate side). The visual difference
+    // between "you-controlled" and "auto-controlled" is the UNDERLINE on
+    // the unit-count label — drawn below alongside the count.
 
     if (state.selectedIds.has(n.id)) {
       ctx.strokeStyle = '#fff';
@@ -143,7 +158,23 @@ export function drawNodes(ctx, zoom, now) {
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(Math.floor(n.units), n.x, n.y);
+    const unitsTxt = String(Math.floor(n.units));
+    ctx.fillText(unitsTxt, n.x, n.y);
+    // Underline = "this base is auto-controlled (Lieutenant AI)" — the same
+    // colour as the label so it reads as a typographic mark, not a separate
+    // shape. Skip on the base layer when drawNodeLabelsOnTop will repaint
+    // (handled there too for the top-layer pass that beats sprites).
+    if (n.owner === 'ally1') {
+      const w = ctx.measureText(unitsTxt).width;
+      const half = w / 2;
+      const uy = n.y + worldFont * 0.45;
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+    }
 
     if (n.engineers > 0) {
       const ex = n.x - n.size - 4;
@@ -412,8 +443,29 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
     // legible when each owner's nodes pop in their own hue.
     ctx.lineWidth = Math.max(2, 3 / zoom);
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.strokeText(Math.floor(n.units), n.x, n.y);
+    const txt = String(Math.floor(n.units));
+    ctx.strokeText(txt, n.x, n.y);
     ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
-    ctx.fillText(Math.floor(n.units), n.x, n.y);
+    ctx.fillText(txt, n.x, n.y);
+    // Auto-control underline for Lieutenant bases (same colour as label so
+    // it reads as a typographic mark). Outline first for legibility against
+    // bright glow / scorch backgrounds, then fill.
+    if (n.owner === 'ally1') {
+      const w = ctx.measureText(txt).width;
+      const half = w / 2;
+      const uy = n.y + worldFont * 0.45;
+      ctx.lineWidth = Math.max(2.4, 3 / zoom);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+    }
   }
 }

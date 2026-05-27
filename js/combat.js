@@ -16,6 +16,8 @@ import {
 } from './config.js';
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
+import { isWasmReady, wasmAaApplyDamage, wasmTankDamageFleets } from './wasm-bridge.js';
+import { isAlly } from './alliance.js';
 
 // Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
 const AA_R2          = AA_RADIUS * AA_RADIUS;
@@ -50,6 +52,52 @@ export function updateAntiAir(dt) {
   const totalTracerRate = 5;   // total beams/sec per AA (split across targets)
   const aaTurrets = state.turretsByType.get('antiair');
   if (!aaTurrets) return;
+
+  // WASM FAST PATH — batch all active AAs + all drones into one Rust call.
+  // Rust builds its own drone grid + applies saturation damage. Tracers are
+  // still spawned from JS afterward (visual-only, doesn't affect damage).
+  if (isWasmReady()) {
+    const activeAAs = [];
+    for (const t of aaTurrets) if (t.active) activeAAs.push(t);
+    const drones = [];
+    for (const f of state.fleets) if (f.kind === 'drone') drones.push(f);
+    const newHp = wasmAaApplyDamage(activeAAs, drones, AA_R2, AA_DPS, dt);
+    if (newHp) {
+      for (let i = 0; i < drones.length; i++) drones[i].hp = newHp[i];
+      // Tracer pass — purely cosmetic, sample a handful per AA. Skip the
+      // exact per-target tracer-rate math the JS path does; saves a per-
+      // drone-in-range loop while still producing the visual beams.
+      const TRACER_PROB = totalTracerRate * dt * 0.15;
+      const aaRange = Math.ceil(AA_RADIUS / GRID_CELL);
+      for (const t of activeAAs) {
+        if (Math.random() > TRACER_PROB) continue;
+        // pick the first in-range enemy drone for the beam endpoint
+        const cx0 = Math.floor(t.x / GRID_CELL);
+        const cy0 = Math.floor(t.y / GRID_CELL);
+        let target = null;
+        outer: for (let cx = cx0 - aaRange; cx <= cx0 + aaRange; cx++) {
+          for (let cy = cy0 - aaRange; cy <= cy0 + aaRange; cy++) {
+            const bucket = state.droneGrid.get(cx * 10000 + cy);
+            if (!bucket) continue;
+            for (const f of bucket) {
+              if (isAlly(f.owner, t.owner)) continue;
+              const dx = f.x - t.x, dy = f.y - t.y;
+              if (dx * dx + dy * dy <= AA_R2) { target = f; break outer; }
+            }
+          }
+        }
+        if (target) {
+          state.tracers.push({
+            x1: t.x, y1: t.y, x2: target.x, y2: target.y,
+            age: 0, maxAge: 0.18, color: COLOR[t.owner],
+          });
+        }
+      }
+      return;
+    }
+  }
+
+  // JS FALLBACK — original gridded path.
   // Spatial-grid query: AA_RADIUS = 200 → 3×3 cell window centered on AA.
   // Lets the inner check ignore drones that aren't even near this turret.
   const aaRange = Math.ceil(AA_RADIUS / GRID_CELL);
@@ -63,7 +111,7 @@ export function updateAntiAir(dt) {
         const bucket = state.droneGrid.get(cx * 10000 + cy);
         if (!bucket) continue;
         for (const f of bucket) {
-          if (f.owner === t.owner) continue;
+          if (isAlly(f.owner, t.owner)) continue;
           const dx = f.x - t.x, dy = f.y - t.y;
           if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
         }
@@ -91,14 +139,47 @@ export function updateTanks(dt) {
   const tankTurrets = state.turretsByType.get('tank');
   if (!tankTurrets) return;
   let anyKill = false;
+
+  // WASM FAST PATH for the per-tank ground-fleet damage scan. The siege
+  // (tank-vs-turret) pass below stays in JS — it's a smaller loop and
+  // mutates turret.hp which is harder to round-trip via typed arrays.
+  let wasmDamageHandled = false;
+  if (isWasmReady()) {
+    const activeTanks = [];
+    for (const t of tankTurrets) if (t.active) activeTanks.push(t);
+    const groundFleets = [];
+    for (const f of state.fleets) if (f.kind !== 'drone') groundFleets.push(f);
+    if (activeTanks.length > 0 && groundFleets.length > 0) {
+      const newUnits = wasmTankDamageFleets(activeTanks, groundFleets, TANK_R2, TANK_DPS * 0.6 * dt);
+      if (newUnits) {
+        // Write back + detect kills (Rust doesn't know how to spawn JS-side
+        // effects like wreck piles + explosions).
+        for (let i = 0; i < groundFleets.length; i++) {
+          const f = groundFleets[i];
+          if (f._dead) continue;
+          f.units = newUnits[i];
+          if (f.units < 0.5) {
+            addWreckBlockage(f);
+            spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
+            spawnScorch(f.x, f.y, 'medium');
+            f._dead = true;
+            anyKill = true;
+          }
+        }
+        wasmDamageHandled = true;
+      }
+    }
+  }
+
   for (const t of tankTurrets) {
     if (!t.active) continue;
     // Damage enemy ground fleets in range. Grid query skips out-of-range
     // fleets entirely (and drones — they're in a separate grid). Kills are
     // marked via f._dead and swept once at the end of the function so we
-    // don't splice during iteration.
-    forGroundNear(t.x, t.y, TANK_RADIUS, (f) => {
-      if (f.owner === t.owner) return;
+    // don't splice during iteration. JS fallback only — when wasm handled
+    // damage above we skip this block (still run siege below).
+    if (!wasmDamageHandled) forGroundNear(t.x, t.y, TANK_RADIUS, (f) => {
+      if (isAlly(f.owner, t.owner)) return;
       if (f._dead) return;
       const dx = f.x - t.x, dy = f.y - t.y;
       if (dx * dx + dy * dy > TANK_R2) return;
@@ -121,7 +202,7 @@ export function updateTanks(dt) {
     // Siege: slow chip damage to enemy turrets within range. Grid lookup
     // touches a 3×3 cell window instead of scanning every turret.
     forTurretsNear(t.x, t.y, TANK_RADIUS, (o) => {
-      if (o.owner === t.owner) return;
+      if (isAlly(o.owner, t.owner)) return;
       if (o.pendingEngineer) return;       // dirt placeholder, not real yet
       const dx = o.x - t.x, dy = o.y - t.y;
       if (dx * dx + dy * dy > TANK_R2) return;
@@ -165,7 +246,7 @@ function fireArtilleryShell(t) {
   // Grid query saves scanning out-of-range turrets — ARTILLERY_RANGE 420 px
   // means a 4×4 cell window vs the whole turret array.
   forTurretsNear(t.x, t.y, ARTILLERY_RANGE, (e) => {
-    if (e.owner === t.owner) return;
+    if (isAlly(e.owner, t.owner)) return;
     if (e.pendingEngineer) return;          // dirt placeholder, not a real target
     const dx = e.x - t.x, dy = e.y - t.y;
     if (dx * dx + dy * dy > ARTILLERY_R2) return;
@@ -174,7 +255,7 @@ function fireArtilleryShell(t) {
   // Ground fleets in range via grid (skips drones automatically — they're in
   // droneGrid). Massive saving when there are hundreds of fleets on the map.
   forGroundNear(t.x, t.y, ARTILLERY_RANGE, (f) => {
-    if (f.owner === t.owner) return;
+    if (isAlly(f.owner, t.owner)) return;
     const dx = f.x - t.x, dy = f.y - t.y;
     if (dx * dx + dy * dy > ARTILLERY_R2) return;
     cands.push({ x: f.x, y: f.y, weight: 1 });
@@ -220,7 +301,7 @@ export function updateShells(dt) {
 function detonateArtillery(x, y, owner) {
   // Grid query — AOE radius is small (~42 px) so only 1 cell typically touched.
   forTurretsNear(x, y, ARTILLERY_AOE, (t) => {
-    if (t.owner === owner) return;
+    if (isAlly(t.owner, owner)) return;
     if (t.pendingEngineer) return;          // nothing to destroy yet
     const dx = t.x - x, dy = t.y - y;
     if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
@@ -228,7 +309,7 @@ function detonateArtillery(x, y, owner) {
   // Ground fleets caught in the blast — small AOE radius means typically 1-2
   // grid cells touched. Drones are immune (separate grid).
   forGroundNear(x, y, ARTILLERY_AOE, (f) => {
-    if (f.owner === owner) return;
+    if (isAlly(f.owner, owner)) return;
     if (f._dead) return;       // already killed by an earlier overlapping shell
     const dx = f.x - x, dy = f.y - y;
     if (dx * dx + dy * dy >= ARTILLERY_AOE2) return;

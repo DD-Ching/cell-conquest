@@ -1,0 +1,16 @@
+{
+  "name": "cell-sim",
+  "type": "module",
+  "description": "Cell Conquest hot-loop simulation in Rust → WebAssembly",
+  "version": "0.1.0",
+  "files": [
+    "cell_sim_bg.wasm",
+    "cell_sim.js",
+    "cell_sim.d.ts"
+  ],
+  "main": "cell_sim.js",
+  "types": "cell_sim.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

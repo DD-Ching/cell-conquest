@@ -11,9 +11,18 @@
 
 let wasm = null;
 let loading = false;
+let _enabled = true;
 
 export function isWasmReady() {
-  return wasm !== null;
+  return _enabled && wasm !== null;
+}
+
+/** Debug toggle — Shift+W in main.js flips this so you can A/B compare
+ *  JS vs WASM paths live without reloading. Returns the new state. */
+export function toggleWasm() {
+  _enabled = !_enabled;
+  console.log(`[wasm] ${_enabled ? 'ENABLED' : 'DISABLED (JS fallback)'}`);
+  return _enabled;
 }
 
 export async function loadWasm() {

@@ -27,7 +27,7 @@ import {
   makeSnow, updateSnow, updateParticles, bakeTerrain,
 } from './render.js';
 import { loadAssets } from './sprites.js';
-import { loadWasm } from './wasm-bridge.js';
+import { loadWasm, toggleWasm } from './wasm-bridge.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -536,6 +536,12 @@ function attachInput() {
     if (k === 'm') {
       e.preventDefault();
       document.body.classList.toggle('minimap-hidden');
+    }
+    // Debug: Shift+W toggles wasm hot loops on/off so the player can A/B
+    // compare the perf overlay (ms sim) between Rust and JS paths.
+    if (e.shiftKey && k === 'w') {
+      e.preventDefault();
+      toggleWasm();
     }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

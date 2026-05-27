@@ -91,3 +91,144 @@ pub fn drone_hunt_targets(
     }
     out
 }
+
+/// Apply per-tick AA damage to drones using the saturation rule:
+///   each AA splits its DPS evenly across every enemy drone in range.
+/// Builds a spatial grid of DRONES (vs ground fleets in `drone_hunt_targets`),
+/// then per AA queries the local cell window and accumulates damage.
+///
+/// Inputs: AA positions + owners + radius². Drones positions + owners + hp.
+/// Returns a fresh Vec<f32> of the same length as drone_hp with the post-tick
+/// hp values. JS replaces each drone.hp from the returned array.
+///
+/// Tracers (visual-only) are NOT spawned from Rust — JS can add them back
+/// stochastically with a simpler "per active AA" sweep if it wants the
+/// visual; saving the cross-language calls for the every-frame draw layer.
+#[wasm_bindgen]
+pub fn aa_apply_damage(
+    aa_x: &[f32],
+    aa_y: &[f32],
+    aa_owner: &[u8],
+    drone_x: &[f32],
+    drone_y: &[f32],
+    drone_owner: &[u8],
+    drone_hp: &[f32],
+    aa_radius_sq: f32,
+    aa_dps: f32,
+    dt: f32,
+) -> Vec<f32> {
+    let n = drone_x.len();
+    let mut new_hp = drone_hp.to_vec();
+    if aa_x.is_empty() || n == 0 {
+        return new_hp;
+    }
+
+    // Build drone grid keyed by AA's cell-window search.
+    let mut grid: HashMap<i32, Vec<u32>> = HashMap::with_capacity(n);
+    for j in 0..n {
+        let cx = (drone_x[j] / GRID_CELL).floor() as i32;
+        let cy = (drone_y[j] / GRID_CELL).floor() as i32;
+        grid.entry(cx * 10000 + cy).or_default().push(j as u32);
+    }
+    let range = (aa_radius_sq.sqrt() / GRID_CELL).ceil() as i32;
+    let mut in_range: Vec<u32> = Vec::with_capacity(32);
+
+    for i in 0..aa_x.len() {
+        let owner = aa_owner[i];
+        let ax = aa_x[i];
+        let ay = aa_y[i];
+        let cx0 = (ax / GRID_CELL).floor() as i32;
+        let cy0 = (ay / GRID_CELL).floor() as i32;
+        in_range.clear();
+        for cx in (cx0 - range)..=(cx0 + range) {
+            for cy in (cy0 - range)..=(cy0 + range) {
+                if let Some(bucket) = grid.get(&(cx * 10000 + cy)) {
+                    for &j in bucket {
+                        let ju = j as usize;
+                        if drone_owner[ju] == owner {
+                            continue;
+                        }
+                        let dx = drone_x[ju] - ax;
+                        let dy = drone_y[ju] - ay;
+                        if dx * dx + dy * dy <= aa_radius_sq {
+                            in_range.push(j);
+                        }
+                    }
+                }
+            }
+        }
+        if in_range.is_empty() {
+            continue;
+        }
+        // Saturation: DPS split across all drones currently in this AA's bubble.
+        let dps_per = aa_dps / in_range.len() as f32;
+        let delta = dps_per * dt;
+        for &j in in_range.iter() {
+            new_hp[j as usize] -= delta;
+        }
+    }
+    new_hp
+}
+
+/// Apply per-tick tank damage to ground fleets. Each tank chips at every
+/// enemy fleet inside its range — no saturation split (unlike AA, tanks
+/// do full DPS to every target simultaneously). Returns new units array
+/// aligned with input. JS tests post-tick `units < 0.5` to mark kills.
+#[wasm_bindgen]
+pub fn tank_damage_fleets(
+    tank_x: &[f32],
+    tank_y: &[f32],
+    tank_owner: &[u8],
+    fleet_x: &[f32],
+    fleet_y: &[f32],
+    fleet_owner: &[u8],
+    fleet_units: &[f32],
+    fleet_dead: &[u8],            // 1 = already dead this tick, skip
+    tank_radius_sq: f32,
+    tank_dps_per_tick: f32,       // pre-multiplied: TANK_DPS * 0.6 * dt
+) -> Vec<f32> {
+    let n = fleet_x.len();
+    let mut new_units = fleet_units.to_vec();
+    if tank_x.is_empty() || n == 0 {
+        return new_units;
+    }
+
+    // Build ground-fleet grid (ignoring already-dead ones).
+    let mut grid: HashMap<i32, Vec<u32>> = HashMap::with_capacity(n);
+    for j in 0..n {
+        if fleet_dead[j] != 0 {
+            continue;
+        }
+        let cx = (fleet_x[j] / GRID_CELL).floor() as i32;
+        let cy = (fleet_y[j] / GRID_CELL).floor() as i32;
+        grid.entry(cx * 10000 + cy).or_default().push(j as u32);
+    }
+    let range = (tank_radius_sq.sqrt() / GRID_CELL).ceil() as i32;
+
+    for i in 0..tank_x.len() {
+        let owner = tank_owner[i];
+        let tx = tank_x[i];
+        let ty = tank_y[i];
+        let cx0 = (tx / GRID_CELL).floor() as i32;
+        let cy0 = (ty / GRID_CELL).floor() as i32;
+        for cx in (cx0 - range)..=(cx0 + range) {
+            for cy in (cy0 - range)..=(cy0 + range) {
+                if let Some(bucket) = grid.get(&(cx * 10000 + cy)) {
+                    for &j in bucket {
+                        let ju = j as usize;
+                        if fleet_owner[ju] == owner {
+                            continue;
+                        }
+                        let dx = fleet_x[ju] - tx;
+                        let dy = fleet_y[ju] - ty;
+                        if dx * dx + dy * dy > tank_radius_sq {
+                            continue;
+                        }
+                        new_units[ju] -= tank_dps_per_tick;
+                    }
+                }
+            }
+        }
+    }
+    new_units
+}

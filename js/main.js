@@ -177,13 +177,21 @@ function simulate(dt) {
   state.fleetById.clear();
   state.droneGrid.clear();
   state.groundFleetGrid.clear();
+  state.droneCountByOwner.clear();
   for (const f of state.fleets) {
     state.fleetById.set(f._id, f);
     const fKey = Math.floor(f.x / GRID_CELL) * 10000 + Math.floor(f.y / GRID_CELL);
-    const grid = (f.kind === 'drone') ? state.droneGrid : state.groundFleetGrid;
-    let fBucket = grid.get(fKey);
-    if (!fBucket) { fBucket = []; grid.set(fKey, fBucket); }
-    fBucket.push(f);
+    if (f.kind === 'drone') {
+      let bucket = state.droneGrid.get(fKey);
+      if (!bucket) { bucket = []; state.droneGrid.set(fKey, bucket); }
+      bucket.push(f);
+      // Per-owner active-drone tally for the factory production cap
+      state.droneCountByOwner.set(f.owner, (state.droneCountByOwner.get(f.owner) || 0) + 1);
+    } else {
+      let bucket = state.groundFleetGrid.get(fKey);
+      if (!bucket) { bucket = []; state.groundFleetGrid.set(fKey, bucket); }
+      bucket.push(f);
+    }
   }
 
   // Visual decays only. Unit regen is now LAZY — see world.catchUpRegen.
@@ -235,7 +243,12 @@ function loop() {
   }
 
   if (!state.gameOver) {
-    const subSteps = Math.max(1, Math.ceil(state.timeScale));
+    // Cap sub-steps so 20× timescale doesn't blow the per-frame sim budget.
+    // Above 10 substeps, each step gets a larger dt but movement granularity
+    // is still well under DETOUR_LOOKAHEAD / DRONE_DETECT_R (a fleet moves
+    // ≤ 9 px per sub-step even at speed 20×, so wreck detour + drone hunt
+    // still work). Combat damage is dt-scaled so DPS outcome unchanged.
+    const subSteps = Math.max(1, Math.min(10, Math.ceil(state.timeScale)));
     const subDt = gameDt / subSteps;
     for (let s = 0; s < subSteps; s++) {
       simulate(subDt);

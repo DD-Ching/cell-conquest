@@ -13,7 +13,7 @@
 // =====================================================
 import { state } from './state.js';
 import {
-  DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE,
+  DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE, DRONE_MAX_LIFETIME,
   DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
   DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
 } from './config.js';
@@ -38,6 +38,7 @@ function spawnDrone(originX, originY, owner, target) {
     targetKind: target.kind,            // 'turret' | 'node' | 'fleet'
     targetId:   target.id,
     hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
+    spawnT: state.elapsed,              // for DRONE_MAX_LIFETIME timeout
   });
 }
 
@@ -163,6 +164,9 @@ export function updateDrones(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind !== 'drone') continue;
+    // Lifetime expiry — wandering drones that haven't found a target self-
+    // destruct. Without this, late-game accumulates "lost" drones forever.
+    if (state.elapsed - (f.spawnT || 0) > DRONE_MAX_LIFETIME) f.hp = 0;
     // Shot down by AA
     if (f.hp <= 0) {
       for (let k = 0; k < 6; k++) {

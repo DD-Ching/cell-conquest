@@ -76,6 +76,10 @@ export const state = {
                              //   ground fleets.
   fleetById:      new Map(), // _id -> fleet (alive fleets only — built before
                              //               drone/fleet death cleanups)
+  droneCountByOwner: new Map(), // owner -> # currently airborne drones.
+                             //   Read by factory tick to gate drone spawn at
+                             //   DRONE_CAP_PER_FACTION. Rebuilt per sim tick
+                             //   alongside the other entity buckets.
 
   // Camera / view
   cameraX: 0,

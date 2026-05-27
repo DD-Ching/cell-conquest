@@ -24,6 +24,7 @@ import {
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
   WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
+  DRONE_CAP_PER_FACTION,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
 
@@ -62,6 +63,7 @@ export function resetEngineering() {
   state.fleetById.clear();
   state.droneGrid.clear();
   state.groundFleetGrid.clear();
+  state.droneCountByOwner.clear();
   // Wipe the permanent ground-scorch layer — fresh map for a new game.
   if (state.groundScorchCtx) {
     state.groundScorchCtx.clearRect(0, 0, state.groundScorch.width, state.groundScorch.height);
@@ -485,7 +487,11 @@ export function updateBuildings(dt) {
           if (stockpiling && t.dronesReady < FACTORY_MAX_STOCKPILE) {
             t.dronesReady += 1;
           } else {
-            launchOneDroneFrom(t);
+            // Soft cap: if this faction already has DRONE_CAP_PER_FACTION
+            // drones airborne, skip the launch (cooldown still ticks). Keeps
+            // mid-late game from drowning in thousands of in-flight drones.
+            const live = state.droneCountByOwner.get(t.owner) || 0;
+            if (live < DRONE_CAP_PER_FACTION) launchOneDroneFrom(t);
           }
         }
       }

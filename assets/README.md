@@ -37,3 +37,17 @@ the filenames above. Restart (or just hard-reload) the page.
 ## Hot-reloading
 
 The loader runs once at boot. Reload the page to pick up new files.
+
+## How the loader decides what to fetch
+
+`js/sprites.js` reads `assets/manifest.json` (this folder) and only fetches
+the PNGs listed there. Default ships with `[]` so the game makes ZERO PNG
+requests (no 404 spam in the server log).
+
+When you drop in a sprite, add its name to the manifest:
+
+```json
+["tank", "drone", "turret_aa"]
+```
+
+Then reload. Names must match the `File` column above (without `.png`).

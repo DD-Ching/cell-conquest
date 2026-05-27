@@ -31,13 +31,24 @@ const ASSET_FILES = [
 ];
 
 export function loadAssets() {
-  for (const name of ASSET_FILES) {
-    const img = new Image();
-    Asset[name] = { img, ready: false };
-    img.onload = () => { Asset[name].ready = true; };
-    img.onerror = () => { /* silent — fall back to primitive */ };
-    img.src = `assets/${name}.png`;
-  }
+  // Probe assets/manifest.json first so we don't spam 9 PNG requests at a
+  // user who hasn't dropped sprites in yet. Manifest is a JSON array of
+  // names matching ASSET_FILES; only listed names get an Image() created.
+  // No manifest, no assets — game falls back to programmatic primitives.
+  fetch('assets/manifest.json', { cache: 'no-cache' })
+    .then(r => r.ok ? r.json() : null)
+    .then(list => {
+      if (!Array.isArray(list)) return;
+      for (const name of list) {
+        if (!ASSET_FILES.includes(name)) continue;
+        const img = new Image();
+        Asset[name] = { img, ready: false };
+        img.onload = () => { Asset[name].ready = true; };
+        img.onerror = () => { /* silent — fall back to primitive */ };
+        img.src = `assets/${name}.png`;
+      }
+    })
+    .catch(() => { /* no manifest, no assets — primitives only */ });
 }
 
 /** Blit a sprite, sized to fit in `size` world units. Caller has already

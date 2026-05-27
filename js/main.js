@@ -457,7 +457,11 @@ function attachInput() {
       const thresh = 25 / (state.zoom * state.zoom);
       if (dx * dx + dy * dy > thresh) {
         state.drag.moved = true;
-        if (state.drag.originNode && state.drag.originNode.owner === 'player') state.drag.mode = 'send';
+        // Drag from EITHER a player node OR a Lieutenant node = command-send.
+        // The Lieutenant is conceptually the player's AI; player retains
+        // override authority. Fleet owner remains the source-node owner
+        // (ally1's drag → ally1's fleet → combat behaves the same).
+        if (state.drag.originNode && isAlly(state.drag.originNode.owner, 'player')) state.drag.mode = 'send';
         else if (!state.drag.originNode) state.drag.mode = 'box';
         else state.drag.mode = 'none';
       }
@@ -497,7 +501,9 @@ function attachInput() {
       }
       if (!d.originNode) {
         if (!d.shift && !d.ctrl) state.selectedIds.clear();
-      } else if (d.originNode.owner === 'player') {
+      } else if (isAlly(d.originNode.owner, 'player')) {
+        // Player + Lieutenant nodes are selectable / command-able from the
+        // player's UI (the Lieutenant is the player's AI agent — same side).
         if (d.ctrl) {
           if (state.selectedIds.has(d.originNode.id)) state.selectedIds.delete(d.originNode.id);
           else state.selectedIds.add(d.originNode.id);
@@ -514,17 +520,17 @@ function attachInput() {
       // both the pendingEngineer filter and zoom-aware pick tolerance.
       const targetTurret = turretAt(wx, wy, 'player');
       const sources = state.selectedIds.has(d.originNode.id)
-        ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
+        ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && isAlly(nd.owner, 'player'))
         : [d.originNode];
       if (targetTurret) {
         for (const from of sources) {
-          if (!from || from.owner !== 'player' || from.units < 2) continue;
+          if (!from || !isAlly(from.owner, 'player') || from.units < 2) continue;
           const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
           assaultTurret(from, targetTurret, amt);
         }
       } else if (releaseNode && releaseNode.id !== d.originNode.id) {
         for (const from of sources) {
-          if (!from || from.owner !== 'player' || from.id === releaseNode.id || from.units < 2) continue;
+          if (!from || !isAlly(from.owner, 'player') || from.id === releaseNode.id || from.units < 2) continue;
           const amt = d.shift ? Math.floor(from.units) : Math.floor(from.units / 2);
           sendFleet(from, releaseNode, amt);
         }
@@ -534,7 +540,8 @@ function attachInput() {
       const x1 = Math.min(d.startX, wx), x2 = Math.max(d.startX, wx);
       const y1 = Math.min(d.startY, wy), y2 = Math.max(d.startY, wy);
       for (const nd of state.nodes) {
-        if (nd.owner === 'player' && nd.x >= x1 && nd.x <= x2 && nd.y >= y1 && nd.y <= y2) {
+        // Box-select pulls in both player and Lieutenant nodes (same side).
+        if (isAlly(nd.owner, 'player') && nd.x >= x1 && nd.x <= x2 && nd.y >= y1 && nd.y <= y2) {
           state.selectedIds.add(nd.id);
         }
       }
@@ -544,7 +551,8 @@ function attachInput() {
 
   c.addEventListener('dblclick', () => {
     state.selectedIds.clear();
-    for (const n of state.nodes) if (n.owner === 'player') state.selectedIds.add(n.id);
+    // Double-click selects ALL friendly bases (player + Lieutenant).
+    for (const n of state.nodes) if (isAlly(n.owner, 'player')) state.selectedIds.add(n.id);
   });
 
   c.addEventListener('mouseleave', () => {

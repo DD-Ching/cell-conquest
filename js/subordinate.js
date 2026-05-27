@@ -16,7 +16,10 @@ import { AIS, COLOR, GLOW, FACTIONS, factionStats, hexToRgba } from './factions.
 import { setAlly } from './alliance.js';
 import { buildHUD } from './render-hud.js';
 
-const LIEUTENANT_DEF = { id: 'ally1', name: 'Lieutenant', color: '#e6c062' };
+// Same colour as the player: the Lieutenant is your AI agent, not a separate
+// faction. Visual differentiation between "you-controlled" and "auto-controlled"
+// is the underline on Lieutenant unit-count labels (render-entities.js drawNodes).
+const LIEUTENANT_DEF = { id: 'ally1', name: 'Lieutenant', color: '#5cb3ff' };
 
 /** Idempotent: make sure the lieutenant faction is fully registered in
  *  every live binding. Called from main.newGame after rollFactions, and

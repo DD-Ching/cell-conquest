@@ -94,16 +94,10 @@ export function drawNodes(ctx, zoom, now) {
       ctx.globalAlpha = 1;
     }
 
-    // Lieutenant-managed base — small 🤖 tag above. The faction colour
-    // already does the heavy lifting (ally1 has its own gold/mint hue);
-    // the emoji just makes the AI-controlled status pop.
-    if (n.owner === 'ally1') {
-      const pulse = 0.7 + 0.3 * Math.sin(now / 380 + n.id * 0.4);
-      ctx.fillStyle = `rgba(255, 220, 130, ${pulse})`;
-      ctx.font = `${14 / zoom}px sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText('🤖', n.x, n.y - n.size - 6);
-    }
+    // Lieutenant-managed bases share the player's faction colour (they're
+    // the player's AI agent, not a separate side). The visual difference
+    // between "you-controlled" and "auto-controlled" is the UNDERLINE on
+    // the unit-count label — drawn below alongside the count.
 
     if (state.selectedIds.has(n.id)) {
       ctx.strokeStyle = '#fff';
@@ -164,7 +158,23 @@ export function drawNodes(ctx, zoom, now) {
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(Math.floor(n.units), n.x, n.y);
+    const unitsTxt = String(Math.floor(n.units));
+    ctx.fillText(unitsTxt, n.x, n.y);
+    // Underline = "this base is auto-controlled (Lieutenant AI)" — the same
+    // colour as the label so it reads as a typographic mark, not a separate
+    // shape. Skip on the base layer when drawNodeLabelsOnTop will repaint
+    // (handled there too for the top-layer pass that beats sprites).
+    if (n.owner === 'ally1') {
+      const w = ctx.measureText(unitsTxt).width;
+      const half = w / 2;
+      const uy = n.y + worldFont * 0.45;
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+    }
 
     if (n.engineers > 0) {
       const ex = n.x - n.size - 4;
@@ -433,8 +443,29 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
     // legible when each owner's nodes pop in their own hue.
     ctx.lineWidth = Math.max(2, 3 / zoom);
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.strokeText(Math.floor(n.units), n.x, n.y);
+    const txt = String(Math.floor(n.units));
+    ctx.strokeText(txt, n.x, n.y);
     ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
-    ctx.fillText(Math.floor(n.units), n.x, n.y);
+    ctx.fillText(txt, n.x, n.y);
+    // Auto-control underline for Lieutenant bases (same colour as label so
+    // it reads as a typographic mark). Outline first for legibility against
+    // bright glow / scorch backgrounds, then fill.
+    if (n.owner === 'ally1') {
+      const w = ctx.measureText(txt).width;
+      const half = w / 2;
+      const uy = n.y + worldFont * 0.45;
+      ctx.lineWidth = Math.max(2.4, 3 / zoom);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
+      ctx.beginPath();
+      ctx.moveTo(n.x - half, uy);
+      ctx.lineTo(n.x + half, uy);
+      ctx.stroke();
+    }
   }
 }

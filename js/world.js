@@ -193,7 +193,10 @@ export function adjustHubSizes() {
   }
 }
 
-/** Dijkstra constrained to own territory (final hop may land on any owner). */
+/** Dijkstra constrained to own-or-allied territory (final hop may land on
+ *  any owner). Allied transit lets a player fleet legitimately march A → B
+ *  through Lieutenant-controlled nodes — otherwise the friendly base in the
+ *  middle of the front line acts as a roadblock for its own side. */
 export function findPath(fromId, toId, traveler) {
   const { nodes, adj } = state;
   if (fromId === toId) return [fromId];
@@ -209,7 +212,7 @@ export function findPath(fromId, toId, traveler) {
     if (visited.has(id)) continue;
     visited.add(id);
     for (const nb of adj.get(id)) {
-      if (nb !== toId && nodes[nb].owner !== traveler) continue;
+      if (nb !== toId && !isAlly(nodes[nb].owner, traveler)) continue;
       const w = dist(nodes[id], nodes[nb]);
       const nd = distMap.get(id) + w;
       if (nd < distMap.get(nb)) {

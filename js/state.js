@@ -85,6 +85,17 @@ export const state = {
                              //   Read by factory tick to gate drone spawn at
                              //   DRONE_CAP_PER_FACTION. Rebuilt per sim tick
                              //   alongside the other entity buckets.
+  inboundDronesByTarget: new Map(), // `${kind}:${id}` -> count of drones whose
+                             //   current target is this entity. Stops factories
+                             //   from piling MORE drones on a target that already
+                             //   has overkill in flight ("drone black hole").
+  strippedOwners: new Set(), // owners with zero active production turrets AND
+                             //   tiny total units. Their bases regen-and-die
+                             //   in 1010-oscillation; ground troops will mop
+                             //   them up. Suicide drones must judge these as
+                             //   NOT-worthwhile targets — otherwise A and B's
+                             //   drones funnel into dying C instead of each
+                             //   other. Rebuilt per sim tick.
 
   // Camera / view
   cameraX: 0,

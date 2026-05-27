@@ -46,7 +46,10 @@ function spawnDrone(originX, originY, owner, target) {
 /** Does the drone's stored target still WARRANT a strike?
  *  A "gone" target is one that's: removed (turret destroyed, fleet wiped),
  *  no longer hostile (node captured by an ally of the drone),
- *  or already worthless (node bombed down to ~0 units — another drone got it). */
+ *  already worthless (node bombed down to ~0 units — another drone got it),
+ *  or belongs to a STRIPPED faction (no active production, total units < 60 —
+ *  the dying-and-regenerating black hole). For stripped owners, drones
+ *  retarget to a real threat instead of burning on a 10-unit regen target. */
 function droneTargetExists(drone) {
   if (drone.targetKind === 'turret') return state.turretById.has(drone.targetId);
   if (drone.targetKind === 'node') {
@@ -54,6 +57,7 @@ function droneTargetExists(drone) {
     const n = state.nodes[drone.targetId];
     if (isAlly(n.owner, drone.owner)) return false; // own or allied — no longer hostile
     if (n.units < 1) return false;                  // someone else cleaned it out
+    if (state.strippedOwners.has(n.owner)) return false; // dying faction, not worth a drone
     return true;
   }
   if (drone.targetKind === 'fleet')  return state.fleetById.has(drone.targetId);
@@ -94,6 +98,7 @@ function retargetDrone(drone) {
   if (!best) {
     for (const n of state.nodes) {
       if (isAlly(n.owner, drone.owner) || n.owner === 'neutral') continue;
+      if (state.strippedOwners.has(n.owner)) continue;  // skip dying-faction nodes
       const dx = n.x - drone.x, dy = n.y - drone.y;
       const d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
@@ -374,6 +379,15 @@ function pickDroneTargetsFor(t) {
   const range = Math.ceil(1500 / CELL);
   const cx0 = Math.floor(t.x / CELL);
   const cy0 = Math.floor(t.y / CELL);
+  // Per-target inbound-drone budget. Each drone does DRONE_DAMAGE=50; even
+  // an L1 net intercepts only ~20 drones per kill. 4 drones in flight =
+  // 200 incoming damage, enough to wipe any node or every turret type.
+  // Beyond that we're feeding a "drone black hole": when faction C is
+  // dying, A and B keep dumping drones on C's leftover targets instead
+  // of attacking each other. Cap stops it.
+  const TARGET_DRONE_CAP = 4;
+  const inbound = state.inboundDronesByTarget;
+
   for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
     for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
       const bucket = state.turretGrid.get(cx * 10000 + cy);
@@ -381,6 +395,7 @@ function pickDroneTargetsFor(t) {
       for (const et of bucket) {
         if (isAlly(et.owner, t.owner)) continue;
         if (et.pendingEngineer) continue;     // dirt placeholder, not a real target
+        if ((inbound.get('turret:' + et.id) || 0) >= TARGET_DRONE_CAP) continue;
         const dx = et.x - t.x, dy = et.y - t.y;
         const d2 = dx * dx + dy * dy;
         if (d2 > 1500 * 1500) continue;
@@ -396,6 +411,10 @@ function pickDroneTargetsFor(t) {
   if (cands.length === 0) {
     for (const en of state.nodes) {
       if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
+      // Stripped faction (no production, tiny total units) — the 10↔10 regen
+      // oscillation that ate every drone last build. Ground troops handle it.
+      if (state.strippedOwners.has(en.owner)) continue;
+      if ((inbound.get('node:' + en.id) || 0) >= TARGET_DRONE_CAP) continue;
       const d = dist(t, en);
       const score = 800 / (d + 200);
       cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
@@ -416,15 +435,21 @@ export function launchOneDroneFrom(t) {
 }
 
 /** Resolve a stored salvo target (player or AI) against current state.
- *  Drops it if the entity died / was captured by the salvo owner. */
+ *  Drops it if the entity died / was captured by the salvo owner / belongs
+ *  to a stripped faction (would just funnel into the regen-and-die black
+ *  hole — let the salvo re-pick a real threat). */
 function resolveSalvoTarget(s, salvoOwner) {
   if (!s) return null;
   if (s.kind === 'turret') {
     const t = state.turretById.get(s.id);
-    if (t && !isAlly(t.owner, salvoOwner)) return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+    if (t && !isAlly(t.owner, salvoOwner) && !state.strippedOwners.has(t.owner)) {
+      return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+    }
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];
-    if (n && !isAlly(n.owner, salvoOwner)) return { kind: 'node', id: n.id, x: n.x, y: n.y };
+    if (n && !isAlly(n.owner, salvoOwner) && !state.strippedOwners.has(n.owner)) {
+      return { kind: 'node', id: n.id, x: n.x, y: n.y };
+    }
   }
   return null;
 }

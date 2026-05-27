@@ -183,6 +183,7 @@ function simulate(dt, combatDt = dt) {
   state.droneGrid.clear();
   state.groundFleetGrid.clear();
   state.droneCountByOwner.clear();
+  state.inboundDronesByTarget.clear();
   for (const f of state.fleets) {
     state.fleetById.set(f._id, f);
     const fKey = Math.floor(f.x / GRID_CELL) * 10000 + Math.floor(f.y / GRID_CELL);
@@ -190,12 +191,41 @@ function simulate(dt, combatDt = dt) {
       let bucket = state.droneGrid.get(fKey);
       if (!bucket) { bucket = []; state.droneGrid.set(fKey, bucket); }
       bucket.push(f);
-      // Per-owner active-drone tally for the factory production cap
+      // Per-owner active-drone tally for the factory production cap.
       state.droneCountByOwner.set(f.owner, (state.droneCountByOwner.get(f.owner) || 0) + 1);
+      // Inbound-per-target tally so the target picker can avoid overkill.
+      if (f.targetKind && f.targetId !== undefined) {
+        const tKey = f.targetKind + ':' + f.targetId;
+        state.inboundDronesByTarget.set(tKey, (state.inboundDronesByTarget.get(tKey) || 0) + 1);
+      }
     } else {
       let bucket = state.groundFleetGrid.get(fKey);
       if (!bucket) { bucket = []; state.groundFleetGrid.set(fKey, bucket); }
       bucket.push(f);
+    }
+  }
+
+  // Stripped-owner tally: an owner is "stripped" (no longer worth a suicide
+  // drone strike) when they have ZERO active production turrets AND total
+  // units < 60. Those bases regen-and-die in the 10↔10 oscillation pattern —
+  // dumping drones in is wasted ordnance, ground troops will mop up. The
+  // suicide-drone judgment sites in drones.js consult this set.
+  state.strippedOwners.clear();
+  {
+    const activeTurretsByOwner = new Map();
+    for (const t of state.turrets) {
+      if (!t.active) continue;
+      activeTurretsByOwner.set(t.owner, (activeTurretsByOwner.get(t.owner) || 0) + 1);
+    }
+    const unitsByOwner = new Map();
+    for (const n of state.nodes) {
+      if (n.owner === 'neutral') continue;
+      unitsByOwner.set(n.owner, (unitsByOwner.get(n.owner) || 0) + n.units);
+    }
+    for (const [owner, units] of unitsByOwner) {
+      if ((activeTurretsByOwner.get(owner) || 0) === 0 && units < 60) {
+        state.strippedOwners.add(owner);
+      }
     }
   }
 

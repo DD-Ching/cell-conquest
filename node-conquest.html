@@ -33,6 +33,19 @@
   }
 
   /* ---- Title strip: "MARS FRONT" branding ---- */
+  /* ---- Auto-fade overlay management ----
+     Every overlay panel that isn't actively being interacted with fades to
+     0.3 opacity so the map under it stays readable. Mouse proximity (handled
+     in main.js) bumps individual panels back to 1.0. Tab toggles a global
+     `.hud-hidden` on <body> to wipe the chrome entirely for a clean view. */
+  #title-strip, #hud, #topright, #help, #nn-badge { transition: opacity 0.22s ease-out; }
+  .hud-faded { opacity: 0.28 !important; }
+  body.hud-hidden #title-strip,
+  body.hud-hidden #hud,
+  body.hud-hidden #topright,
+  body.hud-hidden #help,
+  body.hud-hidden #nn-badge,
+  body.hud-hidden #minimap { opacity: 0 !important; pointer-events: none !important; }
   #title-strip { position: fixed; top: 12px; left: 12px; padding: 10px 16px 8px; pointer-events: none; }
   #title-strip .title { font-size: 18px; font-weight: 700; letter-spacing: 0.22em; color: var(--text-base); text-shadow: 0 0 12px rgba(255, 130, 50, 0.25); }
   #title-strip .title .accent { color: var(--accent); margin-left: 4px; }
@@ -84,8 +97,12 @@
   #topright #timer { font-size: 20px; font-weight: 600; letter-spacing: 0.05em; color: var(--text-base); }
   #topright .sub { color: var(--text-dim); font-size: 11px; letter-spacing: 0.06em; margin-top: 2px; }
 
-  /* ---- Bottom help ---- */
+  /* ---- Bottom help (collapsed by default, ? expands) ---- */
   #help { position: fixed; bottom: 12px; left: 12px; font-size: 12px; color: var(--text-faint); line-height: 1.65; pointer-events: none; max-width: 820px; }
+  #help .help-short { color: var(--text-dim); }
+  #help .help-full { display: none; }
+  body.help-open #help .help-short { display: none; }
+  body.help-open #help .help-full { display: block; }
   #help div { margin: 2px 0; }
   #help kbd { background: rgba(30, 16, 8, 0.85); padding: 1px 6px; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent); border: 1px solid rgba(200, 140, 80, 0.3); }
   #help em { color: var(--text-dim); font-style: normal; }
@@ -163,13 +180,16 @@
 <div id="topright"><div id="timer">00:00</div><div id="speed" class="sub">Speed 1×</div><div id="zoom" class="sub">100%</div></div>
 <canvas id="minimap"></canvas>
 <div id="help">
-  <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>
-  <div><kbd>Shift</kbd>+drag = send all units</div>
-  <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan &middot; click minimap to jump</div>
-  <div><kbd>1</kbd>–<kbd>5</kbd> speed (1× / 2× / 5× / 10× / 20×) &middot; <kbd>[</kbd> <kbd>]</kbd> step speed</div>
-  <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
-  <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a turret (Anti-Air / Tank / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
-  <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
+  <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Tab</kbd> to hide HUD</div>
+  <div class="help-full">
+    <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>
+    <div><kbd>Shift</kbd>+drag = send all units</div>
+    <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan &middot; click minimap to jump</div>
+    <div><kbd>1</kbd>–<kbd>5</kbd> speed (1× / 2× / 5× / 10× / 20×) &middot; <kbd>[</kbd> <kbd>]</kbd> step speed</div>
+    <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
+    <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a turret (Anti-Air / Tank / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
+    <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
+  </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
 

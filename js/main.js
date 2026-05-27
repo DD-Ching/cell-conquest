@@ -58,6 +58,9 @@ export function newGame() {
   // strength multiplier. Rebuild the HUD to reflect the new roster.
   rollFactions();
   buildHUD();
+  // Start every overlay panel in the faded state — the map is what matters
+  // right after a (re)start. Mouse-over un-fades each panel individually.
+  updateHudFade(-9999, -9999);
   state.fleets = [];
   state.particles = [];
   state.selectedIds.clear();
@@ -251,6 +254,26 @@ function loop() {
 }
 
 // =====================================================
+// HUD auto-fade — overlay panels dim to 0.3 opacity when the mouse is far,
+// jump back to full when the mouse approaches. Lets the map stay readable
+// while keeping the chrome one mouse-move away. CSS does the transition;
+// this function flips the `.hud-faded` class per panel based on proximity.
+// =====================================================
+const HUD_FADE_IDS = ['title-strip', 'hud', 'topright', 'help', 'nn-badge'];
+const HUD_TRIGGER_PAD = 60;       // px of "near enough" buffer around each panel
+function updateHudFade(mx, my) {
+  for (const id of HUD_FADE_IDS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    const near = mx >= r.left - HUD_TRIGGER_PAD && mx <= r.right + HUD_TRIGGER_PAD &&
+                 my >= r.top  - HUD_TRIGGER_PAD && my <= r.bottom + HUD_TRIGGER_PAD;
+    if (near) el.classList.remove('hud-faded');
+    else      el.classList.add('hud-faded');
+  }
+}
+
+// =====================================================
 // Input handlers
 // =====================================================
 function attachInput() {
@@ -310,6 +333,7 @@ function attachInput() {
 
   c.addEventListener('mousemove', e => {
     state.mouseScreen = { x: e.clientX, y: e.clientY };
+    updateHudFade(e.clientX, e.clientY);
     if (state.middlePan) {
       state.cameraX = state.middlePan.startCamX - (e.clientX - state.middlePan.startSX) / state.zoom;
       state.cameraY = state.middlePan.startCamY - (e.clientY - state.middlePan.startSY) / state.zoom;
@@ -464,6 +488,11 @@ function attachInput() {
     if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
     if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; state.painting = null; }
     if (k === 'r') newGame();
+    // HUD management: Tab fully hides the chrome (battle-only view); ? (or /)
+    // toggles the expanded controls reference. Both keep the canvas clean
+    // when the player needs the area under a panel.
+    if (e.key === 'Tab')  { e.preventDefault(); document.body.classList.toggle('hud-hidden'); }
+    if (e.key === '?' || e.key === '/') { e.preventDefault(); document.body.classList.toggle('help-open'); }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
     if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);

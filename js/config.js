@@ -4,11 +4,15 @@
 // =====================================================
 
 // ---- World ----
-// Larger Mars arena so 2-5 factions have room to maneuver.
-export const WORLD_W = 2400;
-export const WORLD_H = 1800;
-export const N_NODES_MIN = 18;
-export const N_NODES_MAX = 28;
+// Big Mars theatre — 2× linear (4× area) of the original 2400×1800 arena.
+// Spatial grids and LOD render handle the entity-density bump; expect the
+// player to use lower zoom levels for strategic overview and the minimap
+// for fast traversal. Unit speeds intentionally kept the same so the bigger
+// map FEELS bigger (cross-map troop travel ~50 s instead of ~25 s).
+export const WORLD_W = 4800;
+export const WORLD_H = 3600;
+export const N_NODES_MIN = 40;
+export const N_NODES_MAX = 60;
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec

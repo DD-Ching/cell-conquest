@@ -151,7 +151,7 @@ function endGame(win, sub) {
 // =====================================================
 // Main loop
 // =====================================================
-function simulate(dt) {
+function simulate(dt, combatDt = dt) {
   // Refresh id-lookup caches once per tick — every downstream system can do
   // O(1) state.turretById.get(id) / state.fleetById.get(id) instead of an
   // O(N) array.find. (Splices during this tick may leave deleted entries
@@ -205,10 +205,16 @@ function simulate(dt) {
     if (n.flash > 0) n.flash -= dt * 2.5;
   }
   updateBuildings(dt);
-  updateAntiAir(dt);
-  updateTanks(dt);
-  updateArtillery(dt);
-  updateShells(dt);
+  // Combat phases gate on combatDt: when the caller passes 0 we skip the
+  // whole damage pass for this sub-step. Movement / production / drone
+  // updates still run every sub-step so the world doesn't visually stutter.
+  // DPS × dt is preserved because the active combat ticks use a doubled dt.
+  if (combatDt > 0) {
+    updateAntiAir(combatDt);
+    updateTanks(combatDt);
+    updateArtillery(combatDt);
+    updateShells(combatDt);
+  }
   updateDrones(dt);
   simulateFleets(dt);
 }
@@ -251,8 +257,13 @@ function loop() {
     // still work). Combat damage is dt-scaled so DPS outcome unchanged.
     const subSteps = Math.max(1, Math.min(10, Math.ceil(state.timeScale)));
     const subDt = gameDt / subSteps;
+    // Combat decimation at high time-scale: damage passes run every Nth
+    // sub-step with N×dt, while movement / production / drone updates still
+    // run every step. Same DPS × game-time, ~half the combat work at 10×+.
+    const combatDecimate = subSteps >= 4 ? 2 : 1;
     for (let s = 0; s < subSteps; s++) {
-      simulate(subDt);
+      const runCombat = (s % combatDecimate === 0);
+      simulate(subDt, runCombat ? subDt * combatDecimate : 0);
       for (const ai of AIS) aiTick(ai, subDt);
       updateParticles(subDt);
       updateTracers(subDt);

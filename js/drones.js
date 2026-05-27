@@ -62,12 +62,33 @@ function droneTargetExists(drone) {
 /** Find the closest enemy entity for `drone` to switch to. Returns true if found. */
 function retargetDrone(drone) {
   let best = null, bestD2 = Infinity;
-  for (const t of state.turrets) {
-    if (t.owner === drone.owner) continue;
-    if (t.pendingEngineer) continue;     // dirt placeholder — engineer not arrived
-    const dx = t.x - drone.x, dy = t.y - drone.y;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) { bestD2 = d2; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
+  // Spiral outward via the grid: start with the drone's cell and expand until
+  // we find a turret in a non-empty cell, then verify it's the closest within
+  // that cell. For big maps this beats scanning every turret.
+  // (Simpler implementation: just check progressively larger windows.)
+  const CELL = 250;
+  const cx0 = Math.floor(drone.x / CELL);
+  const cy0 = Math.floor(drone.y / CELL);
+  for (let range = 0; range <= 12 && best === null; range++) {
+    for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
+      for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+        // Only check the ring at distance `range` (skip already-checked inner cells)
+        if (range > 0 && Math.abs(cx - cx0) !== range && Math.abs(cy - cy0) !== range) continue;
+        const bucket = state.turretGrid.get(cx * 10000 + cy);
+        if (!bucket) continue;
+        for (const t of bucket) {
+          if (t.owner === drone.owner) continue;
+          if (t.pendingEngineer) continue;
+          const dx = t.x - drone.x, dy = t.y - drone.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestD2) { bestD2 = d2; best = { kind: 'turret', id: t.id, x: t.x, y: t.y }; }
+        }
+      }
+    }
+    // Confirm: any turret in next ring could still be closer than `best`?
+    // Closest possible point in next ring is `range*CELL` away. If best is
+    // already closer than that, we're done.
+    if (best && Math.sqrt(bestD2) < range * CELL) break;
   }
   if (!best) {
     for (const n of state.nodes) {
@@ -136,17 +157,8 @@ export function updateDrones(dt) {
   // state.fleetById is built once per tick in simulate() — reuse it for
   // O(1) "give me fleet X" lookups (the hottest part of this function).
   const fleetById = state.fleetById;
-
-  // Pre-bucket ground fleets (everything that's not a drone). Each drone's
-  // hunt scan would otherwise iterate state.fleets and filter — at 30 drones ×
-  // 50 fleets × 1200 sub-ticks/sec the inner skip adds up. Bucketing once per
-  // tick lets each drone scan only the relevant ~20 entries.
-  const groundFleets = [];
-  for (const g of state.fleets) {
-    if (g.kind === 'drone') continue;
-    if (!g.path || g.segIdx >= g.path.length - 1) continue;
-    groundFleets.push(g);
-  }
+  const CELL = 250;
+  const huntRange = Math.ceil(Math.sqrt(DRONE_DETECT_R2) / CELL);
 
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
@@ -165,14 +177,24 @@ export function updateDrones(dt) {
     }
 
     // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
-    // Squared-distance comparison avoids sqrt — this is the hottest inner loop.
+    // Spatial-grid query touches a few cells around the drone instead of every
+    // ground fleet on the map. This is the hottest inner loop in the file.
     let huntFleet = null, huntD2 = DRONE_DETECT_R2;
-    for (const g of groundFleets) {
-      if (g.owner === f.owner) continue;
-      if (g._dead) continue;          // killed by another drone earlier this tick
-      const dx = g.x - f.x, dy = g.y - f.y;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }
+    const cx0 = Math.floor(f.x / CELL);
+    const cy0 = Math.floor(f.y / CELL);
+    for (let cx = cx0 - huntRange; cx <= cx0 + huntRange; cx++) {
+      for (let cy = cy0 - huntRange; cy <= cy0 + huntRange; cy++) {
+        const bucket = state.groundFleetGrid.get(cx * 10000 + cy);
+        if (!bucket) continue;
+        for (const g of bucket) {
+          if (g.owner === f.owner) continue;
+          if (g._dead) continue;          // killed earlier this tick
+          if (!g.path || g.segIdx >= g.path.length - 1) continue;
+          const dx = g.x - f.x, dy = g.y - f.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }
+        }
+      }
     }
 
     // Target maintenance

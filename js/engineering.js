@@ -58,7 +58,10 @@ export function resetEngineering() {
   state.turretById.clear();
   state.turretsByOwner.clear();
   state.turretsByType.clear();
+  state.turretGrid.clear();
   state.fleetById.clear();
+  state.droneGrid.clear();
+  state.groundFleetGrid.clear();
   // Wipe the permanent ground-scorch layer — fresh map for a new game.
   if (state.groundScorchCtx) {
     state.groundScorchCtx.clearRect(0, 0, state.groundScorch.width, state.groundScorch.height);

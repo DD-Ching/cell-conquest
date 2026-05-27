@@ -62,6 +62,18 @@ export const state = {
                              //   turret[]. Combat firing loops iterate only the
                              //   right type instead of scanning all turrets per
                              //   sim sub-tick (60×subSteps Hz at high time-scale).
+  turretGrid:     new Map(), // (cellX*10000 + cellY) -> turret[] — uniform 250-px
+                             //   spatial grid. Lets "every turret near (x,y)
+                             //   within R" queries (tank siege, artillery AOE,
+                             //   drone retarget) check ~9 cells instead of all
+                             //   turrets. Cell size chosen so a TANK_RADIUS=240
+                             //   query touches a 3×3 cell window.
+  droneGrid:        new Map(), // cellKey -> drone fleet[] — same 250-px grid.
+                             //   Rebuilt at sim-tick top because fleets move.
+                             //   AA fire scans only the cells near each AA.
+  groundFleetGrid:  new Map(), // cellKey -> ground fleet[] — drone hunt + tank
+                             //   damage queries use this to skip out-of-range
+                             //   ground fleets.
   fleetById:      new Map(), // _id -> fleet (alive fleets only — built before
                              //               drone/fleet death cleanups)
 

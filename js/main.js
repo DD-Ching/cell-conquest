@@ -156,6 +156,8 @@ function simulate(dt) {
   state.turretById.clear();
   state.turretsByOwner.clear();
   state.turretsByType.clear();
+  state.turretGrid.clear();
+  const GRID_CELL = 250;
   for (const t of state.turrets) {
     state.turretById.set(t.id, t);
     let oBucket = state.turretsByOwner.get(t.owner);
@@ -164,9 +166,22 @@ function simulate(dt) {
     let tBucket = state.turretsByType.get(t.type);
     if (!tBucket) { tBucket = []; state.turretsByType.set(t.type, tBucket); }
     tBucket.push(t);
+    const gKey = Math.floor(t.x / GRID_CELL) * 10000 + Math.floor(t.y / GRID_CELL);
+    let gBucket = state.turretGrid.get(gKey);
+    if (!gBucket) { gBucket = []; state.turretGrid.set(gKey, gBucket); }
+    gBucket.push(t);
   }
   state.fleetById.clear();
-  for (const f of state.fleets)  state.fleetById.set(f._id, f);
+  state.droneGrid.clear();
+  state.groundFleetGrid.clear();
+  for (const f of state.fleets) {
+    state.fleetById.set(f._id, f);
+    const fKey = Math.floor(f.x / GRID_CELL) * 10000 + Math.floor(f.y / GRID_CELL);
+    const grid = (f.kind === 'drone') ? state.droneGrid : state.groundFleetGrid;
+    let fBucket = grid.get(fKey);
+    if (!fBucket) { fBucket = []; grid.set(fKey, fBucket); }
+    fBucket.push(f);
+  }
 
   // Regen + visual decays
   for (const n of state.nodes) {

@@ -23,6 +23,24 @@ const TANK_R2        = TANK_RADIUS * TANK_RADIUS;
 const ARTILLERY_R2   = ARTILLERY_RANGE * ARTILLERY_RANGE;
 const ARTILLERY_AOE2 = ARTILLERY_AOE * ARTILLERY_AOE;
 
+// Spatial-grid cell size — matches the build in main.js simulate().
+const GRID_CELL = 250;
+
+/** Iterate every turret in `state.turretGrid` within R of (x,y) and call
+ *  `fn(t)`. Touches a (2*range+1)² cell window — for TANK_RADIUS that's
+ *  9 cells, vs scanning the whole state.turrets array. */
+function forTurretsNear(x, y, R, fn) {
+  const range = Math.ceil(R / GRID_CELL);
+  const cx0 = Math.floor(x / GRID_CELL);
+  const cy0 = Math.floor(y / GRID_CELL);
+  for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
+    for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+      const bucket = state.turretGrid.get(cx * 10000 + cy);
+      if (bucket) for (const t of bucket) fn(t);
+    }
+  }
+}
+
 // ---- Anti-air with saturation ----
 // Each AA splits its DPS across every enemy drone currently in its range.
 // One drone in range = full AA_DPS; ten drones = AA_DPS / 10 each. So massed
@@ -31,18 +49,24 @@ export function updateAntiAir(dt) {
   const totalTracerRate = 5;   // total beams/sec per AA (split across targets)
   const aaTurrets = state.turretsByType.get('antiair');
   if (!aaTurrets) return;
-  // Pre-bucket all live drones once — every AA otherwise re-filters state.fleets
-  // by kind === 'drone' per call. AA tick runs every sub-step (1200 Hz at 20×).
-  const drones = [];
-  for (const f of state.fleets) if (f.kind === 'drone') drones.push(f);
-  if (drones.length === 0) return;
+  // Spatial-grid query: AA_RADIUS = 200 → 3×3 cell window centered on AA.
+  // Lets the inner check ignore drones that aren't even near this turret.
+  const aaRange = Math.ceil(AA_RADIUS / GRID_CELL);
   for (const t of aaTurrets) {
     if (!t.active) continue;
     const inRange = [];
-    for (const f of drones) {
-      if (f.owner === t.owner) continue;
-      const dx = f.x - t.x, dy = f.y - t.y;
-      if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
+    const cx0 = Math.floor(t.x / GRID_CELL);
+    const cy0 = Math.floor(t.y / GRID_CELL);
+    for (let cx = cx0 - aaRange; cx <= cx0 + aaRange; cx++) {
+      for (let cy = cy0 - aaRange; cy <= cy0 + aaRange; cy++) {
+        const bucket = state.droneGrid.get(cx * 10000 + cy);
+        if (!bucket) continue;
+        for (const f of bucket) {
+          if (f.owner === t.owner) continue;
+          const dx = f.x - t.x, dy = f.y - t.y;
+          if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
+        }
+      }
     }
     if (inRange.length === 0) continue;
     const dpsPerTarget = AA_DPS / inRange.length;
@@ -89,12 +113,13 @@ export function updateTanks(dt) {
         });
       }
     }
-    // Siege: slow chip damage to enemy turrets within range
-    for (const o of state.turrets) {
-      if (o.owner === t.owner) continue;
-      if (o.pendingEngineer) continue;     // dirt placeholder, not real yet
+    // Siege: slow chip damage to enemy turrets within range. Grid lookup
+    // touches a 3×3 cell window instead of scanning every turret.
+    forTurretsNear(t.x, t.y, TANK_RADIUS, (o) => {
+      if (o.owner === t.owner) return;
+      if (o.pendingEngineer) return;       // dirt placeholder, not real yet
       const dx = o.x - t.x, dy = o.y - t.y;
-      if (dx * dx + dy * dy > TANK_R2) continue;
+      if (dx * dx + dy * dy > TANK_R2) return;
       o.hp -= TANK_DPS * 0.7 * dt;
       if (Math.random() < tracerRate * 0.4 * dt) {
         state.tracers.push({
@@ -102,7 +127,7 @@ export function updateTanks(dt) {
           age: 0, maxAge: 0.22, color: COLOR[t.owner],
         });
       }
-    }
+    });
   }
 }
 
@@ -125,13 +150,15 @@ export function updateArtillery(dt) {
 
 function fireArtilleryShell(t) {
   const cands = [];
-  for (const e of state.turrets) {
-    if (e.owner === t.owner) continue;
-    if (e.pendingEngineer) continue;        // dirt placeholder, not a real target
+  // Grid query saves scanning out-of-range turrets — ARTILLERY_RANGE 420 px
+  // means a 4×4 cell window vs the whole turret array.
+  forTurretsNear(t.x, t.y, ARTILLERY_RANGE, (e) => {
+    if (e.owner === t.owner) return;
+    if (e.pendingEngineer) return;          // dirt placeholder, not a real target
     const dx = e.x - t.x, dy = e.y - t.y;
-    if (dx * dx + dy * dy > ARTILLERY_R2) continue;
+    if (dx * dx + dy * dy > ARTILLERY_R2) return;
     cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
-  }
+  });
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (f.owner === t.owner) continue;
@@ -178,12 +205,13 @@ export function updateShells(dt) {
 
 /** AOE damage at (x, y) — hits enemy turrets and ground fleets within ARTILLERY_AOE. */
 function detonateArtillery(x, y, owner) {
-  for (const t of state.turrets) {
-    if (t.owner === owner) continue;
-    if (t.pendingEngineer) continue;        // nothing to destroy yet
+  // Grid query — AOE radius is small (~42 px) so only 1 cell typically touched.
+  forTurretsNear(x, y, ARTILLERY_AOE, (t) => {
+    if (t.owner === owner) return;
+    if (t.pendingEngineer) return;          // nothing to destroy yet
     const dx = t.x - x, dy = t.y - y;
     if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
-  }
+  });
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (f.owner === owner) continue;

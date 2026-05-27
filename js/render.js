@@ -149,9 +149,11 @@ function drawBackground(ctx, W, H) {
 
 // ---- World-space ground terrain (sand patches, craters, rocks) ----
 function drawTerrain(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   // Big soft sand patches first
   for (const t of state.terrain) {
     if (t.kind !== 'patch') continue;
+    if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
     const g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r);
     const inner = Math.floor(80 * t.shade);
     g.addColorStop(0, `rgba(${inner + 30}, ${Math.floor(inner * 0.55)}, ${Math.floor(inner * 0.30)}, 0.22)`);
@@ -164,6 +166,7 @@ function drawTerrain(ctx, zoom) {
   // Then craters (slightly raised dark rim + darker inside)
   for (const t of state.terrain) {
     if (t.kind !== 'crater') continue;
+    if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
     ctx.fillStyle = 'rgba(20, 10, 5, 0.45)';
     ctx.beginPath();
     ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
@@ -175,6 +178,7 @@ function drawTerrain(ctx, zoom) {
   // Then rocks (small dark dots, slight highlight)
   for (const t of state.terrain) {
     if (t.kind !== 'rock') continue;
+    if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
     ctx.fillStyle = `rgba(${Math.floor(30 * t.shade)}, ${Math.floor(18 * t.shade)}, ${Math.floor(10 * t.shade)}, 0.8)`;
     ctx.beginPath();
     ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
@@ -192,7 +196,9 @@ function drawScorches(ctx, zoom, now) {
   if (state.groundScorch) {
     ctx.drawImage(state.groundScorch, 0, 0, WORLD_W, WORLD_H);
   }
+  const { vL, vT, vR, vB } = state._view;
   for (const s of state.scorches) {
+    if (s.x + s.r < vL || s.x - s.r > vR || s.y + s.r < vT || s.y - s.r > vB) continue;
     // Constant-alpha smudge — same gradient as the baked version so the
     // active→baked handoff is pixel-identical (no visual pop).
     ctx.save();
@@ -235,8 +241,12 @@ function drawWorldBoundary(ctx, zoom) {
 
 // ---- Roads (TD-style path with sand-tint blockage readout) ----
 function drawRoads(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
+    // Segment-AABB cull
+    if (Math.max(a.x, b.x) < vL || Math.min(a.x, b.x) > vR ||
+        Math.max(a.y, b.y) < vT || Math.min(a.y, b.y) > vB) continue;
     const e = getEdge(r.a, r.b);
     // Tint derived purely from pile count — visual readout of congestion,
     // not a speed multiplier (slowdown comes from physical detour).
@@ -246,7 +256,12 @@ function drawRoads(ctx, zoom) {
 
 // ---- Wreck piles (physical debris fleets must steer around) ----
 function drawWreckPiles(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   for (const r of state.roads) {
+    const a = state.nodes[r.a], b = state.nodes[r.b];
+    // Edge-AABB cull on the parent road — wrecks live on the segment
+    if (Math.max(a.x, b.x) < vL || Math.min(a.x, b.x) > vR ||
+        Math.max(a.y, b.y) < vT || Math.min(a.y, b.y) > vB) continue;
     const e = getEdge(r.a, r.b);
     if (!e || !e.wrecks || e.wrecks.length === 0) continue;
     for (const w of e.wrecks) {
@@ -321,7 +336,13 @@ function drawNets(ctx, zoom) {
 
 // ---- Artillery shells in flight (parabolic arc + impact-warning ring) ----
 function drawShells(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   for (const s of state.shells) {
+    // Segment-AABB cull: skip if both endpoints are wholly to one side of view.
+    // Impact ring at (x2,y2) needs ARTILLERY_AOE margin.
+    const aoe = ARTILLERY_AOE;
+    if (Math.max(s.x1, s.x2 + aoe) < vL || Math.min(s.x1, s.x2 - aoe) > vR ||
+        Math.max(s.y1, s.y2 + aoe) < vT || Math.min(s.y1, s.y2 - aoe) > vB) continue;
     const p = Math.min(1, s.t / s.maxT);
     const lx = s.x1 + (s.x2 - s.x1) * p;
     const ly = s.y1 + (s.y2 - s.y1) * p - 50 * Math.sin(p * Math.PI);
@@ -348,7 +369,10 @@ function drawShells(ctx, zoom) {
 
 // ---- AA tracer beams (drawn before nodes/turrets so beams pass behind icons) ----
 function drawTracers(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   for (const t of state.tracers) {
+    if (Math.max(t.x1, t.x2) < vL || Math.min(t.x1, t.x2) > vR ||
+        Math.max(t.y1, t.y2) < vT || Math.min(t.y1, t.y2) > vB) continue;
     const a = 1 - t.age / t.maxAge;
     ctx.strokeStyle = t.color;
     ctx.globalAlpha = a * 0.85;
@@ -395,7 +419,11 @@ function drawRangeRings(ctx, zoom) {
 
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
 function drawNodes(ctx, zoom, now) {
+  const { vL, vT, vR, vB } = state._view;
   for (const n of state.nodes) {
+    // Nodes have a 2.4× glow halo around them — cull with that margin.
+    const halo = n.size * 2.4;
+    if (n.x + halo < vL || n.x - halo > vR || n.y + halo < vT || n.y - halo > vB) continue;
     const degree = state.adj.get(n.id)?.size || 0;
 
     // Outer glow halo
@@ -507,21 +535,35 @@ function drawNodes(ctx, zoom, now) {
 
 // ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----
 function drawTurrets(ctx, zoom, now) {
+  const { vL, vT, vR, vB } = state._view;
   for (const t of state.turrets) {
+    // Sprites span ~35 px from pivot; skip if outside view + margin.
+    if (t.x + 35 < vL || t.x - 35 > vR || t.y + 35 < vT || t.y - 35 > vB) continue;
     // Pending sites (engineer en route) render as ghost placeholders — visual
     // mirror of the gameplay rule that they're not yet attackable.
     if (t.pendingEngineer) ctx.globalAlpha = 0.35;
     if (t.type === 'antiair') {
       drawAATurret(ctx, t.x, t.y, t.owner, t.active, zoom, now);
     } else if (t.type === 'tank') {
-      // Aim at nearest enemy fleet (visual flavor; firing is omnidirectional)
-      let aimAngle = 0, aimD = Infinity;
-      for (const f of state.fleets) {
-        if (f.owner === t.owner) continue;
-        if (f.kind === 'drone') continue;
-        const d = Math.hypot(f.x - t.x, f.y - t.y);
-        if (d < aimD) { aimD = d; aimAngle = Math.atan2(f.y - t.y, f.x - t.x); }
+      // Aim at nearest enemy ground fleet. Spatial-grid query — 3×3 cell
+      // window around the tank instead of scanning every fleet on the map.
+      let aimAngle = t.aimAngle || 0, aimD2 = Infinity;
+      const CELL = 250;
+      const cx0 = Math.floor(t.x / CELL);
+      const cy0 = Math.floor(t.y / CELL);
+      for (let cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+        for (let cy = cy0 - 1; cy <= cy0 + 1; cy++) {
+          const bucket = state.groundFleetGrid.get(cx * 10000 + cy);
+          if (!bucket) continue;
+          for (const f of bucket) {
+            if (f.owner === t.owner) continue;
+            const dx = f.x - t.x, dy = f.y - t.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < aimD2) { aimD2 = d2; aimAngle = Math.atan2(dy, dx); }
+          }
+        }
       }
+      t.aimAngle = aimAngle;
       drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle);
     } else if (t.type === 'factory') {
       drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
@@ -537,13 +579,26 @@ function drawTurrets(ctx, zoom, now) {
         ctx.fillText(t.dronesReady, t.x + 21, t.y - 24);
       }
     } else if (t.type === 'artillery') {
-      // Aim toward nearest enemy turret (rough — just nearest)
-      let aimAngle = 0, aimD = Infinity;
-      for (const e of state.turrets) {
-        if (e.owner === t.owner) continue;
-        const d = Math.hypot(e.x - t.x, e.y - t.y);
-        if (d < aimD) { aimD = d; aimAngle = Math.atan2(e.y - t.y, e.x - t.x); }
+      // Aim toward nearest enemy turret via spatial grid. Artillery range
+      // is 420 px → 2-cell window. Falls back to last known aim if no enemy
+      // turret is anywhere near it.
+      let aimAngle = t.aimAngle || 0, aimD2 = Infinity;
+      const CELL = 250;
+      const cx0 = Math.floor(t.x / CELL);
+      const cy0 = Math.floor(t.y / CELL);
+      for (let cx = cx0 - 2; cx <= cx0 + 2; cx++) {
+        for (let cy = cy0 - 2; cy <= cy0 + 2; cy++) {
+          const bucket = state.turretGrid.get(cx * 10000 + cy);
+          if (!bucket) continue;
+          for (const e of bucket) {
+            if (e.owner === t.owner) continue;
+            const dx = e.x - t.x, dy = e.y - t.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < aimD2) { aimD2 = d2; aimAngle = Math.atan2(dy, dx); }
+          }
+        }
       }
+      t.aimAngle = aimAngle;
       // Recent-fire flash: cooldown just reset → recoil kick
       const flash = (t.artyCooldown !== undefined && t.artyCooldown > ARTILLERY_INTERVAL - 0.25)
         ? (t.artyCooldown - (ARTILLERY_INTERVAL - 0.25)) / 0.25
@@ -632,8 +687,12 @@ function drawTroopFleets(ctx, zoom) {
   const COLUMN_MAX = 8;
   const PER_VEH = 5;
   const GAP = 13;       // px between adjacent vehicles along the column
+  const { vL, vT, vR, vB } = state._view;
+  // Column trails up to ~COLUMN_MAX*GAP ≈ 100 px back from the leader,
+  // plus sprite half-width. 120 px margin catches partial-visible columns.
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
+    if (f.x + 120 < vL || f.x - 120 > vR || f.y + 120 < vT || f.y - 120 > vB) continue;
     let angle = 0;
     if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
       angle = Math.atan2(f.finalY - f.y, f.finalX - f.x);
@@ -679,8 +738,10 @@ function drawTroopFleets(ctx, zoom) {
 
 // ---- Drones (delta-wing sprite + HP bar when damaged) ----
 function drawDroneFleets(ctx, zoom, now) {
+  const { vL, vT, vR, vB } = state._view;
   for (const f of state.fleets) {
     if (f.kind !== 'drone') continue;
+    if (f.x + 35 < vL || f.x - 35 > vR || f.y + 35 < vT || f.y - 35 > vB) continue;
     const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
     drawDroneSprite(ctx, f.x, f.y, angle, f.owner, zoom, now);
     if (f.hp < DRONE_HP_AIR) {
@@ -695,7 +756,9 @@ function drawDroneFleets(ctx, zoom, now) {
 
 // ---- Particles (life-based alpha fade) ----
 function drawParticles(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
   for (const p of state.particles) {
+    if (p.x < vL || p.x > vR || p.y < vT || p.y > vB) continue;
     const a = p.life / p.maxLife;
     ctx.globalAlpha = a;
     ctx.fillStyle = p.color;
@@ -771,6 +834,16 @@ function drawHoldFireBanner(ctx, W, now) {
 export function render() {
   const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
   const now = performance.now();
+
+  // Frustum bounds in WORLD space — every layer culls entities outside this
+  // box before drawing. A generous margin (200 px) handles sprites whose
+  // pivot is just off-screen but whose body still leaks into view.
+  const vM = 200;
+  const vL = state.cameraX - vM;
+  const vT = state.cameraY - vM;
+  const vR = state.cameraX + W / zoom + vM;
+  const vB = state.cameraY + H / zoom + vM;
+  state._view = { vL, vT, vR, vB };
 
   // Screen-space background (no world transform)
   drawBackground(ctx, W, H);

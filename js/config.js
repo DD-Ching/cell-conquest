@@ -4,22 +4,23 @@
 // =====================================================
 
 // ---- World ----
-// Big Mars theatre — 2× linear (4× area) of the original 2400×1800 arena.
-// Spatial grids and LOD render handle the entity-density bump; expect the
-// player to use lower zoom levels for strategic overview and the minimap
-// for fast traversal. Unit speeds intentionally kept the same so the bigger
-// map FEELS bigger (cross-map troop travel ~50 s instead of ~25 s).
-export const WORLD_W = 4800;
-export const WORLD_H = 3600;
-export const N_NODES_MIN = 40;
-export const N_NODES_MAX = 60;
+// Massive Mars theatre — 5× linear (25× area) of the original 2400×1800
+// arena. ~150-200 nodes, 90-minute games. Unit speeds intentionally kept
+// the same so the bigger map FEELS bigger (cross-map troop travel ~2 min).
+// Camera ZOOM_MIN dropped so the player can fit the whole world in view
+// for strategic overview, and PAN_SPEED bumped so WASD traversal isn't
+// glacial across the bigger canvas.
+export const WORLD_W = 12000;
+export const WORLD_H = 9000;
+export const N_NODES_MIN = 150;
+export const N_NODES_MAX = 200;
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec
-export const PAN_SPEED = 800;           // camera key-pan speed
-export const EDGE_PAN_SPEED = 650;      // edge-of-screen pan speed
+export const PAN_SPEED = 1800;          // camera key-pan speed (bumped for big map)
+export const EDGE_PAN_SPEED = 1400;     // edge-of-screen pan speed
 export const EDGE_PAN_MARGIN = 28;
-export const ZOOM_MIN = 0.4;
+export const ZOOM_MIN = 0.1;            // allows whole-world overview (1920×1000 canvas / 12000×9000 world ≈ 0.11 fit)
 export const ZOOM_MAX = 2.2;
 
 // ---- Time / speed presets ----

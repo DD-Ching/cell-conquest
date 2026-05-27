@@ -9,7 +9,11 @@ import { dist, pointToSegment } from './util.js';
 const NODE_MARGIN = 100;
 const BASE_GAP    = 80;
 const N_TARGET    = (W, H) => Math.min(N_NODES_MAX, Math.max(N_NODES_MIN, Math.floor((W * H) / 130000)));
-const ROAD_MAX    = 320;
+// ROAD_MAX must scale with map area, otherwise nodes spread out on a big
+// map don't find neighbors within range and we end up with a forest of
+// disconnected components. Heuristic: average inter-node distance is
+// roughly √(area / N), so allow ~1.4× that as the road-search radius.
+const ROAD_MAX    = (W, H, N) => Math.max(320, Math.ceil(Math.sqrt((W * H) / N) * 1.4));
 const ROAD_K      = 3;
 
 function pickSize(rng) {
@@ -50,7 +54,10 @@ export function placeNodes(rng = Math.random) {
   const N = N_TARGET(WORLD_W, WORLD_H);
   state.nodes = [];
   let attempts = 0;
-  while (state.nodes.length < N && attempts < 14000) {
+  // Scale the attempts ceiling with the target count — at 200 nodes the old
+  // 14000 cap could exit before placing them all on the bigger map.
+  const ATTEMPT_CAP = Math.max(14000, N * 300);
+  while (state.nodes.length < N && attempts < ATTEMPT_CAP) {
     attempts++;
     const size = pickSize(rng);
     const x = NODE_MARGIN + rng() * (WORLD_W - NODE_MARGIN * 2);
@@ -80,13 +87,14 @@ export function buildRoads() {
   state.roads = [];
   state.adj = new Map();
   for (const n of nodes) state.adj.set(n.id, new Set());
+  const roadMax = ROAD_MAX(WORLD_W, WORLD_H, nodes.length);
 
-  // k-NN edges within ROAD_MAX
+  // k-NN edges within roadMax
   for (const n of nodes) {
     const others = nodes
       .filter(m => m.id !== n.id)
       .map(m => ({ id: m.id, d: dist(n, m) }))
-      .filter(x => x.d <= ROAD_MAX)
+      .filter(x => x.d <= roadMax)
       .sort((a, b) => a.d - b.d)
       .slice(0, ROAD_K);
     for (const o of others) {

@@ -350,7 +350,11 @@ export function updateTracers(dt) {
 // NEVER queried by AI, pathing, or collision: pure visual texture.
 // =====================================================
 const MAX_ACTIVE_SCORCHES = 80;
-const GROUND_SCORCH_SCALE = 0.5;       // half-resolution offscreen → ~4 MB
+// Scale lowered for the 12000×9000 world — at 0.5 the offscreen canvas
+// would be 6000×4500 = 108 MB. 0.2 keeps it at 2400×1800 ≈ 17 MB which is
+// still fine on desktop. Baked scorches lose a bit of fine detail (1 baked
+// pixel ≈ 5 world px) but they're meant to be muddy smudges anyway.
+const GROUND_SCORCH_SCALE = 0.2;
 
 function ensureGroundScorch() {
   if (state.groundScorch) return;

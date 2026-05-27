@@ -67,16 +67,18 @@ function blitSprite(ctx, asset, size, tint) {
 }
 
 // =====================================================
-// Roads — thin path with edge highlights (TD feel). `widthMul` (assigned in
-// world.buildRoads per-edge: ~0.5 for outskirts, ~1.5 for hub arteries)
-// scales the line widths so the map reads as a real road network instead
-// of a uniform grid. Default 1.0 keeps legacy callers working.
+// Roads — thin path with edge highlights. Line widths are WORLD-space (no
+// `/zoom`) so the road thickness scales with the canvas: chunky highways
+// when zoomed in for tactics, hair-thin spider-web when zoomed out for
+// strategic overview. `widthMul` (assigned in world.buildRoads per-edge:
+// ~0.5 for outskirts, ~1.5 for hub arteries) layers natural road hierarchy
+// on top.
 // =====================================================
 export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1) {
   ctx.lineCap = 'round';
   // Dark outer (path edge)
   ctx.strokeStyle = 'rgba(38, 22, 11, 0.95)';
-  ctx.lineWidth = (8 * widthMul) / zoom;
+  ctx.lineWidth = 8 * widthMul;
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -87,18 +89,18 @@ export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1) {
   const sandG = Math.floor(145 - 60 * blockage);
   const sandB = Math.floor(95 - 50 * blockage);
   ctx.strokeStyle = `rgba(${sandR}, ${sandG}, ${sandB}, ${sandAlpha})`;
-  ctx.lineWidth = (5.5 * widthMul) / zoom;
+  ctx.lineWidth = 5.5 * widthMul;
   ctx.stroke();
   // Wreckage / death-highway overlay
   if (blockage > 0.5) {
     ctx.strokeStyle = `rgba(220, 70, 35, ${Math.min(0.7, blockage * 0.85)})`;
-    ctx.lineWidth = (5 * widthMul) / zoom;
-    ctx.setLineDash([7 / zoom, 6 / zoom]);
+    ctx.lineWidth = 5 * widthMul;
+    ctx.setLineDash([7, 6]);             // world-space — scales with the road
     ctx.stroke();
     ctx.setLineDash([]);
   } else if (blockage > 0.08) {
     ctx.strokeStyle = `rgba(180, 70, 35, ${blockage * 0.55})`;
-    ctx.lineWidth = (3.5 * widthMul) / zoom;
+    ctx.lineWidth = 3.5 * widthMul;
     ctx.stroke();
   }
   ctx.lineCap = 'butt';

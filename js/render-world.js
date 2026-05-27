@@ -97,7 +97,8 @@ export function drawNets(ctx, zoom) {
     const chargeFrac = Math.max(0.25, Math.min(1, e.netCharges / maxCh));
     ctx.strokeStyle = NET_COLOR;
     ctx.globalAlpha = 0.55 + 0.4 * chargeFrac;
-    ctx.lineWidth = (1.1 + e.netLevel * 0.6) / zoom;
+    // World-space width matches roads — fence thickness scales with the map.
+    ctx.lineWidth = 1.1 + e.netLevel * 0.6;
     ctx.beginPath();
     ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
     ctx.stroke();

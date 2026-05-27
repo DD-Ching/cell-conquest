@@ -132,9 +132,12 @@ export function drawNodes(ctx, zoom, now) {
       ctx.fill();
     }
 
-    // Unit count label centered in compound (the always-on-top pass in
-    // drawNodeLabelsOnTop re-draws this number above any sprite).
-    ctx.fillStyle = '#fff';
+    // Unit count label centered in compound. Coloured by owning faction so
+    // a packed strategic-zoom map reads as territory at a glance, not a sea
+    // of white numbers. Neutral nodes stay light-grey so the eye sorts them
+    // apart from owned territory. drawNodeLabelsOnTop re-draws this number
+    // on the top layer with the same colour rule.
+    ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
@@ -403,12 +406,14 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
-    // Dark halo so the number reads on any background (troop columns, scorches,
-    // bright glow). Draw it as a thicker stroke under the white fill.
+    // Dark halo so the number reads on any background (troop columns,
+    // scorches, bright glow). Faction colour fill on top — packed strategic
+    // zoom is unreadable when every node label is white, but instantly
+    // legible when each owner's nodes pop in their own hue.
     ctx.lineWidth = Math.max(2, 3 / zoom);
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
     ctx.strokeText(Math.floor(n.units), n.x, n.y);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
     ctx.fillText(Math.floor(n.units), n.x, n.y);
   }
 }

@@ -16,6 +16,7 @@ import {
 } from './sprites.js';
 
 const CELL = 250;                          // matches the spatial-grid cell size
+const _warnedOwners = new Set();           // dedupe console warnings per owner
 
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
 export function drawNodes(ctx, zoom, now) {
@@ -52,9 +53,18 @@ export function drawNodes(ctx, zoom, now) {
     catchUpRegen(n);                         // fresh units for the label render
     const degree = state.adj.get(n.id)?.size || 0;
 
-    // Outer glow halo
+    // Outer glow halo — defensive fallback so an unknown owner never
+    // breaks the entire frame; log once per unknown owner to surface
+    // the underlying faction-setup gap.
+    const glow = GLOW[n.owner] || GLOW.neutral || 'rgba(160,135,116,0.3)';
+    if (!GLOW[n.owner]) {
+      if (!_warnedOwners.has(n.owner)) {
+        console.warn('[render] no GLOW for owner', n.owner, '— check rollFactions');
+        _warnedOwners.add(n.owner);
+      }
+    }
     const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.5, n.x, n.y, n.size * 2.4);
-    grad.addColorStop(0, GLOW[n.owner]);
+    grad.addColorStop(0, glow);
     grad.addColorStop(1, 'transparent');
     ctx.fillStyle = grad;
     ctx.beginPath();

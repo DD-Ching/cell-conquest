@@ -14,6 +14,7 @@ import {
   placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt, turretAt,
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
+import { isAlly } from './alliance.js';
 import {
   resetEngineering, placeTurretAt, placeNetOnEdge,
   updateBuildings, updateTracers, updateScorches,
@@ -21,7 +22,7 @@ import {
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
-import { subordinateTick } from './subordinate.js';
+import { toggleDelegation } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render, renderMinimap,
@@ -267,8 +268,7 @@ function loop() {
     for (let s = 0; s < subSteps; s++) {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
-      for (const ai of AIS) aiTick(ai, subDt);
-      subordinateTick(subDt);                       // friendly AI managing G-delegated bases
+      for (const ai of AIS) aiTick(ai, subDt);     // includes 'ally1' (lieutenant)
       updateParticles(subDt);
       updateTracers(subDt);
       updateScorches(subDt);
@@ -450,7 +450,7 @@ function attachInput() {
           state.drag = null;
           return;
         }
-        if (d.originNode && d.originNode.owner !== 'player') {
+        if (d.originNode && !isAlly(d.originNode.owner, 'player')) {
           state.salvoTarget = { kind: 'node', id: d.originNode.id, x: d.originNode.x, y: d.originNode.y };
           state.drag = null;
           return;
@@ -545,16 +545,12 @@ function attachInput() {
       e.preventDefault();
       toggleWasm();
     }
-    // G — toggle subordinate-AI delegation on the player node under the
-    // cursor. The subordinate runs its own tick and manages building +
-    // attacks for every node carrying the delegated flag, freeing the
-    // player to focus on the strategic picture.
+    // G — transfer the node under the cursor between you and your
+    // lieutenant (ally1). Lieutenant is a real faction with the full
+    // enemy AI brain (aiTick); you two are allies so neither side
+    // attacks the other. G again reverts the base back to you.
     if (k === 'g') {
-      const n = nodeAt(state.mousePos.x, state.mousePos.y);
-      if (n && n.owner === 'player') {
-        n.delegated = !n.delegated;
-        n.flash = Math.max(n.flash, 0.6);
-      }
+      toggleDelegation(nodeAt(state.mousePos.x, state.mousePos.y));
     }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

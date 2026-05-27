@@ -43,14 +43,23 @@ export async function loadWasm() {
 }
 
 // Faction owner strings ('red', 'blue', 'neutral', ...) → small u8 indices
-// so they pack into Uint8Array. The mapping is built lazily and stable for
-// the session — once an owner gets index k it keeps index k until reload.
+// so they pack into Uint8Array. Allies share an index — this is the trick
+// that lets wasm functions keep their cheap `if (owner_a == owner_b) skip`
+// check while still respecting the alliance registry: ally1's drones look
+// like player drones from wasm's POV, so AA/Tank fire skips them.
 const _ownerIdx = new Map();
+function aliasOwner(o) {
+  // Hard-coded for the single player↔ally1 pact. If we ever add a more
+  // dynamic alliance system, drive this from alliance.js.
+  if (o === 'ally1') return 'player';
+  return o;
+}
 export function ownerKey(o) {
-  let v = _ownerIdx.get(o);
+  const canonical = aliasOwner(o);
+  let v = _ownerIdx.get(canonical);
   if (v === undefined) {
     v = _ownerIdx.size;
-    _ownerIdx.set(o, v);
+    _ownerIdx.set(canonical, v);
   }
   return v;
 }

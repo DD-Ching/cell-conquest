@@ -22,6 +22,10 @@ const AI_POOL = [
   { id: 'lime',    name: 'Lime',     color: '#a8e060' },
 ];
 const PLAYER_DEF  = { id: 'player',  name: 'You',     color: '#5cb3ff' };
+// Subordinate AI — always-present friendly faction. Player toggles bases
+// over to it with the G key. Same AI brain as enemies (aiTick) but the
+// alliance registry treats player ↔ ally1 as mutually non-aggressive.
+const ALLY1_DEF   = { id: 'ally1',   name: 'Lieutenant 🤖', color: '#e6c062' };
 const NEUTRAL_DEF = { id: 'neutral', name: 'Neutral', color: '#a08574' };
 
 // Live bindings — mutated in place by rollFactions so other modules
@@ -36,6 +40,8 @@ export const FACTIONS = [];
  *  means more aggressive + builds faster. Player is always 1.0. */
 export const factionStats = {};
 
+import { resetAlliances, setAlly } from './alliance.js';
+
 /** Roll a new lineup. Called from newGame() before world placement. */
 export function rollFactions() {
   AIS.length = 0;
@@ -43,23 +49,30 @@ export function rollFactions() {
   for (const k of Object.keys(GLOW))    delete GLOW[k];
   for (const k of Object.keys(factionStats)) delete factionStats[k];
   FACTIONS.length = 0;
+  resetAlliances();
 
   // Pick 1-4 AIs (so total active = 2-5 with player)
   const nAI = 1 + Math.floor(Math.random() * 4);
   const shuffled = [...AI_POOL].sort(() => Math.random() - 0.5);
   for (let i = 0; i < nAI; i++) AIS.push(shuffled[i].id);
+  // Lieutenant (ally1) is always in the AI loop. Starts with 0 bases
+  // — only gets nodes when the player delegates one with G.
+  AIS.push('ally1');
 
-  // Build the active faction list in display order: player, AIs, neutral
-  const active = [PLAYER_DEF, ...AIS.map(id => AI_POOL.find(f => f.id === id)), NEUTRAL_DEF];
+  // Build the active faction list in display order: player, ally1, AIs, neutral
+  const enemyDefs = AIS.filter(id => id !== 'ally1').map(id => AI_POOL.find(f => f.id === id));
+  const active = [PLAYER_DEF, ALLY1_DEF, ...enemyDefs, NEUTRAL_DEF];
   for (const f of active) {
     COLOR[f.id] = f.color;
     GLOW[f.id]  = hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.40);
     FACTIONS.push(f);
   }
 
-  // Random behavior multipliers per AI; player is baseline
+  // Random behavior multipliers per AI; player + ally1 are baseline.
   factionStats.player = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
+  factionStats.ally1  = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
   for (const id of AIS) {
+    if (id === 'ally1') continue;
     const strength = 0.85 + Math.random() * 0.35;   // 0.85 – 1.20
     factionStats[id] = {
       strength,
@@ -68,4 +81,6 @@ export function rollFactions() {
       buildChanceMul:   0.85 + (strength - 0.85) * 1.5,
     };
   }
+  // Mutual non-aggression pact between you and your lieutenant.
+  setAlly('player', 'ally1');
 }

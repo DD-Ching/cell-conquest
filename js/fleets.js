@@ -11,6 +11,7 @@ import {
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
 import { findPath, catchUpRegen } from './world.js';
+import { isAlly } from './alliance.js';
 import {
   ENG_SPEED, getEdge,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
@@ -231,7 +232,8 @@ function arriveAt(fleet, target) {
   // the regen accrual into target.units before the comparison so a node
   // last touched 30 game-seconds ago doesn't fight at stale strength.
   catchUpRegen(target);
-  if (target.owner === fleet.owner) {
+  if (isAlly(target.owner, fleet.owner)) {
+    // Same side (own or allied lieutenant) — reinforce instead of fight.
     target.units = Math.min(target.capacity * 1.5, target.units + fleet.units);
     target.flash = 0.5;
   } else {
@@ -243,8 +245,6 @@ function arriveAt(fleet, target) {
       // Owner changed — reset the lazy-regen baseline so the new owner
       // doesn't get a back-dated free-regen bonus.
       target.lastRegenT = state.elapsed;
-      // Subordinate-AI flag is per-base; capture wipes it.
-      target.delegated = false;
       spawnCaptureParticles(target, fleet.owner);
     } else {
       target.units -= fleet.units;

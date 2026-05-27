@@ -10,6 +10,7 @@ import {
 } from './config.js';
 import { dist } from './util.js';
 import { catchUpAllNodes } from './world.js';
+import { isAlly } from './alliance.js';
 import { sendFleet, assaultTurret } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
 import { releaseAIStockpile } from './drones.js';
@@ -89,7 +90,7 @@ export function aiTick(owner, dt) {
   let enemyTurrets = 0, enemyAA = 0;
   for (const t of state.turrets) {
     if (!t.active) continue;
-    if (t.owner === owner || t.owner === 'neutral') continue;
+    if (isAlly(t.owner, owner) || t.owner === 'neutral') continue;
     enemyTurrets++;
     if (t.type === 'antiair') enemyAA++;
   }
@@ -97,7 +98,7 @@ export function aiTick(owner, dt) {
   // Far-behind: someone clearly ahead and I'm small
   const sharesByOwner = {};
   for (const n of state.nodes) {
-    if (n.owner === 'neutral' || n.owner === owner) continue;
+    if (n.owner === 'neutral' || isAlly(n.owner, owner)) continue;
     sharesByOwner[n.owner] = (sharesByOwner[n.owner] || 0) + 1;
   }
   const topEnemyShare = Math.max(0, ...Object.values(sharesByOwner)) / state.nodes.length;
@@ -120,7 +121,7 @@ export function aiTick(owner, dt) {
     const tanks = state.turretsByType.get('tank');
     if (!tanks) return 0;
     for (const t of tanks) {
-      if (!t.active || t.owner === owner) continue;
+      if (!t.active || isAlly(t.owner, owner)) continue;
       const dx = t.x - targetNode.x, dy = t.y - targetNode.y;
       if (dx * dx + dy * dy < TANK_THREAT_R2) threat += TANK_DPS * 0.6 * 3.5;  // ~3.5s exposure
     }
@@ -138,7 +139,7 @@ export function aiTick(owner, dt) {
     const tanks = state.turretsByType.get('tank');
     if (!tanks) return false;
     for (const t of tanks) {
-      if (!t.active || t.owner === owner) continue;
+      if (!t.active || isAlly(t.owner, owner)) continue;
       const dx = t.x - x, dy = t.y - y;
       if (dx * dx + dy * dy < TANK_DANGER_R2) return true;
     }
@@ -208,7 +209,7 @@ export function aiTick(owner, dt) {
       // Direction toward the nearest enemy (defines "front" vs "back")
       let toward = null, towardDist = Infinity;
       for (const en of state.nodes) {
-        if (en.owner === owner || en.owner === 'neutral') continue;
+        if (isAlly(en.owner, owner) || en.owner === 'neutral') continue;
         const d = dist(n, en);
         if (d < towardDist) { towardDist = d; toward = en; }
       }
@@ -345,7 +346,7 @@ export function aiTick(owner, dt) {
     let enemyNeighbors = 0;
     for (const nbId of state.adj.get(node.id)) {
       const nb = state.nodes[nbId];
-      if (nb.owner !== owner && nb.owner !== 'neutral') enemyNeighbors++;
+      if (!isAlly(nb.owner, owner) && nb.owner !== 'neutral') enemyNeighbors++;
     }
     const degree = state.adj.get(node.id).size;
     const isCentral = degree >= 3;
@@ -386,7 +387,7 @@ export function aiTick(owner, dt) {
     let adjEnemyStockpile = 0;
     for (const nbId of state.adj.get(my.id)) {
       const nb = state.nodes[nbId];
-      if (nb.owner !== owner && nb.owner !== 'neutral') adjEnemyStockpile += nb.units;
+      if (!isAlly(nb.owner, owner) && nb.owner !== 'neutral') adjEnemyStockpile += nb.units;
     }
 
     const projected = my.units + inc.friendly + my.regenRate * 5 - inc.hostile;
@@ -445,7 +446,7 @@ export function aiTick(owner, dt) {
       if (focus) {
         const fNode = state.nodes[focus.targetId];
         const focusAge = state.elapsed - (focus.since || 0);
-        if (fNode && fNode.owner !== owner && focusAge < 20) {
+        if (fNode && !isAlly(fNode.owner, owner) && focusAge < 20) {
           target = { kind: 'node', id: fNode.id, x: fNode.x, y: fNode.y };
           targetVal = Infinity;       // lock — don't override below
         } else {
@@ -460,7 +461,7 @@ export function aiTick(owner, dt) {
         : myNodes[0].y;
       for (const t of state.turrets) {
         if (!t.active) continue;
-        if (t.owner === owner || t.owner === 'neutral') continue;
+        if (isAlly(t.owner, owner) || t.owner === 'neutral') continue;
         const dx = t.x - cx, dy = t.y - cy;
         const d2 = dx * dx + dy * dy;
         if (d2 > 700 * 700) continue;       // gate before sqrt
@@ -497,7 +498,7 @@ export function aiTick(owner, dt) {
     let pick = null, pickScore = 0;
     for (const t of state.turrets) {
       if (!t.active) continue;
-      if (t.owner === owner || t.owner === 'neutral') continue;
+      if (isAlly(t.owner, owner) || t.owner === 'neutral') continue;
       // Closest own node to this turret — assault path starts there.
       let near = null, nearD2 = Infinity;
       for (const n of myNodes) {
@@ -528,7 +529,7 @@ export function aiTick(owner, dt) {
     if (attackerAvail(my) < 5) continue;
     for (const nbId of state.adj.get(my.id)) {
       const target = state.nodes[nbId];
-      if (target.owner === owner) continue;
+      if (isAlly(target.owner, owner)) continue;
       if (!targetMap.has(nbId)) targetMap.set(nbId, []);
       targetMap.get(nbId).push(my);
     }
@@ -544,7 +545,7 @@ export function aiTick(owner, dt) {
     if (inbound) {
       for (const f of inbound) {
         if (f.owner === target.owner) trueDefenders += f.units;
-        else if (f.owner === owner) trueDefenders -= f.units;
+        else if (isAlly(f.owner, owner)) trueDefenders -= f.units;
       }
     }
     trueDefenders = Math.max(0, trueDefenders);
@@ -606,7 +607,7 @@ export function aiTick(owner, dt) {
       const enemyTanks = state.turretsByType.get('tank') || [];
       for (const t of enemyTanks) {
         if (!t.active || t.pendingEngineer) continue;
-        if (t.owner === owner || t.owner === 'neutral') continue;
+        if (isAlly(t.owner, owner) || t.owner === 'neutral') continue;
         const tdx = t.x - tgt.x, tdy = t.y - tgt.y;
         if (tdx * tdx + tdy * tdy > tankCoverR2) continue;
         // Pick an own node not already attacking, with enough surplus
@@ -645,7 +646,7 @@ export function aiTick(owner, dt) {
       let frontness = 0;
       for (const nbnbId of state.adj.get(nb.id)) {
         const nnb = state.nodes[nbnbId];
-        if (nnb.owner !== owner && nnb.owner !== 'neutral') frontness += 3;
+        if (!isAlly(nnb.owner, owner) && nnb.owner !== 'neutral') frontness += 3;
         else if (nnb.owner === 'neutral') frontness += 1;
       }
       frontness += state.adj.get(nb.id).size * 0.5;
@@ -670,7 +671,7 @@ export function aiTick(owner, dt) {
       let frontness = 0;
       for (const nbnbId of state.adj.get(nb.id)) {
         const nnb = state.nodes[nbnbId];
-        if (nnb.owner !== owner && nnb.owner !== 'neutral') frontness += 3;
+        if (!isAlly(nnb.owner, owner) && nnb.owner !== 'neutral') frontness += 3;
         else if (nnb.owner === 'neutral') frontness += 1;
       }
       if (frontness > bestFront) { bestFront = frontness; target = nb; }

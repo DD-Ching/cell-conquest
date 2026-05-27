@@ -84,14 +84,11 @@ export function drawNodes(ctx, zoom, now) {
       ctx.globalAlpha = 1;
     }
 
-    // Delegated to subordinate AI — gold ring + small robot tag above.
-    if (n.delegated) {
+    // Lieutenant-managed base — small 🤖 tag above. The faction colour
+    // already does the heavy lifting (ally1 has its own gold/mint hue);
+    // the emoji just makes the AI-controlled status pop.
+    if (n.owner === 'ally1') {
       const pulse = 0.7 + 0.3 * Math.sin(now / 380 + n.id * 0.4);
-      ctx.strokeStyle = `rgba(255, 210, 90, ${pulse})`;
-      ctx.lineWidth = 2.5 / zoom;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size + 8, 0, Math.PI * 2);
-      ctx.stroke();
       ctx.fillStyle = `rgba(255, 220, 130, ${pulse})`;
       ctx.font = `${14 / zoom}px sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';

@@ -52,7 +52,7 @@ function droneTargetExists(drone) {
   if (drone.targetKind === 'node') {
     if (drone.targetId >= state.nodes.length) return false;
     const n = state.nodes[drone.targetId];
-    if (n.owner === drone.owner) return false;     // we already own it
+    if (isAlly(n.owner, drone.owner)) return false; // own or allied — no longer hostile
     if (n.units < 1) return false;                  // someone else cleaned it out
     return true;
   }
@@ -78,7 +78,7 @@ function retargetDrone(drone) {
         const bucket = state.turretGrid.get(cx * 10000 + cy);
         if (!bucket) continue;
         for (const t of bucket) {
-          if (t.owner === drone.owner) continue;
+          if (isAlly(t.owner, drone.owner)) continue;
           if (t.pendingEngineer) continue;
           const dx = t.x - drone.x, dy = t.y - drone.y;
           const d2 = dx * dx + dy * dy;
@@ -93,7 +93,7 @@ function retargetDrone(drone) {
   }
   if (!best) {
     for (const n of state.nodes) {
-      if (n.owner === drone.owner || n.owner === 'neutral') continue;
+      if (isAlly(n.owner, drone.owner) || n.owner === 'neutral') continue;
       const dx = n.x - drone.x, dy = n.y - drone.y;
       const d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
@@ -155,6 +155,7 @@ function droneHitFleet(drone, fleet) {
 
 // Lazy bridge import — keeps this file useful even if wasm-bridge throws.
 import { isWasmReady, wasmDroneHuntTargets } from './wasm-bridge.js';
+import { isAlly } from './alliance.js';
 
 // ---- Per-tick ----
 export function updateDrones(dt) {
@@ -234,7 +235,7 @@ export function updateDrones(dt) {
           const bucket = state.groundFleetGrid.get(cx * 10000 + cy);
           if (!bucket) continue;
           for (const g of bucket) {
-            if (g.owner === f.owner) continue;
+            if (isAlly(g.owner, f.owner)) continue;
             if (g._dead) continue;          // killed earlier this tick
             if (!g.path || g.segIdx >= g.path.length - 1) continue;
             const dx = g.x - f.x, dy = g.y - f.y;
@@ -378,7 +379,7 @@ function pickDroneTargetsFor(t) {
       const bucket = state.turretGrid.get(cx * 10000 + cy);
       if (!bucket) continue;
       for (const et of bucket) {
-        if (et.owner === t.owner) continue;
+        if (isAlly(et.owner, t.owner)) continue;
         if (et.pendingEngineer) continue;     // dirt placeholder, not a real target
         const dx = et.x - t.x, dy = et.y - t.y;
         const d2 = dx * dx + dy * dy;
@@ -394,7 +395,7 @@ function pickDroneTargetsFor(t) {
   }
   if (cands.length === 0) {
     for (const en of state.nodes) {
-      if (en.owner === t.owner || en.owner === 'neutral') continue;
+      if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
       const d = dist(t, en);
       const score = 800 / (d + 200);
       cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
@@ -420,10 +421,10 @@ function resolveSalvoTarget(s, salvoOwner) {
   if (!s) return null;
   if (s.kind === 'turret') {
     const t = state.turretById.get(s.id);
-    if (t && t.owner !== salvoOwner) return { kind: 'turret', id: t.id, x: t.x, y: t.y };
+    if (t && !isAlly(t.owner, salvoOwner)) return { kind: 'turret', id: t.id, x: t.x, y: t.y };
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];
-    if (n && n.owner !== salvoOwner) return { kind: 'node', id: n.id, x: n.x, y: n.y };
+    if (n && !isAlly(n.owner, salvoOwner)) return { kind: 'node', id: n.id, x: n.x, y: n.y };
   }
   return null;
 }

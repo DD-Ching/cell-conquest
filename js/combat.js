@@ -17,6 +17,7 @@ import {
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
 import { isWasmReady, wasmAaApplyDamage, wasmTankDamageFleets } from './wasm-bridge.js';
+import { isAlly } from './alliance.js';
 
 // Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
 const AA_R2          = AA_RADIUS * AA_RADIUS;
@@ -79,7 +80,7 @@ export function updateAntiAir(dt) {
             const bucket = state.droneGrid.get(cx * 10000 + cy);
             if (!bucket) continue;
             for (const f of bucket) {
-              if (f.owner === t.owner) continue;
+              if (isAlly(f.owner, t.owner)) continue;
               const dx = f.x - t.x, dy = f.y - t.y;
               if (dx * dx + dy * dy <= AA_R2) { target = f; break outer; }
             }
@@ -110,7 +111,7 @@ export function updateAntiAir(dt) {
         const bucket = state.droneGrid.get(cx * 10000 + cy);
         if (!bucket) continue;
         for (const f of bucket) {
-          if (f.owner === t.owner) continue;
+          if (isAlly(f.owner, t.owner)) continue;
           const dx = f.x - t.x, dy = f.y - t.y;
           if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
         }
@@ -178,7 +179,7 @@ export function updateTanks(dt) {
     // don't splice during iteration. JS fallback only — when wasm handled
     // damage above we skip this block (still run siege below).
     if (!wasmDamageHandled) forGroundNear(t.x, t.y, TANK_RADIUS, (f) => {
-      if (f.owner === t.owner) return;
+      if (isAlly(f.owner, t.owner)) return;
       if (f._dead) return;
       const dx = f.x - t.x, dy = f.y - t.y;
       if (dx * dx + dy * dy > TANK_R2) return;
@@ -201,7 +202,7 @@ export function updateTanks(dt) {
     // Siege: slow chip damage to enemy turrets within range. Grid lookup
     // touches a 3×3 cell window instead of scanning every turret.
     forTurretsNear(t.x, t.y, TANK_RADIUS, (o) => {
-      if (o.owner === t.owner) return;
+      if (isAlly(o.owner, t.owner)) return;
       if (o.pendingEngineer) return;       // dirt placeholder, not real yet
       const dx = o.x - t.x, dy = o.y - t.y;
       if (dx * dx + dy * dy > TANK_R2) return;
@@ -245,7 +246,7 @@ function fireArtilleryShell(t) {
   // Grid query saves scanning out-of-range turrets — ARTILLERY_RANGE 420 px
   // means a 4×4 cell window vs the whole turret array.
   forTurretsNear(t.x, t.y, ARTILLERY_RANGE, (e) => {
-    if (e.owner === t.owner) return;
+    if (isAlly(e.owner, t.owner)) return;
     if (e.pendingEngineer) return;          // dirt placeholder, not a real target
     const dx = e.x - t.x, dy = e.y - t.y;
     if (dx * dx + dy * dy > ARTILLERY_R2) return;
@@ -254,7 +255,7 @@ function fireArtilleryShell(t) {
   // Ground fleets in range via grid (skips drones automatically — they're in
   // droneGrid). Massive saving when there are hundreds of fleets on the map.
   forGroundNear(t.x, t.y, ARTILLERY_RANGE, (f) => {
-    if (f.owner === t.owner) return;
+    if (isAlly(f.owner, t.owner)) return;
     const dx = f.x - t.x, dy = f.y - t.y;
     if (dx * dx + dy * dy > ARTILLERY_R2) return;
     cands.push({ x: f.x, y: f.y, weight: 1 });
@@ -300,7 +301,7 @@ export function updateShells(dt) {
 function detonateArtillery(x, y, owner) {
   // Grid query — AOE radius is small (~42 px) so only 1 cell typically touched.
   forTurretsNear(x, y, ARTILLERY_AOE, (t) => {
-    if (t.owner === owner) return;
+    if (isAlly(t.owner, owner)) return;
     if (t.pendingEngineer) return;          // nothing to destroy yet
     const dx = t.x - x, dy = t.y - y;
     if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
@@ -308,7 +309,7 @@ function detonateArtillery(x, y, owner) {
   // Ground fleets caught in the blast — small AOE radius means typically 1-2
   // grid cells touched. Drones are immune (separate grid).
   forGroundNear(x, y, ARTILLERY_AOE, (f) => {
-    if (f.owner === owner) return;
+    if (isAlly(f.owner, owner)) return;
     if (f._dead) return;       // already killed by an earlier overlapping shell
     const dx = f.x - x, dy = f.y - y;
     if (dx * dx + dy * dy >= ARTILLERY_AOE2) return;

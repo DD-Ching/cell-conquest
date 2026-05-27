@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
 import { dist, pointToSegment } from './util.js';
+import { isAlly } from './alliance.js';
 
 const NODE_MARGIN = 100;
 // Minimum spacing between node rims. Tightened from 80 to 50 so 1800 nodes
@@ -86,9 +87,6 @@ export function placeNodes(rng = Math.random) {
         // of the most recent units-update. catchUpRegen() computes the
         // missing accrual at access time.
         lastRegenT: 0,
-        // Subordinate-AI delegation: player toggles with G. Cleared on any
-        // owner change (capture flips it off in fleets.arriveAt).
-        delegated: false,
       });
     }
   }
@@ -281,7 +279,7 @@ export function turretAt(x, y, owner = 'player', filter = null) {
   const tol = Math.max(14, 14 / state.zoom);
   const tol2 = tol * tol;
   for (const t of state.turrets) {
-    if (t.owner === owner) continue;
+    if (isAlly(t.owner, owner)) continue;        // own or ally — not attackable
     if (t.pendingEngineer) continue;
     if (filter && !filter(t)) continue;
     const dx = t.x - x, dy = t.y - y;

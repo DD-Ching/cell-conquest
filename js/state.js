@@ -156,4 +156,8 @@ export const state = {
   // ai-worker-bridge for state, and by the HUD perf overlay to label
   // the source of the AI cost. See AI_WORKER_BLUEPRINT.md.
   aiInWorker: false,
+  // True when the world canvas has been transferred to the Render Worker
+  // (U-key toggle). main render() must skip when true (canvas surface
+  // now lives in the worker). HUD + minimap stay main-thread.
+  renderInWorker: false,
 };

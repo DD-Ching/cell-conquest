@@ -23,6 +23,7 @@ import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './com
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
 import * as aiBridge from './ai-worker-bridge.js';
+import * as renderBridge from './render-worker-bridge.js';
 import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
@@ -36,13 +37,32 @@ import { loadWasm, toggleWasm } from './wasm-bridge.js';
 // DOM bootstrap & resize
 // =====================================================
 state.canvas  = document.getElementById('game');
-state.ctx     = state.canvas.getContext('2d');
 state.minimap = document.getElementById('minimap');
 state.mctx    = state.minimap.getContext('2d');
+// The world canvas's 2D context is created LAZILY (see initWorldCtx). If
+// the URL has ?renderWorker=1 we transfer the canvas to the render worker
+// BEFORE anything calls getContext('2d') on it (transferControlToOffscreen
+// errors out on canvases that already have a 2D context locked in).
+function initWorldCtx() {
+  if (state.ctx || state.renderInWorker) return;
+  state.ctx = state.canvas.getContext('2d');
+}
+const wantRenderWorker = new URLSearchParams(location.search).get('renderWorker') === '1';
 
 function resize() {
-  state.W = state.canvas.width  = innerWidth;
-  state.H = state.canvas.height = innerHeight;
+  state.W = innerWidth;
+  state.H = innerHeight;
+  // When the render worker owns the canvas (transferControlToOffscreen has
+  // moved drawing into the worker), setting canvas.width on the main side
+  // has no effect on the drawing buffer — the worker's OffscreenCanvas owns
+  // dimensions. Setting width also creates a 2D context implicitly, which
+  // would PREVENT transferControlToOffscreen later. So we skip it whenever
+  // worker render is in play (current OR pending).
+  if (!renderBridge.isEnabled() && !state.renderInWorker && !wantRenderWorker) {
+    state.canvas.width  = innerWidth;
+    state.canvas.height = innerHeight;
+  }
+  renderBridge.notifyResize(state.W, state.H);
   const MM_W = Math.min(240, Math.max(140, Math.floor(state.W * 0.16)));
   const MM_H = Math.floor(MM_W * (WORLD_H / WORLD_W));
   state.minimap.width = MM_W;
@@ -70,6 +90,9 @@ export function newGame() {
   state.particles = [];
   state.selectedIds.clear();
   state.gameOver = false;
+  // Tell the render worker (if active) to reset its scorch buffer + dust
+  // before the first frame snapshot of the new game arrives.
+  renderBridge.notifyNewGame();
   document.getElementById('message').style.display = 'none';
   state.startTime = performance.now();
   state.elapsed = 0;
@@ -322,7 +345,15 @@ function loop() {
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
   updateSnow(realDt);
   updateHUD();
-  render();
+  // World canvas: either the worker renders it OR we do it locally on the
+  // main thread. The worker owns the canvas after transferControlToOffscreen
+  // so we must NOT call render() once it's enabled (the local main canvas
+  // is no longer drawable). HUD + minimap stay main-thread regardless.
+  if (renderBridge.isEnabled()) {
+    renderBridge.tickFrame();
+  } else {
+    render();
+  }
   renderMinimap();
   requestAnimationFrame(loop);
 }
@@ -645,6 +676,21 @@ function attachInput() {
         console.log('[ai-worker] enabled');
       }
     }
+    // Render Worker toggle: U moves the world canvas to an OffscreenCanvas
+    // owned by a worker. transferControlToOffscreen has to happen BEFORE
+    // anything calls getContext('2d') on the canvas, so the safe path is
+    // to set ?renderWorker=1 in the URL and reload — main.js's init checks
+    // the flag and skips the main-thread 2D-context creation before
+    // anything else can grab it.
+    if (k === 'u') {
+      const u = new URL(location.href);
+      if (u.searchParams.get('renderWorker') === '1') {
+        u.searchParams.delete('renderWorker');
+      } else {
+        u.searchParams.set('renderWorker', '1');
+      }
+      location.href = u.toString();
+    }
   });
 
   addEventListener('keyup', e => {
@@ -672,6 +718,12 @@ function attachInput() {
 // =====================================================
 // Boot
 // =====================================================
+// Render worker MUST be enabled before resize() (which would otherwise
+// touch canvas.width and before initWorldCtx() gets called by anything).
+// We do it first when the URL flag is set.
+if (wantRenderWorker) {
+  renderBridge.enable();
+}
 resize();
 attachInput();
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives

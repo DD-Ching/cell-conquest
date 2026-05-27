@@ -7,7 +7,11 @@ import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
 import { dist, pointToSegment } from './util.js';
 
 const NODE_MARGIN = 100;
-const BASE_GAP    = 80;
+// Minimum spacing between node rims. Tightened from 80 to 50 so 1800 nodes
+// actually fit in the 12000×9000 world (average inter-node spacing at that
+// density is ~245 px — with the old 80 + 2×avg-size gap the placer would
+// reject most candidate spots and we'd cap out far below N_NODES_MAX).
+const BASE_GAP    = 50;
 const N_TARGET    = (W, H) => Math.min(N_NODES_MAX, Math.max(N_NODES_MIN, Math.floor((W * H) / 130000)));
 // ROAD_MAX must scale with map area, otherwise nodes spread out on a big
 // map don't find neighbors within range and we end up with a forest of

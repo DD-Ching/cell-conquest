@@ -12,8 +12,8 @@
 // glacial across the bigger canvas.
 export const WORLD_W = 12000;
 export const WORLD_H = 9000;
-export const N_NODES_MIN = 350;
-export const N_NODES_MAX = 450;
+export const N_NODES_MIN = 1400;
+export const N_NODES_MAX = 1800;
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec

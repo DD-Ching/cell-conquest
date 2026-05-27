@@ -19,6 +19,24 @@ const CELL = 250;                          // matches the spatial-grid cell size
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
 export function drawNodes(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
+  // LOW LOD: skip the glow halo + breathing pulse + inner buildings + flash
+  // animations. Each draws ~8 ctx ops/node, which at 1000+ visible nodes is
+  // the bottleneck. Just paint the faction rim + dark core + count text —
+  // enough to read territory and unit count at strategic zoom.
+  if (state._lod < 2) {
+    for (const n of state.nodes) {
+      if (n.x + n.size < vL || n.x - n.size > vR || n.y + n.size < vT || n.y - n.size > vB) continue;
+      ctx.fillStyle = COLOR[n.owner];
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
   for (const n of state.nodes) {
     // Nodes have a 2.4× glow halo around them — cull with that margin.
     const halo = n.size * 2.4;

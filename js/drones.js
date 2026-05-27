@@ -153,6 +153,9 @@ function droneHitFleet(drone, fleet) {
   return true;
 }
 
+// Lazy bridge import — keeps this file useful even if wasm-bridge throws.
+import { isWasmReady, wasmDroneHuntTargets } from './wasm-bridge.js';
+
 // ---- Per-tick ----
 export function updateDrones(dt) {
   // state.fleetById is built once per tick in simulate() — reuse it for
@@ -160,6 +163,32 @@ export function updateDrones(dt) {
   const fleetById = state.fleetById;
   const CELL = 250;
   const huntRange = Math.ceil(Math.sqrt(DRONE_DETECT_R2) / CELL);
+
+  // ---- Batched wasm hunt scan (with JS fallback) ----
+  // When wasm is loaded, gather all live drones + transit ground fleets
+  // once and ship them to Rust in a single call. Rust returns an Int32
+  // per drone: index into `huntGrounds[]` of the nearest enemy fleet, or
+  // -1 if none in DRONE_DETECT_R. The per-drone loop below reads from
+  // this table instead of doing its own grid sweep.
+  let wasmHuntIdx = null;
+  let huntDrones = null;
+  let huntGrounds = null;
+  if (isWasmReady()) {
+    huntDrones = [];
+    huntGrounds = [];
+    for (const f of state.fleets) {
+      if (f.kind === 'drone' && f.hp > 0) huntDrones.push(f);
+      else if (f.kind !== 'drone' && !f._dead && f.path && f.segIdx < f.path.length - 1) huntGrounds.push(f);
+    }
+    if (huntDrones.length && huntGrounds.length) {
+      wasmHuntIdx = wasmDroneHuntTargets(huntDrones, huntGrounds, DRONE_DETECT_R2);
+    }
+  }
+  // droneIdxById gives O(1) lookup from a drone fleet to its slot in huntDrones[].
+  const droneIdxById = new Map();
+  if (huntDrones) {
+    for (let i = 0; i < huntDrones.length; i++) droneIdxById.set(huntDrones[i]._id, i);
+  }
 
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
@@ -181,22 +210,37 @@ export function updateDrones(dt) {
     }
 
     // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
-    // Spatial-grid query touches a few cells around the drone instead of every
-    // ground fleet on the map. This is the hottest inner loop in the file.
+    // When wasm is loaded the batched pre-computed table answers in O(1);
+    // otherwise fall back to the JS grid sweep that was the hot path before.
     let huntFleet = null, huntD2 = DRONE_DETECT_R2;
-    const cx0 = Math.floor(f.x / CELL);
-    const cy0 = Math.floor(f.y / CELL);
-    for (let cx = cx0 - huntRange; cx <= cx0 + huntRange; cx++) {
-      for (let cy = cy0 - huntRange; cy <= cy0 + huntRange; cy++) {
-        const bucket = state.groundFleetGrid.get(cx * 10000 + cy);
-        if (!bucket) continue;
-        for (const g of bucket) {
-          if (g.owner === f.owner) continue;
-          if (g._dead) continue;          // killed earlier this tick
-          if (!g.path || g.segIdx >= g.path.length - 1) continue;
-          const dx = g.x - f.x, dy = g.y - f.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }
+    if (wasmHuntIdx !== null) {
+      const dIdx = droneIdxById.get(f._id);
+      if (dIdx !== undefined) {
+        const gIdx = wasmHuntIdx[dIdx];
+        if (gIdx >= 0) {
+          const g = huntGrounds[gIdx];
+          if (g && !g._dead) {
+            const dx = g.x - f.x, dy = g.y - f.y;
+            huntD2 = dx * dx + dy * dy;
+            huntFleet = g;
+          }
+        }
+      }
+    } else {
+      const cx0 = Math.floor(f.x / CELL);
+      const cy0 = Math.floor(f.y / CELL);
+      for (let cx = cx0 - huntRange; cx <= cx0 + huntRange; cx++) {
+        for (let cy = cy0 - huntRange; cy <= cy0 + huntRange; cy++) {
+          const bucket = state.groundFleetGrid.get(cx * 10000 + cy);
+          if (!bucket) continue;
+          for (const g of bucket) {
+            if (g.owner === f.owner) continue;
+            if (g._dead) continue;          // killed earlier this tick
+            if (!g.path || g.segIdx >= g.path.length - 1) continue;
+            const dx = g.x - f.x, dy = g.y - f.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }
+          }
         }
       }
     }

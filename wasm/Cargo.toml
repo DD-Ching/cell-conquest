@@ -1,0 +1,27 @@
+[package]
+name = "cell-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Cell Conquest hot-loop simulation in Rust → WebAssembly"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Smaller wasm bundle (fast load); release sim perf is unaffected.
+panic = "abort"
+strip = true
+
+# Disable wasm-pack's post-build wasm-opt — the bundled binary is older than
+# the bulk-memory bytecode rustc 1.93 generates. opt-level=3 + LTO above
+# already does most of the optimisation; skipping the extra pass costs us
+# ~10% binary size but functions identically.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

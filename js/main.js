@@ -27,6 +27,7 @@ import {
   makeSnow, updateSnow, updateParticles, bakeTerrain,
 } from './render.js';
 import { loadAssets } from './sprites.js';
+import { loadWasm } from './wasm-bridge.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -592,6 +593,7 @@ function attachInput() {
 resize();
 attachInput();
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
+loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS until ready
 newGame();              // rolls factions, builds HUD, generates world
 loop();
 nnLoad();

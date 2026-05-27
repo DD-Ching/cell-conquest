@@ -1,0 +1,5 @@
+target/
+Cargo.lock
+# Note: pkg/ IS committed so cloners + the dev server can load the wasm
+# without first running `wasm-pack build`. Re-run `wasm-pack build --target
+# web --release` from the wasm/ directory after editing src/*.rs.

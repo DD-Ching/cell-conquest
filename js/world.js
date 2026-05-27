@@ -61,7 +61,6 @@ export function placeNodes(rng = Math.random) {
   // Scale the attempts ceiling with the target count — at 200 nodes the old
   // 14000 cap could exit before placing them all on the bigger map.
   const ATTEMPT_CAP = Math.max(14000, N * 300);
-  const t0 = performance.now();
   while (state.nodes.length < N && attempts < ATTEMPT_CAP) {
     attempts++;
     const size = pickSize(rng);
@@ -84,10 +83,6 @@ export function placeNodes(rng = Math.random) {
       });
     }
   }
-  // Diagnostic: post-place counters so we can see if the target was hit and
-  // how the attempt budget held up. If placed < target, BASE_GAP is too high
-  // or ATTEMPT_CAP too low for the chosen node count.
-  console.log(`[world] placeNodes: target=${N}, placed=${state.nodes.length}, attempts=${attempts}/${ATTEMPT_CAP}, ms=${(performance.now() - t0).toFixed(0)}`);
 }
 
 /** Build k-NN road graph, fill state.roads & state.adj, ensuring connectivity. */

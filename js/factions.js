@@ -22,11 +22,10 @@ const AI_POOL = [
   { id: 'lime',    name: 'Lime',     color: '#a8e060' },
 ];
 const PLAYER_DEF  = { id: 'player',  name: 'You',     color: '#5cb3ff' };
-// Subordinate AI — always-present friendly faction. Player toggles bases
-// over to it with the G key. Same AI brain as enemies (aiTick) but the
-// alliance registry treats player ↔ ally1 as mutually non-aggressive.
-const ALLY1_DEF   = { id: 'ally1',   name: 'Lieutenant 🤖', color: '#e6c062' };
 const NEUTRAL_DEF = { id: 'neutral', name: 'Neutral', color: '#a08574' };
+// Subordinate / ally faction registration lives in subordinate.js — see
+// ensureLieutenantRegistered(). This keeps the enemy / player / neutral
+// roster here pure and lets ally factions be added without editing this file.
 
 // Live bindings — mutated in place by rollFactions so other modules
 // keep their imports valid. Initial values are placeholders until the
@@ -40,9 +39,17 @@ export const FACTIONS = [];
  *  means more aggressive + builds faster. Player is always 1.0. */
 export const factionStats = {};
 
-import { resetAlliances, setAlly } from './alliance.js';
+import { resetAlliances } from './alliance.js';
 
-/** Roll a new lineup. Called from newGame() before world placement. */
+/** Make `hexToRgba` available to other modules registering their own
+ *  factions (subordinate.js, future ally2.js) so the glow/colour rule
+ *  stays consistent across the codebase. */
+export { hexToRgba };
+
+/** Roll a new lineup. Called from newGame() before world placement.
+ *  Resets alliances + enemy rosters. Ally / subordinate factions are
+ *  registered by their own modules (see subordinate.ensureLieutenantRegistered)
+ *  AFTER this runs. */
 export function rollFactions() {
   AIS.length = 0;
   for (const k of Object.keys(COLOR))   delete COLOR[k];
@@ -55,24 +62,21 @@ export function rollFactions() {
   const nAI = 1 + Math.floor(Math.random() * 4);
   const shuffled = [...AI_POOL].sort(() => Math.random() - 0.5);
   for (let i = 0; i < nAI; i++) AIS.push(shuffled[i].id);
-  // Lieutenant (ally1) is always in the AI loop. Starts with 0 bases
-  // — only gets nodes when the player delegates one with G.
-  AIS.push('ally1');
 
-  // Build the active faction list in display order: player, ally1, AIs, neutral
-  const enemyDefs = AIS.filter(id => id !== 'ally1').map(id => AI_POOL.find(f => f.id === id));
-  const active = [PLAYER_DEF, ALLY1_DEF, ...enemyDefs, NEUTRAL_DEF];
+  // Display order: player first, then enemy AIs, then neutral.
+  // Ally factions insert themselves between player and AIs via their own
+  // ensure* registration (see subordinate.js).
+  const enemyDefs = AIS.map(id => AI_POOL.find(f => f.id === id));
+  const active = [PLAYER_DEF, ...enemyDefs, NEUTRAL_DEF];
   for (const f of active) {
     COLOR[f.id] = f.color;
     GLOW[f.id]  = hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.40);
     FACTIONS.push(f);
   }
 
-  // Random behavior multipliers per AI; player + ally1 are baseline.
+  // Random behavior multipliers per AI; player is baseline.
   factionStats.player = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
-  factionStats.ally1  = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
   for (const id of AIS) {
-    if (id === 'ally1') continue;
     const strength = 0.85 + Math.random() * 0.35;   // 0.85 – 1.20
     factionStats[id] = {
       strength,
@@ -81,6 +85,4 @@ export function rollFactions() {
       buildChanceMul:   0.85 + (strength - 0.85) * 1.5,
     };
   }
-  // Mutual non-aggression pact between you and your lieutenant.
-  setAlly('player', 'ally1');
 }

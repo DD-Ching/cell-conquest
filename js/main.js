@@ -22,7 +22,7 @@ import {
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
-import { toggleDelegation } from './subordinate.js';
+import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render, renderMinimap,
@@ -60,6 +60,7 @@ export function newGame() {
   // Roll the lineup (2-5 factions including you), each AI with a random
   // strength multiplier. Rebuild the HUD to reflect the new roster.
   rollFactions();
+  ensureLieutenantRegistered();    // ally1 joins the lineup (zero bases until G-press)
   buildHUD();
   // Start every overlay panel in the faded state — the map is what matters
   // right after a (re)start. Mouse-over un-fades each panel individually.
@@ -545,12 +546,13 @@ function attachInput() {
       e.preventDefault();
       toggleWasm();
     }
-    // G — transfer the node under the cursor between you and your
-    // lieutenant (ally1). Lieutenant is a real faction with the full
-    // enemy AI brain (aiTick); you two are allies so neither side
-    // attacks the other. G again reverts the base back to you.
+    // G — transfer base(s) between you and your lieutenant. If you have
+    // bases selected (box-select / Ctrl-click / Dbl-click), the whole
+    // selection flips in one keystroke; otherwise just the hovered base.
+    // Lieutenant is a real faction running the full enemy AI brain — you
+    // two are allies, neither side attacks the other.
     if (k === 'g') {
-      toggleDelegation(nodeAt(state.mousePos.x, state.mousePos.y));
+      toggleDelegationAt(nodeAt(state.mousePos.x, state.mousePos.y));
     }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

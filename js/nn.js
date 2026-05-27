@@ -34,10 +34,10 @@ export async function nnLoad() {
   try {
     nnSession = await ort.InferenceSession.create(NN_MODEL_URL, { executionProviders: ['wasm'] });
     nnReady = true;
-    if (badge) { badge.classList.remove('loading'); badge.textContent = 'NN: Crimson is the trained policy'; }
+    if (badge) { badge.classList.remove('loading'); badge.textContent = 'NPC: Crimson is the trained policy'; }
   } catch (e) {
-    if (badge) badge.textContent = 'NN load failed (need local server)';
-    console.error('NN load:', e);
+    if (badge) badge.textContent = 'NPC model not loaded (need local server)';
+    console.error('NPC model load:', e);
   }
 }
 
@@ -155,7 +155,7 @@ export async function nnDecide(meOwner) {
     nnLastAction[meOwner] = (pick === NN_N * NN_N) ? null
       : { src: Math.floor(pick / NN_N), dst: pick % NN_N };
   } catch (e) {
-    console.error('NN inference:', e);
+    console.error('NPC inference:', e);
     nnLastAction[meOwner] = null;
   } finally {
     nnPending[meOwner] = false;

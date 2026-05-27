@@ -83,8 +83,9 @@ export function newGame() {
   rollFactions();
   ensureLieutenantRegistered();    // ally1 joins the lineup (zero bases until G-press)
   buildHUD();
-  // Start every overlay panel in the faded state — the map is what matters
-  // right after a (re)start. Mouse-over un-fades each panel individually.
+  // Initial pass with a "mouse far away" coordinate — under the inverted
+  // fade rule this leaves every panel at full opacity (readable). Panels
+  // start fading only once the cursor approaches them.
   updateHudFade(-9999, -9999);
   state.fleets = [];
   state.particles = [];
@@ -359,13 +360,16 @@ function loop() {
 }
 
 // =====================================================
-// HUD auto-fade — overlay panels dim to 0.3 opacity when the mouse is far,
-// jump back to full when the mouse approaches. Lets the map stay readable
-// while keeping the chrome one mouse-move away. CSS does the transition;
-// this function flips the `.hud-faded` class per panel based on proximity.
+// HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
+// gets near them so they don't block the world the player is reaching for.
+// Mouse far away = full opacity (read the HUD). Mouse over / near = fade.
+// The corners (top-left = title/HUD, top-right = timer/zoom/speed) are
+// where the cursor naturally hovers during play, so they need to clear out
+// of the way fastest. CSS .hud-faded handles the transition.
 // =====================================================
 const HUD_FADE_IDS = ['title-strip', 'hud', 'topright', 'help', 'nn-badge'];
-const HUD_TRIGGER_PAD = 60;       // px of "near enough" buffer around each panel
+const HUD_TRIGGER_PAD = 80;       // px buffer — start fading BEFORE the cursor
+                                  // actually touches the panel
 function updateHudFade(mx, my) {
   for (const id of HUD_FADE_IDS) {
     const el = document.getElementById(id);
@@ -373,8 +377,9 @@ function updateHudFade(mx, my) {
     const r = el.getBoundingClientRect();
     const near = mx >= r.left - HUD_TRIGGER_PAD && mx <= r.right + HUD_TRIGGER_PAD &&
                  my >= r.top  - HUD_TRIGGER_PAD && my <= r.bottom + HUD_TRIGGER_PAD;
-    if (near) el.classList.remove('hud-faded');
-    else      el.classList.add('hud-faded');
+    // Inverted: near = fade (get out of the way), far = full opacity (readable).
+    if (near) el.classList.add('hud-faded');
+    else      el.classList.remove('hud-faded');
   }
 }
 

@@ -137,6 +137,17 @@ export function updateDrones(dt) {
   // O(1) "give me fleet X" lookups (the hottest part of this function).
   const fleetById = state.fleetById;
 
+  // Pre-bucket ground fleets (everything that's not a drone). Each drone's
+  // hunt scan would otherwise iterate state.fleets and filter — at 30 drones ×
+  // 50 fleets × 1200 sub-ticks/sec the inner skip adds up. Bucketing once per
+  // tick lets each drone scan only the relevant ~20 entries.
+  const groundFleets = [];
+  for (const g of state.fleets) {
+    if (g.kind === 'drone') continue;
+    if (!g.path || g.segIdx >= g.path.length - 1) continue;
+    groundFleets.push(g);
+  }
+
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind !== 'drone') continue;
@@ -156,10 +167,9 @@ export function updateDrones(dt) {
     // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
     // Squared-distance comparison avoids sqrt — this is the hottest inner loop.
     let huntFleet = null, huntD2 = DRONE_DETECT_R2;
-    for (const g of state.fleets) {
+    for (const g of groundFleets) {
       if (g.owner === f.owner) continue;
-      if (g.kind === 'drone') continue;
-      if (!g.path || g.segIdx >= g.path.length - 1) continue;
+      if (g._dead) continue;          // killed by another drone earlier this tick
       const dx = g.x - f.x, dy = g.y - f.y;
       const d2 = dx * dx + dy * dy;
       if (d2 < huntD2) { huntD2 = d2; huntFleet = g; }

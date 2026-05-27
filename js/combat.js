@@ -29,11 +29,18 @@ const ARTILLERY_AOE2 = ARTILLERY_AOE * ARTILLERY_AOE;
 // drone swarms saturate the defense and a fraction can punch through.
 export function updateAntiAir(dt) {
   const totalTracerRate = 5;   // total beams/sec per AA (split across targets)
-  for (const t of state.turrets) {
-    if (t.type !== 'antiair' || !t.active) continue;
+  const aaTurrets = state.turretsByType.get('antiair');
+  if (!aaTurrets) return;
+  // Pre-bucket all live drones once — every AA otherwise re-filters state.fleets
+  // by kind === 'drone' per call. AA tick runs every sub-step (1200 Hz at 20×).
+  const drones = [];
+  for (const f of state.fleets) if (f.kind === 'drone') drones.push(f);
+  if (drones.length === 0) return;
+  for (const t of aaTurrets) {
+    if (!t.active) continue;
     const inRange = [];
-    for (const f of state.fleets) {
-      if (f.kind !== 'drone' || f.owner === t.owner) continue;
+    for (const f of drones) {
+      if (f.owner === t.owner) continue;
       const dx = f.x - t.x, dy = f.y - t.y;
       if (dx * dx + dy * dy <= AA_R2) inRange.push(f);
     }
@@ -56,8 +63,10 @@ export function updateAntiAir(dt) {
 // Cannot target drones — that's AA's job. Lower DPS than AA, longer range.
 export function updateTanks(dt) {
   const tracerRate = 3;
-  for (const t of state.turrets) {
-    if (t.type !== 'tank' || !t.active) continue;
+  const tankTurrets = state.turretsByType.get('tank');
+  if (!tankTurrets) return;
+  for (const t of tankTurrets) {
+    if (!t.active) continue;
     // Damage enemy ground fleets in range
     for (let i = state.fleets.length - 1; i >= 0; i--) {
       const f = state.fleets[i];
@@ -83,6 +92,7 @@ export function updateTanks(dt) {
     // Siege: slow chip damage to enemy turrets within range
     for (const o of state.turrets) {
       if (o.owner === t.owner) continue;
+      if (o.pendingEngineer) continue;     // dirt placeholder, not real yet
       const dx = o.x - t.x, dy = o.y - t.y;
       if (dx * dx + dy * dy > TANK_R2) continue;
       o.hp -= TANK_DPS * 0.7 * dt;
@@ -101,8 +111,10 @@ export function updateTanks(dt) {
 // the aim, and lobs a shell that detonates in an AOE circle. Stacking many
 // turrets at one point becomes a liability since one shell can wipe them.
 export function updateArtillery(dt) {
-  for (const t of state.turrets) {
-    if (t.type !== 'artillery' || !t.active) continue;
+  const artyTurrets = state.turretsByType.get('artillery');
+  if (!artyTurrets) return;
+  for (const t of artyTurrets) {
+    if (!t.active) continue;
     if (t.artyCooldown === undefined) t.artyCooldown = ARTILLERY_INTERVAL;
     t.artyCooldown -= dt;
     if (t.artyCooldown > 0) continue;

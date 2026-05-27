@@ -58,6 +58,10 @@ export const state = {
   turretsByOwner: new Map(), // owner -> turret[] — used by AI hub-loop so each
                              //   hub iterates only its own turrets instead of
                              //   filtering the whole array 5 times per tick.
+  turretsByType:  new Map(), // type ('antiair'|'tank'|'factory'|'artillery') ->
+                             //   turret[]. Combat firing loops iterate only the
+                             //   right type instead of scanning all turrets per
+                             //   sim sub-tick (60×subSteps Hz at high time-scale).
   fleetById:      new Map(), // _id -> fleet (alive fleets only — built before
                              //               drone/fleet death cleanups)
 

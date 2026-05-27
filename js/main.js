@@ -155,11 +155,15 @@ function simulate(dt) {
   // they already did before.)
   state.turretById.clear();
   state.turretsByOwner.clear();
+  state.turretsByType.clear();
   for (const t of state.turrets) {
     state.turretById.set(t.id, t);
-    let bucket = state.turretsByOwner.get(t.owner);
-    if (!bucket) { bucket = []; state.turretsByOwner.set(t.owner, bucket); }
-    bucket.push(t);
+    let oBucket = state.turretsByOwner.get(t.owner);
+    if (!oBucket) { oBucket = []; state.turretsByOwner.set(t.owner, oBucket); }
+    oBucket.push(t);
+    let tBucket = state.turretsByType.get(t.type);
+    if (!tBucket) { tBucket = []; state.turretsByType.set(t.type, tBucket); }
+    tBucket.push(t);
   }
   state.fleetById.clear();
   for (const f of state.fleets)  state.fleetById.set(f._id, f);

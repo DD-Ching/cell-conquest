@@ -112,10 +112,10 @@ export function aiTick(owner, dt) {
   const TANK_THREAT_R2 = (TANK_RADIUS + 60) * (TANK_RADIUS + 60);
   function turretThreatTo(targetNode) {
     let threat = 0;
-    for (const t of state.turrets) {
-      if (!t.active) continue;
-      if (t.owner === owner) continue;
-      if (t.type !== 'tank') continue;
+    const tanks = state.turretsByType.get('tank');
+    if (!tanks) return 0;
+    for (const t of tanks) {
+      if (!t.active || t.owner === owner) continue;
       const dx = t.x - targetNode.x, dy = t.y - targetNode.y;
       if (dx * dx + dy * dy < TANK_THREAT_R2) threat += TANK_DPS * 0.6 * 3.5;  // ~3.5s exposure
     }
@@ -130,8 +130,10 @@ export function aiTick(owner, dt) {
   // Helper: refuse to send engineers into enemy tank kill zones
   const TANK_DANGER_R2 = (TANK_RADIUS - 20) * (TANK_RADIUS - 20);
   function isExposedToEnemyTank(x, y) {
-    for (const t of state.turrets) {
-      if (!t.active || t.owner === owner || t.type !== 'tank') continue;
+    const tanks = state.turretsByType.get('tank');
+    if (!tanks) return false;
+    for (const t of tanks) {
+      if (!t.active || t.owner === owner) continue;
       const dx = t.x - x, dy = t.y - y;
       if (dx * dx + dy * dy < TANK_DANGER_R2) return true;
     }
@@ -584,10 +586,10 @@ export function aiTick(owner, dt) {
     if (bestAtt.target) {
       const tgt = bestAtt.target;
       const tankCoverR2 = (TANK_RADIUS + 80) * (TANK_RADIUS + 80);
-      for (const t of state.turrets) {
+      const enemyTanks = state.turretsByType.get('tank') || [];
+      for (const t of enemyTanks) {
         if (!t.active || t.pendingEngineer) continue;
         if (t.owner === owner || t.owner === 'neutral') continue;
-        if (t.type !== 'tank') continue;
         const tdx = t.x - tgt.x, tdy = t.y - tgt.y;
         if (tdx * tdx + tdy * tdy > tankCoverR2) continue;
         // Pick an own node not already attacking, with enough surplus

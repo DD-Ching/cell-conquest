@@ -46,16 +46,6 @@ export function aiTick(owner, dt) {
   // n.units / n.capacity see fresh values. One pass beats sprinkling
   // catchUp around the dozen places below that read units.
   catchUpAllNodes();
-  // DEBUG: confirm lieutenant tick fires + how much it has to work with.
-  // Logs at most every ~3 s per owner to avoid console flood.
-  if (owner === 'ally1') {
-    state._allyDbgT ||= 0;
-    if (state.elapsed - state._allyDbgT > 3) {
-      state._allyDbgT = state.elapsed;
-      const total = myNodes.reduce((s, n) => s + n.units, 0);
-      console.log(`[ally1] tick: ${myNodes.length} nodes, ${total.toFixed(0)} total units, t=${state.elapsed.toFixed(0)}s`);
-    }
-  }
 
   // ---- Saturation: how much of my regen is being wasted because nodes are full ----
   // Full nodes (>= 95% cap) gain nothing from sitting still. The more of my empire

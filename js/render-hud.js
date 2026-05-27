@@ -13,6 +13,12 @@ import { catchUpAllNodes } from './world.js';
 // re-getElementById 10+ times per frame.
 const _hudEls = { unitsByFaction: {}, nodesByFaction: {}, timer: null, zoom: null, speed: null, perf: null };
 let _hudLastT = 0;
+const _unknownOwners = new Set();
+function _logUnknownOwner(o) {
+  if (_unknownOwners.has(o)) return;
+  _unknownOwners.add(o);
+  console.warn(`[hud] unknown owner "${o}" — not in FACTIONS roster. Faction setup gap?`);
+}
 
 export function buildHUD() {
   const hud = document.getElementById('hud');
@@ -78,6 +84,13 @@ export function updateHUD() {
   const c = {};
   for (const f of FACTIONS) c[f.id] = [0, 0];
   for (const n of state.nodes) {
+    // Defensive: a node carrying an owner the FACTIONS roster doesn't know
+    // about would otherwise crash the HUD pass. Lazily add the bucket and
+    // log once so we can spot the gap in faction setup.
+    if (!c[n.owner]) {
+      _logUnknownOwner(n.owner);
+      c[n.owner] = [0, 0];
+    }
     c[n.owner][0] += n.units;
     c[n.owner][1] += 1;
   }

@@ -6,7 +6,7 @@
 // sand to fit the planet's palette.
 // =====================================================
 
-function hexToRgba(hex, a) {
+export function hexToRgba(hex, a) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
@@ -40,11 +40,6 @@ export const FACTIONS = [];
 export const factionStats = {};
 
 import { resetAlliances } from './alliance.js';
-
-/** Make `hexToRgba` available to other modules registering their own
- *  factions (subordinate.js, future ally2.js) so the glow/colour rule
- *  stays consistent across the codebase. */
-export { hexToRgba };
 
 /** Roll a new lineup. Called from newGame() before world placement.
  *  Resets alliances + enemy rosters. Ally / subordinate factions are

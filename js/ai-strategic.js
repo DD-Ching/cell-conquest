@@ -16,13 +16,13 @@
 // =====================================================
 import { state } from './state.js';
 import { isAlly } from './alliance.js';
-import { releaseAIStockpile } from './drones.js';
 import { FACTORY_MAX_STOCKPILE } from './config.js';
+// releaseAIStockpile is injected via ctx — see ai-effects.js.
 
 /** Maintain the hold-fire / release state machine for `owner`. Returns true
  *  if the salvo fired this tick. */
 export function tryDroneSalvo(ctx) {
-  const { owner, myNodes, farBehind } = ctx;
+  const { owner, myNodes, farBehind, releaseAIStockpile } = ctx;
 
   // Pull from the owner-bucketed Map and filter by type/active inline instead
   // of scanning the entire turret array.
@@ -82,7 +82,10 @@ export function tryDroneSalvo(ctx) {
         }
       }
       state.aiSalvoTarget[owner] = target;
-      releaseAIStockpile(owner);
+      // The effect carries `target` as `salvoTarget` so when re-applied on
+      // the main thread (worker mode) the target is restored before the
+      // real releaseAIStockpile fires.
+      releaseAIStockpile(owner, target);
       state.aiHoldFire[owner] = false;
       return true;
     }

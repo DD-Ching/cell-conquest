@@ -151,4 +151,9 @@ export const state = {
   lastTime: 0,
   timeScale: 1.0,
   aiTimers: {},
+
+  // True when aiTick is running on a Web Worker (Y-key toggle). Used by
+  // ai-worker-bridge for state, and by the HUD perf overlay to label
+  // the source of the AI cost. See AI_WORKER_BLUEPRINT.md.
+  aiInWorker: false,
 };

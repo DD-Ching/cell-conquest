@@ -22,6 +22,7 @@ import {
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
+import * as aiBridge from './ai-worker-bridge.js';
 import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
@@ -299,7 +300,14 @@ function loop() {
     for (let s = 0; s < subSteps; s++) {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
-      for (const ai of AIS) aiTick(ai, subDt);     // includes 'ally1' (lieutenant)
+      // AI tick: when the worker is enabled, it handles every owner except
+      // NN-controlled factions (NN still needs main-thread access to
+      // onnxruntime + DOM). Worker maintains its own ~100 ms snapshot
+      // cadence — tickFrame is cheap when nothing's due.
+      aiBridge.tickFrame(subDt);
+      for (const ai of AIS) {
+        if (aiBridge.shouldMainThreadTick(ai)) aiTick(ai, subDt);
+      }
       updateParticles(subDt);
       updateTracers(subDt);
       updateScorches(subDt);
@@ -614,6 +622,19 @@ function attachInput() {
         state.holdFire = false;
       } else {
         state.holdFire = true;
+      }
+    }
+    // AI Worker toggle: Y moves the per-faction aiTick off the main thread.
+    // Main thread keeps rendering / sim / combat / drones; the worker just
+    // owns AI decisions and ships back action queues. NN-controlled factions
+    // stay main-thread (onnxruntime + DOM). See AI_WORKER_BLUEPRINT.md.
+    if (k === 'y') {
+      if (aiBridge.isEnabled()) {
+        aiBridge.disable();
+        console.log('[ai-worker] disabled (main-thread aiTick)');
+      } else {
+        aiBridge.enable();
+        console.log('[ai-worker] enabled');
       }
     }
   });

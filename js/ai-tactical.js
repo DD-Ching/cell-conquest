@@ -18,15 +18,15 @@
 import { state } from './state.js';
 import { dist } from './util.js';
 import { isAlly } from './alliance.js';
-import { sendFleet, assaultTurret } from './fleets.js';
 import { FLEET_SPEED, TANK_RADIUS } from './config.js';
+// Side effects (sendFleet, assaultTurret) come through ctx — see ai-effects.js.
 
 /** Phase 1: defensive reinforcement.
  *  Reacts to active incoming hostile fleets AND to adjacent-enemy STOCKPILES
  *  (the wave that's about to be launched). Reinforcing AFTER the wave hits
  *  loses the node — we need to thicken garrisons BEFORE the punch. */
 export function tryDefend(ctx) {
-  const { owner, myNodes, incomingTo, attackerAvail } = ctx;
+  const { owner, myNodes, incomingTo, attackerAvail, sendFleet } = ctx;
   for (const my of myNodes) {
     const degree = state.adj.get(my.id).size;
     const isCentral = degree >= 3;
@@ -71,7 +71,7 @@ export function tryDefend(ctx) {
  *  Frontal attacks against tank-guarded hubs get shredded — break the screen
  *  first. Each infantry unit absorbs 8 HP off the turret. */
 export function tryAssaultTurrets(ctx) {
-  const { owner, myNodes, saturationRatio, attackerAvail } = ctx;
+  const { owner, myNodes, saturationRatio, attackerAvail, assaultTurret } = ctx;
   if (Math.random() >= 0.25 + saturationRatio * 0.20) return false;
 
   let pick = null, pickScore = 0;
@@ -110,7 +110,8 @@ export function tryAssaultTurrets(ctx) {
  *  Updates state.aiFocus for the drone-salvo phase to converge on the same
  *  hub next tick. */
 export function tryCoordinatedAttack(ctx) {
-  const { owner, myNodes, aggression, fleetsByTarget, attackerAvail, turretThreatTo } = ctx;
+  const { owner, myNodes, aggression, fleetsByTarget, attackerAvail, turretThreatTo,
+          sendFleet, assaultTurret } = ctx;
 
   const targetMap = new Map();
   for (const my of myNodes) {
@@ -224,7 +225,7 @@ export function tryCoordinatedAttack(ctx) {
 /** Phase 3: cap-aware reinforce frontline. Rear-hub regen flows to the
  *  front continuously so the front never runs dry mid-attack. */
 export function tryReinforceFrontline(ctx) {
-  const { owner, myNodes, saturationRatio } = ctx;
+  const { owner, myNodes, saturationRatio, sendFleet } = ctx;
   const dumpThresh = saturationRatio > 0.4 ? 0.55 : 0.65;
   for (const my of myNodes) {
     if (my.units < my.capacity * dumpThresh) continue;
@@ -255,7 +256,7 @@ export function tryReinforceFrontline(ctx) {
  *  friendly neighbour regardless of its fill — pure regen waste is worse
  *  than slight overflow, and a thicker hub can absorb a strike. */
 export function tryOverflowDump(ctx) {
-  const { owner, myNodes } = ctx;
+  const { owner, myNodes, sendFleet } = ctx;
   for (const my of myNodes) {
     if (my.units < my.capacity * 0.95) continue;
     let target = null, bestFront = -1;

@@ -37,3 +37,21 @@ export function isAlly(a, b) {
   const s = _allies.get(a);
   return s !== undefined && s.has(b);
 }
+
+/** Snapshot the alliance registry as a flat list of unordered pairs.
+ *  Used by the AI worker bridge to ship alliance state with each snapshot
+ *  so isAlly() in the worker context returns the same answers as the main
+ *  thread (the G-key toggle can change membership mid-game). */
+export function listAlliances() {
+  const seen = new Set();
+  const out = [];
+  for (const [a, set] of _allies) {
+    for (const b of set) {
+      const k = a < b ? a + '|' + b : b + '|' + a;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push([a, b]);
+    }
+  }
+  return out;
+}

@@ -19,8 +19,9 @@
 import { state } from './state.js';
 import { dist } from './util.js';
 import { isAlly } from './alliance.js';
-import { placeTurretAt, placeNetOnEdge, ekey } from './engineering.js';
+import { ekey } from './engineering.js';
 import { AA_RADIUS, NET_LEVEL_MAX } from './config.js';
+// Side effects (placeTurretAt, placeNetOnEdge) come through ctx — see ai-effects.js.
 
 // ---- Position layout helpers (build-phase-internal) ----
 // Spread AAs across the front arc to form a WALL (not a circle). Drones
@@ -72,7 +73,8 @@ function artillerySpot(n, dirX, dirY, idx) {
 
 /** Attempt one turret build this tick. Returns true if placed. */
 export function tryBuildTurret(ctx) {
-  const { owner, myNodes, saturationRatio, antiTurtle, fstats, isExposedToEnemyTank } = ctx;
+  const { owner, myNodes, saturationRatio, antiTurtle, fstats, isExposedToEnemyTank,
+          placeTurretAt } = ctx;
 
   // Build chance scales with saturation + per-faction strength.
   const buildChance = (0.18 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
@@ -164,7 +166,7 @@ export function tryBuildTurret(ctx) {
 
 /** Upgrade a drone-net on a front-line edge. Returns true if a net was started. */
 export function tryBuildNet(ctx) {
-  const { owner, saturationRatio, isExposedToEnemyTank } = ctx;
+  const { owner, saturationRatio, isExposedToEnemyTank, placeNetOnEdge } = ctx;
   if (Math.random() >= 0.10 + saturationRatio * 0.20) return false;
 
   let cand = null, bestScore = -1;

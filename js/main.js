@@ -243,7 +243,7 @@ function loop() {
     state.drag.y = state.mousePos.y;
   }
 
-  if (!state.gameOver) {
+  if (!state.gameOver && !state.paused) {
     // Cap sub-steps so 20× timescale doesn't blow the per-frame sim budget.
     // Above 10 substeps, each step gets a larger dt but movement granularity
     // is still well under DETOUR_LOOKAHEAD / DRONE_DETECT_R (a fleet moves
@@ -505,6 +505,20 @@ function attachInput() {
     // when the player needs the area under a panel.
     if (e.key === 'Tab')  { e.preventDefault(); document.body.classList.toggle('hud-hidden'); }
     if (e.key === '?' || e.key === '/') { e.preventDefault(); document.body.classList.toggle('help-open'); }
+    // Pause toggle (Space). Sim, AI, particles, and elapsed clock freeze;
+    // camera + render + HUD keep working so the player can survey + plan.
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      state.paused = !state.paused;
+      document.body.classList.toggle('paused', state.paused);
+    }
+    // Minimap collapse (M). Toggles a body class that the CSS uses to slide
+    // / hide the bottom-right minimap when the player wants that screen real
+    // estate for clicking on a node hiding under it.
+    if (k === 'm') {
+      e.preventDefault();
+      document.body.classList.toggle('minimap-hidden');
+    }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
     if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);

@@ -127,6 +127,8 @@ export const state = {
 
   // Time
   gameOver: false,
+  paused: false,             // Space toggles. Render + HUD keep running; sim,
+                             // AI, particles, and elapsed clock are frozen.
   startTime: 0,
   elapsed: 0,
   lastTime: 0,

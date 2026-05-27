@@ -46,6 +46,28 @@
   body.hud-hidden #help,
   body.hud-hidden #nn-badge,
   body.hud-hidden #minimap { opacity: 0 !important; pointer-events: none !important; }
+  /* Minimap collapse — `M` toggles. Fades out + disables interaction
+     without removing it from layout so the next M restores instantly. */
+  #minimap { transition: opacity 0.22s ease-out, transform 0.22s ease-out; }
+  body.minimap-hidden #minimap { opacity: 0 !important; pointer-events: none !important; transform: translate(40px, 40px); }
+  /* Pause banner — small top-center marker so the player always knows
+     time is frozen. Pulses gently. CSS-only animation. */
+  #pause-banner {
+    position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
+    padding: 6px 18px;
+    background: rgba(15, 8, 4, 0.85);
+    border: 1px solid rgba(220, 200, 160, 0.45);
+    border-radius: 6px;
+    font: bold 12px ui-monospace, monospace;
+    letter-spacing: 0.18em; color: #ffe080;
+    text-transform: uppercase;
+    pointer-events: none;
+    display: none;
+    box-shadow: 0 0 32px rgba(255, 200, 90, 0.18);
+    animation: pause-pulse 1.6s ease-in-out infinite;
+  }
+  body.paused #pause-banner { display: block; }
+  @keyframes pause-pulse { 0%,100% { opacity: 0.78; } 50% { opacity: 1; } }
   #title-strip { position: fixed; top: 12px; left: 12px; padding: 10px 16px 8px; pointer-events: none; }
   #title-strip .title { font-size: 18px; font-weight: 700; letter-spacing: 0.22em; color: var(--text-base); text-shadow: 0 0 12px rgba(255, 130, 50, 0.25); }
   #title-strip .title .accent { color: var(--accent); margin-left: 4px; }
@@ -179,8 +201,9 @@
 <div id="hud"></div>
 <div id="topright"><div id="timer">00:00</div><div id="speed" class="sub">Speed 1×</div><div id="zoom" class="sub">100%</div></div>
 <canvas id="minimap"></canvas>
+<div id="pause-banner">⏸ Paused — Space to resume</div>
 <div id="help">
-  <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Tab</kbd> to hide HUD</div>
+  <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Space</kbd> pause &middot; <kbd>Tab</kbd> hide HUD &middot; <kbd>M</kbd> toggle minimap</div>
   <div class="help-full">
     <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>
     <div><kbd>Shift</kbd>+drag = send all units</div>
@@ -189,6 +212,7 @@
     <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
     <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a turret (Anti-Air / Tank / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
     <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
+    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>M</kbd> toggle minimap &middot; <kbd>?</kbd> toggle this help</div>
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

@@ -80,8 +80,14 @@ export function aiTick(owner, dt) {
     m.lastChangeT = state.elapsed;
   }
   const stagnantSec = state.elapsed - m.lastChangeT;
-  const enemyTurrets = state.turrets.filter(t => t.owner !== owner && t.owner !== 'neutral' && t.active).length;
-  const enemyAA = state.turrets.filter(t => t.owner !== owner && t.type === 'antiair' && t.active).length;
+  // Single pass replaces two filter-then-length scans of the whole turret array.
+  let enemyTurrets = 0, enemyAA = 0;
+  for (const t of state.turrets) {
+    if (!t.active) continue;
+    if (t.owner === owner || t.owner === 'neutral') continue;
+    enemyTurrets++;
+    if (t.type === 'antiair') enemyAA++;
+  }
   const antiTurtle = stagnantSec > 18 && enemyTurrets >= 3;
   // Far-behind: someone clearly ahead and I'm small
   const sharesByOwner = {};
@@ -103,14 +109,15 @@ export function aiTick(owner, dt) {
   // ---- Hostile turret threat to ground attacks targeting a given node ----
   // Tank turrets within ~range of the target node will chew up our attackers en route.
   // Counts expected casualties so Phase 2's `required` reflects reality.
+  const TANK_THREAT_R2 = (TANK_RADIUS + 60) * (TANK_RADIUS + 60);
   function turretThreatTo(targetNode) {
     let threat = 0;
     for (const t of state.turrets) {
       if (!t.active) continue;
       if (t.owner === owner) continue;
       if (t.type !== 'tank') continue;
-      const d = Math.hypot(t.x - targetNode.x, t.y - targetNode.y);
-      if (d < TANK_RADIUS + 60) threat += TANK_DPS * 0.6 * 3.5;  // ~3.5s exposure
+      const dx = t.x - targetNode.x, dy = t.y - targetNode.y;
+      if (dx * dx + dy * dy < TANK_THREAT_R2) threat += TANK_DPS * 0.6 * 3.5;  // ~3.5s exposure
     }
     return threat;
   }
@@ -121,10 +128,12 @@ export function aiTick(owner, dt) {
   const buildMinUnits = saturationRatio > 0.4 ? 14 : 22;
 
   // Helper: refuse to send engineers into enemy tank kill zones
+  const TANK_DANGER_R2 = (TANK_RADIUS - 20) * (TANK_RADIUS - 20);
   function isExposedToEnemyTank(x, y) {
     for (const t of state.turrets) {
       if (!t.active || t.owner === owner || t.type !== 'tank') continue;
-      if (Math.hypot(t.x - x, t.y - y) < TANK_RADIUS - 20) return true;
+      const dx = t.x - x, dy = t.y - y;
+      if (dx * dx + dy * dy < TANK_DANGER_R2) return true;
     }
     return false;
   }
@@ -201,23 +210,27 @@ export function aiTick(owner, dt) {
       const dlen = Math.hypot(ddx, ddy) || 1;
       const dirX = ddx / dlen, dirY = ddy / dlen;
 
-      // Survey friendly infrastructure NEAR this hub (wide net to catch the whole wall)
-      const ownAAsNear = state.turrets.filter(t =>
-        t.owner === owner && t.type === 'antiair' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 220);
-      const ownTanksNear = state.turrets.filter(t =>
-        t.owner === owner && t.type === 'tank' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 200);
-      const ownFactoriesNear = state.turrets.filter(t =>
-        t.owner === owner && t.type === 'factory' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 180);
-      const ownArtilleryNear = state.turrets.filter(t =>
-        t.owner === owner && t.type === 'artillery' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < 250);
-      // Hub under our AA umbrella?
-      const aaCoversThisHub = state.turrets.some(t =>
-        t.owner === owner && t.type === 'antiair' &&
-        Math.hypot(t.x - n.x, t.y - n.y) < AA_RADIUS * 0.8);
+      // Survey friendly infrastructure NEAR this hub. Single pass over my own
+      // turrets (via turretsByOwner) instead of 5 separate .filter() calls;
+      // squared distances skip the per-check sqrt.
+      let ownAAsNear = 0, ownTanksNear = 0, ownFactoriesNear = 0, ownArtilleryNear = 0;
+      let aaCoversThisHub = false;
+      const aaUmbrella2 = (AA_RADIUS * 0.8) * (AA_RADIUS * 0.8);
+      const myTurrets = state.turretsByOwner.get(owner) || [];
+      for (const t of myTurrets) {
+        const dx = t.x - n.x, dy = t.y - n.y;
+        const d2 = dx * dx + dy * dy;
+        if (t.type === 'antiair') {
+          if (d2 < 220 * 220) ownAAsNear++;
+          if (d2 < aaUmbrella2) aaCoversThisHub = true;
+        } else if (t.type === 'tank') {
+          if (d2 < 200 * 200) ownTanksNear++;
+        } else if (t.type === 'factory') {
+          if (d2 < 180 * 180) ownFactoriesNear++;
+        } else if (t.type === 'artillery') {
+          if (d2 < 250 * 250) ownArtilleryNear++;
+        }
+      }
 
       // Try a build at one of several layout positions — if the first is blocked
       // by enemy tank range, fall through to the next. Stops the AI from giving
@@ -236,25 +249,25 @@ export function aiTick(owner, dt) {
       // ---- 1) AA WALL — keep stacking until we hit AA_TARGET ----
       // Sweep all 9 layout positions (defensive 0-4 + forward 5-8) so a
       // single blocked spot doesn't stall the wall thickening.
-      if (ownAAsNear.length < AA_TARGET) {
-        if (tryBuild('antiair', aaWallSpot, ownAAsNear.length, 9)) return;
+      if (ownAAsNear < AA_TARGET) {
+        if (tryBuild('antiair', aaWallSpot, ownAAsNear, 9)) return;
       }
 
       // ---- 2) Tanks — start as soon as we have at least 2 AAs ----
-      if (ownAAsNear.length >= 2 && ownTanksNear.length < TANK_TARGET) {
-        if (tryBuild('tank', tankSpot, ownTanksNear.length, 3)) return;
+      if (ownAAsNear >= 2 && ownTanksNear < TANK_TARGET) {
+        if (tryBuild('tank', tankSpot, ownTanksNear, 3)) return;
       }
 
       // ---- 3) FACTORY SPAM — once the wall is up, mass-produce drones ----
       // Wait until at least 2 AAs cover the hub before spending units on factories.
-      if (aaCoversThisHub && ownAAsNear.length >= 2 && ownFactoriesNear.length < FACTORY_TARGET) {
-        if (tryBuild('factory', factorySpot, ownFactoriesNear.length, 4)) return;
+      if (aaCoversThisHub && ownAAsNear >= 2 && ownFactoriesNear < FACTORY_TARGET) {
+        if (tryBuild('factory', factorySpot, ownFactoriesNear, 4)) return;
       }
 
       // ---- 4) ARTILLERY — deep rear AOE pressure ----
       // Long range so it can stay way back. Random AOE counters dense enemy clusters.
-      if (aaCoversThisHub && ownAAsNear.length >= 2 && ownArtilleryNear.length < ARTILLERY_TARGET) {
-        if (tryBuild('artillery', artillerySpot, ownArtilleryNear.length, 3)) return;
+      if (aaCoversThisHub && ownAAsNear >= 2 && ownArtilleryNear < ARTILLERY_TARGET) {
+        if (tryBuild('artillery', artillerySpot, ownArtilleryNear, 3)) return;
       }
     }
   }
@@ -386,8 +399,13 @@ export function aiTick(owner, dt) {
   // Single trickling drones get sieved by AA walls; a 10–18 drone wave
   // overwhelms them. We never bother stockpiling when only one factory exists
   // or when we're behind on the map (need drones in the air NOW).
-  const myFactories = state.turrets.filter(t =>
-    t.owner === owner && t.type === 'factory' && t.active);
+  // Pull from the owner-bucketed Map and filter by type/active inline instead
+  // of scanning the entire turret array.
+  const myFactories = [];
+  const myTurretsAll = state.turretsByOwner.get(owner) || [];
+  for (const t of myTurretsAll) {
+    if (t.type === 'factory' && t.active) myFactories.push(t);
+  }
   if (state.aiHoldFire[owner]) {
     // Once stockpiling, check release conditions every tick regardless of
     // current factory count — if a factory got blown up mid-stockpile we
@@ -422,8 +440,10 @@ export function aiTick(owner, dt) {
       for (const t of state.turrets) {
         if (!t.active) continue;
         if (t.owner === owner || t.owner === 'neutral') continue;
-        const d = Math.hypot(t.x - cx, t.y - cy);
-        if (d > 700) continue;
+        const dx = t.x - cx, dy = t.y - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 700 * 700) continue;       // gate before sqrt
+        const d = Math.sqrt(d2);
         let v = 1.0;
         if (t.type === 'tank')           v = 3.0;
         else if (t.type === 'factory')   v = 2.8;
@@ -458,12 +478,14 @@ export function aiTick(owner, dt) {
       if (!t.active) continue;
       if (t.owner === owner || t.owner === 'neutral') continue;
       // Closest own node to this turret — assault path starts there.
-      let near = null, nearD = Infinity;
+      let near = null, nearD2 = Infinity;
       for (const n of myNodes) {
-        const d = Math.hypot(n.x - t.x, n.y - t.y);
-        if (d < nearD) { nearD = d; near = n; }
+        const dx = n.x - t.x, dy = n.y - t.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < nearD2) { nearD2 = d2; near = n; }
       }
-      if (!near || nearD > 480) continue;
+      if (!near || nearD2 > 480 * 480) continue;
+      const nearD = Math.sqrt(nearD2);
       const cost = Math.ceil(t.hp / 8) + 6;       // HP/8 damage per troop, +safety
       if (attackerAvail(near) < cost) continue;
       // Value by type: tanks block our attacks (highest priority), then
@@ -561,20 +583,23 @@ export function aiTick(owner, dt) {
     // ground wave plus tank-killer all converge on the same hub.
     if (bestAtt.target) {
       const tgt = bestAtt.target;
+      const tankCoverR2 = (TANK_RADIUS + 80) * (TANK_RADIUS + 80);
       for (const t of state.turrets) {
         if (!t.active || t.pendingEngineer) continue;
         if (t.owner === owner || t.owner === 'neutral') continue;
         if (t.type !== 'tank') continue;
-        if (Math.hypot(t.x - tgt.x, t.y - tgt.y) > TANK_RADIUS + 80) continue;
+        const tdx = t.x - tgt.x, tdy = t.y - tgt.y;
+        if (tdx * tdx + tdy * tdy > tankCoverR2) continue;
         // Pick an own node not already attacking, with enough surplus
-        let assaultFrom = null, fromDist = Infinity;
+        let assaultFrom = null, fromD2 = Infinity;
         for (const n of myNodes) {
           if (bestAtt.attackers.includes(n)) continue;
-          const d = Math.hypot(n.x - t.x, n.y - t.y);
-          if (d > 460) continue;
+          const dx = n.x - t.x, dy = n.y - t.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > 460 * 460) continue;
           const cost = Math.ceil(t.hp / 8) + 6;
           if (attackerAvail(n) < cost) continue;
-          if (d < fromDist) { fromDist = d; assaultFrom = n; }
+          if (d2 < fromD2) { fromD2 = d2; assaultFrom = n; }
         }
         if (assaultFrom) {
           assaultTurret(assaultFrom, t, Math.ceil(t.hp / 8) + 6);

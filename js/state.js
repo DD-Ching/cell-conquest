@@ -54,8 +54,11 @@ export const state = {
   // path that needs "give me X by id" is an O(1) Map.get instead of an O(N)
   // array.find / .some. Stale only between simulate() calls — never used
   // outside the sim window.
-  turretById: new Map(),     // id -> turret
-  fleetById:  new Map(),     // _id -> fleet (alive fleets only — built before
+  turretById:     new Map(), // id -> turret
+  turretsByOwner: new Map(), // owner -> turret[] — used by AI hub-loop so each
+                             //   hub iterates only its own turrets instead of
+                             //   filtering the whole array 5 times per tick.
+  fleetById:      new Map(), // _id -> fleet (alive fleets only — built before
                              //               drone/fleet death cleanups)
 
   // Camera / view

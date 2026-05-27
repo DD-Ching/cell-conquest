@@ -154,7 +154,13 @@ function simulate(dt) {
   // in the map; consumers gate on falsy result, which is the same check
   // they already did before.)
   state.turretById.clear();
-  for (const t of state.turrets) state.turretById.set(t.id, t);
+  state.turretsByOwner.clear();
+  for (const t of state.turrets) {
+    state.turretById.set(t.id, t);
+    let bucket = state.turretsByOwner.get(t.owner);
+    if (!bucket) { bucket = []; state.turretsByOwner.set(t.owner, bucket); }
+    bucket.push(t);
+  }
   state.fleetById.clear();
   for (const f of state.fleets)  state.fleetById.set(f._id, f);
 

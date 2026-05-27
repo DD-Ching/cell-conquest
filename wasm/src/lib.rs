@@ -17,15 +17,29 @@
 // the indices mean here, only that "same value == same faction".
 // =====================================================
 
+use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
-/// For each drone, return the index of the nearest enemy ground fleet whose
-/// squared distance is below `detect_r2`. Returns -1 for drones with no
-/// valid target in range.
-///
-/// All input slices live in JS memory; wasm-bindgen passes them in via the
-/// shared linear-memory buffer without an extra copy. Output is a single
-/// Vec<i32> (length = drone count).
+const GRID_CELL: f32 = 250.0;
+
+/// Spatial grid built in Rust memory. Same scheme as the JS-side grid in
+/// main.simulate(): cellKey = floor(x/CELL) * 10000 + floor(y/CELL) maps to
+/// the list of ground-fleet indices inside that cell. Rebuilt per call.
+fn build_ground_grid(gx: &[f32], gy: &[f32]) -> HashMap<i32, Vec<u32>> {
+    let mut grid: HashMap<i32, Vec<u32>> = HashMap::with_capacity(gx.len());
+    for j in 0..gx.len() {
+        let cx = (gx[j] / GRID_CELL).floor() as i32;
+        let cy = (gy[j] / GRID_CELL).floor() as i32;
+        let key = cx * 10000 + cy;
+        grid.entry(key).or_default().push(j as u32);
+    }
+    grid
+}
+
+/// For each drone, return the index of the nearest enemy ground fleet
+/// whose squared distance is below `detect_r2`. Returns -1 when no valid
+/// target is in range. Uses an internal spatial grid so the inner loop
+/// touches only ground fleets in the drone's local cell window.
 #[wasm_bindgen]
 pub fn drone_hunt_targets(
     drone_x: &[f32],
@@ -39,27 +53,38 @@ pub fn drone_hunt_targets(
     let n = drone_x.len();
     let m = ground_x.len();
     let mut out = vec![-1i32; n];
+    if m == 0 || n == 0 {
+        return out;
+    }
 
-    // No spatial grid in this POC — brute force is fast enough at the
-    // entity counts we hit (and we want a clean apples-to-apples speedup
-    // measurement vs JS's already-gridded path). Adding a grid here would
-    // reduce inner work further if we ever push entity counts higher.
+    let grid = build_ground_grid(ground_x, ground_y);
+    let range = (detect_r2.sqrt() / GRID_CELL).ceil() as i32;
+
     for i in 0..n {
         let owner = drone_owner[i];
         let dxi = drone_x[i];
         let dyi = drone_y[i];
+        let cx0 = (dxi / GRID_CELL).floor() as i32;
+        let cy0 = (dyi / GRID_CELL).floor() as i32;
         let mut best_d2 = detect_r2;
         let mut best_idx: i32 = -1;
-        for j in 0..m {
-            if ground_owner[j] == owner {
-                continue;
-            }
-            let dx = ground_x[j] - dxi;
-            let dy = ground_y[j] - dyi;
-            let d2 = dx * dx + dy * dy;
-            if d2 < best_d2 {
-                best_d2 = d2;
-                best_idx = j as i32;
+        for cx in (cx0 - range)..=(cx0 + range) {
+            for cy in (cy0 - range)..=(cy0 + range) {
+                if let Some(bucket) = grid.get(&(cx * 10000 + cy)) {
+                    for &j in bucket {
+                        let ju = j as usize;
+                        if ground_owner[ju] == owner {
+                            continue;
+                        }
+                        let dx = ground_x[ju] - dxi;
+                        let dy = ground_y[ju] - dyi;
+                        let d2 = dx * dx + dy * dy;
+                        if d2 < best_d2 {
+                            best_d2 = d2;
+                            best_idx = j as i32;
+                        }
+                    }
+                }
             }
         }
         out[i] = best_idx;

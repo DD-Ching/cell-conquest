@@ -1,13 +1,10 @@
 /* @ts-self-types="./cell_sim.d.ts" */
 
 /**
- * For each drone, return the index of the nearest enemy ground fleet whose
- * squared distance is below `detect_r2`. Returns -1 for drones with no
- * valid target in range.
- *
- * All input slices live in JS memory; wasm-bindgen passes them in via the
- * shared linear-memory buffer without an extra copy. Output is a single
- * Vec<i32> (length = drone count).
+ * For each drone, return the index of the nearest enemy ground fleet
+ * whose squared distance is below `detect_r2`. Returns -1 when no valid
+ * target is in range. Uses an internal spatial grid so the inner loop
+ * touches only ground fleets in the drone's local cell window.
  * @param {Float32Array} drone_x
  * @param {Float32Array} drone_y
  * @param {Uint8Array} drone_owner

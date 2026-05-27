@@ -11,7 +11,7 @@ import { catchUpAllNodes } from './world.js';
 
 // Cached DOM refs — populated by buildHUD, reused by updateHUD so we don't
 // re-getElementById 10+ times per frame.
-const _hudEls = { unitsByFaction: {}, nodesByFaction: {}, timer: null, zoom: null, speed: null };
+const _hudEls = { unitsByFaction: {}, nodesByFaction: {}, timer: null, zoom: null, speed: null, perf: null };
 let _hudLastT = 0;
 
 export function buildHUD() {
@@ -55,7 +55,14 @@ export function buildHUD() {
   _hudEls.timer = document.getElementById('timer');
   _hudEls.zoom  = document.getElementById('zoom');
   _hudEls.speed = document.getElementById('speed');
+  _hudEls.perf  = document.getElementById('perf');
   _hudLastT = 0;
+}
+
+function avgF32(arr) {
+  let s = 0;
+  for (let i = 0; i < arr.length; i++) s += arr[i];
+  return s / arr.length;
 }
 
 export function updateHUD() {
@@ -84,4 +91,10 @@ export function updateHUD() {
   if (_hudEls.timer) _hudEls.timer.textContent = formatTime(state.elapsed);
   if (_hudEls.zoom)  _hudEls.zoom.textContent  = `${Math.round(state.zoom * 100)}%`;
   if (_hudEls.speed) _hudEls.speed.textContent = `Speed ${state.timeScale}×`;
+  if (_hudEls.perf) {
+    const frameMs = avgF32(state._perfFrameMs);
+    const simMs   = avgF32(state._perfSimMs);
+    const fps     = frameMs > 0 ? Math.round(1000 / frameMs) : 0;
+    _hudEls.perf.textContent = `${fps} fps · ${simMs.toFixed(1)} ms sim`;
+  }
 }

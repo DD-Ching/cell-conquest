@@ -262,6 +262,7 @@ function loop() {
     // sub-step with N×dt, while movement / production / drone updates still
     // run every step. Same DPS × game-time, ~half the combat work at 10×+.
     const combatDecimate = subSteps >= 4 ? 2 : 1;
+    const simT0 = performance.now();
     for (let s = 0; s < subSteps; s++) {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
@@ -270,9 +271,14 @@ function loop() {
       updateTracers(subDt);
       updateScorches(subDt);
     }
+    state._perfSimMs[state._perfIdx] = performance.now() - simT0;
     state.elapsed += gameDt;
     checkVictory();
   }
+  // Record real-frame duration into the rolling perf buffer regardless of
+  // pause / gameOver (so the HUD keeps updating with FPS even when paused).
+  state._perfFrameMs[state._perfIdx] = realDt * 1000;
+  state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
   updateSnow(realDt);
   updateHUD();
   render();

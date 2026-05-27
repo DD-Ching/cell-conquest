@@ -129,6 +129,12 @@ export const state = {
   gameOver: false,
   paused: false,             // Space toggles. Render + HUD keep running; sim,
                              // AI, particles, and elapsed clock are frozen.
+  // Rolling perf samples shown in the HUD so wasm / optimisation changes
+  // are visible without DevTools. Each is a small circular buffer; the
+  // HUD reads avg() at 10 Hz. _perfIdx is the write head.
+  _perfFrameMs: new Float32Array(60),   // last 60 wall-clock frame durations
+  _perfSimMs:   new Float32Array(60),   // last 60 simulate() block durations
+  _perfIdx: 0,
   startTime: 0,
   elapsed: 0,
   lastTime: 0,

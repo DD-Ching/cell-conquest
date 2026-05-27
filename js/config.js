@@ -86,7 +86,7 @@ export const DRONE_DAMAGE = 50;
 // drone fleet" stays bounded, individual drones get culled if they wander too
 // long without engaging.
 export const DRONE_CAP_PER_FACTION = 150;     // soft cap — factories skip prod when met
-export const DRONE_MAX_LIFETIME    = 90;      // game-seconds; expires past this
+export const DRONE_MAX_LIFETIME    = 360;     // game-seconds; expires past this
 // Drones now hunt enemy ground fleets they detect in flight.
 export const DRONE_DETECT_R = 110;      // scan radius for nearby ground fleets
 export const DRONE_HUNT_DMG = 18;       // damage to fleet on impact (less than fixed-target)

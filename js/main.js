@@ -156,8 +156,18 @@ function checkVictory() {
   const owners = new Set(state.nodes.map(n => n.owner));
   for (const f of state.fleets) owners.add(f.owner);
   owners.delete('neutral');
-  if (!owners.has('player')) endGame(false, 'Your forces have been wiped out.');
-  else if (owners.size === 1) endGame(true, `Total domination in ${formatTime(state.elapsed)}.`);
+  // "Your side" = any owner allied with the player (player + Lieutenant
+  // are on the same side). Defeat only triggers when NO ally of yours
+  // owns a node or in-flight fleet — delegating every base to the
+  // Lieutenant must NOT end the game.
+  let yoursAlive = false;
+  let enemyAlive = false;
+  for (const o of owners) {
+    if (isAlly(o, 'player')) yoursAlive = true;
+    else                     enemyAlive = true;
+  }
+  if (!yoursAlive)      endGame(false, 'Your forces have been wiped out.');
+  else if (!enemyAlive) endGame(true,  `Total domination in ${formatTime(state.elapsed)}.`);
 }
 
 function endGame(win, sub) {

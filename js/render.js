@@ -196,7 +196,8 @@ function drawTerrain(ctx, zoom) {
     ctx.lineWidth = 0.8 / zoom;
     ctx.stroke();
   }
-  // Then rocks (small dark dots, slight highlight)
+  // Rocks are sub-3-px specks at low zoom — invisible anyway, skip.
+  if (state._lod < 3) return;
   for (const t of state.terrain) {
     if (t.kind !== 'rock') continue;
     if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
@@ -217,6 +218,9 @@ function drawScorches(ctx, zoom, now) {
   if (state.groundScorch) {
     ctx.drawImage(state.groundScorch, 0, 0, WORLD_W, WORLD_H);
   }
+  // Baked layer already covers the map; the per-frame active-scorch radial
+  // gradients are decorations not worth their cost when zoomed out.
+  if (state._lod < 2) return;
   const { vL, vT, vR, vB } = state._view;
   for (const s of state.scorches) {
     if (s.x + s.r < vL || s.x - s.r > vR || s.y + s.r < vT || s.y - s.r > vB) continue;
@@ -278,6 +282,7 @@ function drawRoads(ctx, zoom) {
 // ---- Wreck piles (physical debris fleets must steer around) ----
 function drawWreckPiles(ctx, zoom) {
   const { vL, vT, vR, vB } = state._view;
+  const lowLOD = state._lod < 2;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     // Edge-AABB cull on the parent road — wrecks live on the segment
@@ -285,6 +290,12 @@ function drawWreckPiles(ctx, zoom) {
         Math.max(a.y, b.y) < vT || Math.min(a.y, b.y) > vB) continue;
     const e = getEdge(r.a, r.b);
     if (!e || !e.wrecks || e.wrecks.length === 0) continue;
+    if (lowLOD) {
+      // Single dark pixel per pile — enough to read "this road is blocked".
+      ctx.fillStyle = 'rgba(20, 10, 4, 0.7)';
+      for (const w of e.wrecks) ctx.fillRect(w.x - 2, w.y - 2, 4, 4);
+      continue;
+    }
     for (const w of e.wrecks) {
       const hpFrac = Math.max(0.4, w.hp / w.hpMax);   // fades while being cleared
       ctx.save();
@@ -390,6 +401,9 @@ function drawShells(ctx, zoom) {
 
 // ---- AA tracer beams (drawn before nodes/turrets so beams pass behind icons) ----
 function drawTracers(ctx, zoom) {
+  // Tracers are sub-frame flashes — at low zoom they're a single pixel of dust
+  // and not worth the per-frame draw cost.
+  if (state._lod < 2) return;
   const { vL, vT, vR, vB } = state._view;
   for (const t of state.tracers) {
     if (Math.max(t.x1, t.x2) < vL || Math.min(t.x1, t.x2) > vR ||
@@ -408,6 +422,7 @@ function drawTracers(ctx, zoom) {
 
 // ---- Fleet trails (faint line from fleet to its next segment node) ----
 function drawFleetTrails(ctx, zoom) {
+  if (state._lod < 2) return;            // skip decoration at low zoom
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (!f.path || f.segIdx >= f.path.length - 1) continue;
@@ -423,6 +438,7 @@ function drawFleetTrails(ctx, zoom) {
 
 // ---- Range rings around active AA / tank / artillery turrets ----
 function drawRangeRings(ctx, zoom) {
+  if (state._lod < 2) return;            // dashed rings invisible when tiny
   for (const t of state.turrets) {
     if (!t.active) continue;
     const r = TURRET_RANGES[t.type];
@@ -557,6 +573,30 @@ function drawNodes(ctx, zoom, now) {
 // ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----
 function drawTurrets(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
+  // Low LOD: detailed sprites become invisible chunks at zoom 0.5×, so we
+  // fall back to single colored primitives (shape per type) — same visual
+  // information, 1/10th of the draw calls.
+  if (state._lod < 2) {
+    for (const t of state.turrets) {
+      if (t.x + 14 < vL || t.x - 14 > vR || t.y + 14 < vT || t.y - 14 > vB) continue;
+      if (t.pendingEngineer) ctx.globalAlpha = 0.35;
+      ctx.fillStyle = t.active ? COLOR[t.owner] : COLOR[t.owner] + '88';
+      if (t.type === 'antiair') {
+        ctx.fillRect(t.x - 5, t.y - 5, 10, 10);                // small square
+      } else if (t.type === 'tank') {
+        ctx.beginPath(); ctx.arc(t.x, t.y, 6, 0, Math.PI * 2); ctx.fill();
+      } else if (t.type === 'factory') {
+        ctx.fillRect(t.x - 7, t.y - 7, 14, 14);                // larger square
+      } else if (t.type === 'artillery') {
+        ctx.beginPath();                                       // diamond
+        ctx.moveTo(t.x, t.y - 7); ctx.lineTo(t.x + 7, t.y);
+        ctx.lineTo(t.x, t.y + 7); ctx.lineTo(t.x - 7, t.y);
+        ctx.closePath(); ctx.fill();
+      }
+      if (t.pendingEngineer) ctx.globalAlpha = 1.0;
+    }
+    return;
+  }
   for (const t of state.turrets) {
     // Sprites span ~35 px from pivot; skip if outside view + margin.
     if (t.x + 35 < vL || t.x - 35 > vR || t.y + 35 < vT || t.y - 35 > vB) continue;
@@ -723,6 +763,15 @@ function drawTroopFleets(ctx, zoom) {
     } else if (!f.path) {
       continue;
     }
+    // LOW LOD: skip the whole column of sprites and just draw a chunky dot
+    // for the fleet. At zoom < 0.6 individual sprites are sub-pixel anyway.
+    if (state._lod < 2) {
+      ctx.fillStyle = COLOR[f.owner];
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
     // ENGINEERS / DEPLOY: single dozer (they're individual vehicles)
     if (f.kind === 'engineer' || f.kind === 'deploy') {
       drawEngineerSprite(ctx, f.x, f.y, angle, f.owner, zoom);
@@ -760,6 +809,17 @@ function drawTroopFleets(ctx, zoom) {
 // ---- Drones (delta-wing sprite + HP bar when damaged) ----
 function drawDroneFleets(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
+  // Low LOD: paint drones as small specks so a swarm becomes a stippled
+  // cloud rather than 100 sprite draws.
+  if (state._lod < 2) {
+    for (const f of state.fleets) {
+      if (f.kind !== 'drone') continue;
+      if (f.x < vL || f.x > vR || f.y < vT || f.y > vB) continue;
+      ctx.fillStyle = COLOR[f.owner];
+      ctx.fillRect(f.x - 2, f.y - 2, 4, 4);
+    }
+    return;
+  }
   for (const f of state.fleets) {
     if (f.kind !== 'drone') continue;
     if (f.x + 35 < vL || f.x - 35 > vR || f.y + 35 < vT || f.y - 35 > vB) continue;
@@ -777,6 +837,8 @@ function drawDroneFleets(ctx, zoom, now) {
 
 // ---- Particles (life-based alpha fade) ----
 function drawParticles(ctx, zoom) {
+  // Particles are 2-3 px specks — drop them at low zoom.
+  if (state._lod < 2) return;
   const { vL, vT, vR, vB } = state._view;
   for (const p of state.particles) {
     if (p.x < vL || p.x > vR || p.y < vT || p.y > vB) continue;
@@ -791,6 +853,26 @@ function drawParticles(ctx, zoom) {
 }
 
 // ---- Salvo-target marker (pulsing crosshair on designated enemy during Hold-Fire) ----
+// ---- Always-on-top node count labels (drawn last to beat any sprite) ----
+function drawNodeLabelsOnTop(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const n of state.nodes) {
+    if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+    const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
+    const worldFont = screenFont / zoom;
+    ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
+    // Dark halo so the number reads on any background (troop columns, scorches,
+    // bright glow). Draw it as a thicker stroke under the white fill.
+    ctx.lineWidth = Math.max(2, 3 / zoom);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(Math.floor(n.units), n.x, n.y);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(Math.floor(n.units), n.x, n.y);
+  }
+}
+
 function drawSalvoMarker(ctx, zoom, now) {
   if (!(state.holdFire && state.salvoTarget)) return;
   const s = state.salvoTarget;
@@ -865,6 +947,15 @@ export function render() {
   const vR = state.cameraX + W / zoom + vM;
   const vB = state.cameraY + H / zoom + vM;
   state._view = { vL, vT, vR, vB };
+  // Level-of-Detail tier based on zoom. Bigger maps mean more zoom-out time,
+  // and at small sprite sizes the detail doesn't read anyway — skipping it
+  // is free perf with no visible loss.
+  //   3 = full detail (zoom in close)
+  //   2 = medium (skip the smallest decorations + tracers/particles)
+  //   1 = pixel-quality (skip individual fleet sprites — render whole columns
+  //                       as one colored dot; skip rocks, active scorches,
+  //                       fleet trails, range rings, drone HP bars)
+  state._lod = zoom >= 1.0 ? 3 : zoom >= 0.6 ? 2 : 1;
 
   // Screen-space background (no world transform)
   drawBackground(ctx, W, H);
@@ -892,6 +983,9 @@ export function render() {
   drawParticles(ctx, zoom);
   if (state.drag && state.drag.moved) drawDragPreview(ctx, zoom);
   drawSalvoMarker(ctx, zoom, now);
+  // Always-on-top: node unit counts. Otherwise massed troop columns or drone
+  // swarms parked on a node can completely hide the number — unplayable.
+  drawNodeLabelsOnTop(ctx, zoom);
 
   ctx.restore();
   // --- end world space ----------------------------------------

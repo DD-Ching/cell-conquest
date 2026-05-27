@@ -291,9 +291,11 @@ function drawWreckPiles(ctx, zoom) {
     const e = getEdge(r.a, r.b);
     if (!e || !e.wrecks || e.wrecks.length === 0) continue;
     if (lowLOD) {
-      // Single dark pixel per pile — enough to read "this road is blocked".
-      ctx.fillStyle = 'rgba(20, 10, 4, 0.7)';
-      for (const w of e.wrecks) ctx.fillRect(w.x - 2, w.y - 2, 4, 4);
+      // Match WRECK_RENDER_R = 8 so the pile footprint stays the same as
+      // the detailed render — a road full of wrecks looks just as choked
+      // at low zoom as at high zoom.
+      ctx.fillStyle = 'rgba(20, 10, 4, 0.75)';
+      for (const w of e.wrecks) ctx.fillRect(w.x - 8, w.y - 8, 16, 16);
       continue;
     }
     for (const w of e.wrecks) {
@@ -574,23 +576,28 @@ function drawNodes(ctx, zoom, now) {
 function drawTurrets(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
   // Low LOD: detailed sprites become invisible chunks at zoom 0.5×, so we
-  // fall back to single colored primitives (shape per type) — same visual
-  // information, 1/10th of the draw calls.
+  // fall back to single colored primitives. SIZE-MATCHED to the original
+  // sprites so the world map doesn't visually shrink when LOD kicks in
+  // (AA sprite is ~51 px, tank is ~57, factory ~57, artillery ~66).
   if (state._lod < 2) {
     for (const t of state.turrets) {
-      if (t.x + 14 < vL || t.x - 14 > vR || t.y + 14 < vT || t.y - 14 > vB) continue;
+      if (t.x + 35 < vL || t.x - 35 > vR || t.y + 35 < vT || t.y - 35 > vB) continue;
       if (t.pendingEngineer) ctx.globalAlpha = 0.35;
       ctx.fillStyle = t.active ? COLOR[t.owner] : COLOR[t.owner] + '88';
       if (t.type === 'antiair') {
-        ctx.fillRect(t.x - 5, t.y - 5, 10, 10);                // small square
+        // AA sprite is r≈24 (48 px diameter). Match with a 48×48 square.
+        ctx.fillRect(t.x - 24, t.y - 24, 48, 48);
       } else if (t.type === 'tank') {
-        ctx.beginPath(); ctx.arc(t.x, t.y, 6, 0, Math.PI * 2); ctx.fill();
+        // Tank chassis is ~48×40. Draw a chunky rounded square footprint.
+        ctx.fillRect(t.x - 22, t.y - 18, 44, 36);
       } else if (t.type === 'factory') {
-        ctx.fillRect(t.x - 7, t.y - 7, 14, 14);                // larger square
+        // Factory sprite is 57. Slightly larger building footprint.
+        ctx.fillRect(t.x - 28, t.y - 28, 56, 56);
       } else if (t.type === 'artillery') {
-        ctx.beginPath();                                       // diamond
-        ctx.moveTo(t.x, t.y - 7); ctx.lineTo(t.x + 7, t.y);
-        ctx.lineTo(t.x, t.y + 7); ctx.lineTo(t.x - 7, t.y);
+        // Artillery sprite is 66, long barrel. Diamond r≈33 matches reach.
+        ctx.beginPath();
+        ctx.moveTo(t.x, t.y - 33); ctx.lineTo(t.x + 33, t.y);
+        ctx.lineTo(t.x, t.y + 33); ctx.lineTo(t.x - 33, t.y);
         ctx.closePath(); ctx.fill();
       }
       if (t.pendingEngineer) ctx.globalAlpha = 1.0;
@@ -763,12 +770,27 @@ function drawTroopFleets(ctx, zoom) {
     } else if (!f.path) {
       continue;
     }
-    // LOW LOD: skip the whole column of sprites and just draw a chunky dot
-    // for the fleet. At zoom < 0.6 individual sprites are sub-pixel anyway.
+    // LOW LOD: collapse the column-of-sprites into ONE oriented rect that
+    // matches the visual footprint of the full column at LOD 3 (~36 px wide,
+    // and as long as the column would have been — GAP*count of vehicles). So
+    // the fleet doesn't visually shrink when the player zooms out.
     if (state._lod < 2) {
+      const totalUnits = Math.max(1, Math.floor(f.units));
+      const veh = Math.min(COLUMN_MAX, Math.max(1, Math.ceil(totalUnits / PER_VEH)));
+      const len = 18 + veh * GAP;        // half-length each side ≈ leader→tail
+      const wid = 18;                    // half-width matches single sprite
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      // Oriented rectangle (4 corners) trailing the leader.
+      const hx = cos * 18, hy = sin * 18;            // leader offset
+      const bx = -cos * (len - 18), by = -sin * (len - 18); // tail offset
+      const px = -sin * wid, py = cos * wid;         // perpendicular
       ctx.fillStyle = COLOR[f.owner];
       ctx.beginPath();
-      ctx.arc(f.x, f.y, 8, 0, Math.PI * 2);
+      ctx.moveTo(f.x + hx + px, f.y + hy + py);
+      ctx.lineTo(f.x + hx - px, f.y + hy - py);
+      ctx.lineTo(f.x + bx - px, f.y + by - py);
+      ctx.lineTo(f.x + bx + px, f.y + by + py);
+      ctx.closePath();
       ctx.fill();
       continue;
     }
@@ -809,14 +831,26 @@ function drawTroopFleets(ctx, zoom) {
 // ---- Drones (delta-wing sprite + HP bar when damaged) ----
 function drawDroneFleets(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
-  // Low LOD: paint drones as small specks so a swarm becomes a stippled
-  // cloud rather than 100 sprite draws.
+  // Low LOD: paint drones as oriented triangles matching the full-LOD
+  // delta-wing sprite size (~28 px tip-to-tail) so the swarm doesn't
+  // visually shrink when zoomed out.
   if (state._lod < 2) {
     for (const f of state.fleets) {
       if (f.kind !== 'drone') continue;
-      if (f.x < vL || f.x > vR || f.y < vT || f.y > vB) continue;
+      if (f.x + 18 < vL || f.x - 18 > vR || f.y + 18 < vT || f.y - 18 > vB) continue;
+      const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      // Nose 14 forward, wings 10 back ± 9 perpendicular.
+      const nx =  cos * 14,        ny =  sin * 14;
+      const lx = -cos * 10 - sin * 9, ly = -sin * 10 + cos * 9;
+      const rx = -cos * 10 + sin * 9, ry = -sin * 10 - cos * 9;
       ctx.fillStyle = COLOR[f.owner];
-      ctx.fillRect(f.x - 2, f.y - 2, 4, 4);
+      ctx.beginPath();
+      ctx.moveTo(f.x + nx, f.y + ny);
+      ctx.lineTo(f.x + lx, f.y + ly);
+      ctx.lineTo(f.x + rx, f.y + ry);
+      ctx.closePath();
+      ctx.fill();
     }
     return;
   }

@@ -31,7 +31,8 @@ export function drawRoads(ctx, zoom) {
     const e = getEdge(r.a, r.b);
     // Tint derived purely from pile count — visual readout of congestion,
     // not a speed multiplier (slowdown comes from physical detour).
-    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom);
+    // widthMul comes from world.buildRoads (Gaussian × endpoint connectivity).
+    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul);
   }
 }
 

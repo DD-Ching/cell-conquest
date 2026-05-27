@@ -147,6 +147,22 @@ export function buildRoads() {
     state.roads.push({ a: a.id, b: b.id, length: best[0] });
     parent[find(a.id)] = find(b.id);
   }
+
+  // Per-road width multiplier — driven by endpoint connectivity (hubs grow
+  // highways, peripheries grow country lanes) plus a Gaussian jitter so even
+  // similarly-connected roads don't all look identical. Picks up the "city
+  // outskirts" feel: the dense interior has thicker arteries, the rim has
+  // thinner trails.
+  for (const r of state.roads) {
+    const degA = state.adj.get(r.a).size;
+    const degB = state.adj.get(r.b).size;
+    // Average degree typically 2-6. Map into a 0.65 (peripheral) → 1.35 (hub) range.
+    const importance = 0.65 + Math.min(1, Math.max(0, (degA + degB - 3) / 6)) * 0.7;
+    // Box-Muller for a true Gaussian sample (σ ≈ 0.12 around the importance)
+    const u = 1 - Math.random(), v = Math.random();
+    const gauss = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) * 0.12;
+    r.widthMul = Math.max(0.5, Math.min(1.6, importance + gauss));
+  }
 }
 
 /** Bonus size for hub nodes (degree > 3). Recomputes capacity / regen. */

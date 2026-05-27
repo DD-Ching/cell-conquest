@@ -67,13 +67,16 @@ function blitSprite(ctx, asset, size, tint) {
 }
 
 // =====================================================
-// Roads — thick path with edge highlights (TD feel)
+// Roads — thin path with edge highlights (TD feel). `widthMul` (assigned in
+// world.buildRoads per-edge: ~0.5 for outskirts, ~1.5 for hub arteries)
+// scales the line widths so the map reads as a real road network instead
+// of a uniform grid. Default 1.0 keeps legacy callers working.
 // =====================================================
-export function drawRoadStyled(ctx, a, b, blockage, zoom) {
+export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1) {
   ctx.lineCap = 'round';
   // Dark outer (path edge)
   ctx.strokeStyle = 'rgba(38, 22, 11, 0.95)';
-  ctx.lineWidth = 14 / zoom;
+  ctx.lineWidth = (8 * widthMul) / zoom;
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -84,18 +87,18 @@ export function drawRoadStyled(ctx, a, b, blockage, zoom) {
   const sandG = Math.floor(145 - 60 * blockage);
   const sandB = Math.floor(95 - 50 * blockage);
   ctx.strokeStyle = `rgba(${sandR}, ${sandG}, ${sandB}, ${sandAlpha})`;
-  ctx.lineWidth = 10 / zoom;
+  ctx.lineWidth = (5.5 * widthMul) / zoom;
   ctx.stroke();
   // Wreckage / death-highway overlay
   if (blockage > 0.5) {
     ctx.strokeStyle = `rgba(220, 70, 35, ${Math.min(0.7, blockage * 0.85)})`;
-    ctx.lineWidth = 9 / zoom;
+    ctx.lineWidth = (5 * widthMul) / zoom;
     ctx.setLineDash([7 / zoom, 6 / zoom]);
     ctx.stroke();
     ctx.setLineDash([]);
   } else if (blockage > 0.08) {
     ctx.strokeStyle = `rgba(180, 70, 35, ${blockage * 0.55})`;
-    ctx.lineWidth = 6 / zoom;
+    ctx.lineWidth = (3.5 * widthMul) / zoom;
     ctx.stroke();
   }
   ctx.lineCap = 'butt';

@@ -84,6 +84,20 @@ export function drawNodes(ctx, zoom, now) {
       ctx.globalAlpha = 1;
     }
 
+    // Delegated to subordinate AI — gold ring + small robot tag above.
+    if (n.delegated) {
+      const pulse = 0.7 + 0.3 * Math.sin(now / 380 + n.id * 0.4);
+      ctx.strokeStyle = `rgba(255, 210, 90, ${pulse})`;
+      ctx.lineWidth = 2.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255, 220, 130, ${pulse})`;
+      ctx.font = `${14 / zoom}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText('🤖', n.x, n.y - n.size - 6);
+    }
+
     if (state.selectedIds.has(n.id)) {
       ctx.strokeStyle = '#fff';
       ctx.globalAlpha = 0.65 + Math.sin(now / 180) * 0.25;

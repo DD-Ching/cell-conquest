@@ -243,6 +243,8 @@ function arriveAt(fleet, target) {
       // Owner changed — reset the lazy-regen baseline so the new owner
       // doesn't get a back-dated free-regen bonus.
       target.lastRegenT = state.elapsed;
+      // Subordinate-AI flag is per-base; capture wipes it.
+      target.delegated = false;
       spawnCaptureParticles(target, fleet.owner);
     } else {
       target.units -= fleet.units;

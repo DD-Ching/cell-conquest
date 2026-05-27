@@ -86,6 +86,9 @@ export function placeNodes(rng = Math.random) {
         // of the most recent units-update. catchUpRegen() computes the
         // missing accrual at access time.
         lastRegenT: 0,
+        // Subordinate-AI delegation: player toggles with G. Cleared on any
+        // owner change (capture flips it off in fleets.arriveAt).
+        delegated: false,
       });
     }
   }

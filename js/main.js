@@ -21,6 +21,7 @@ import {
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
+import { subordinateTick } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render, renderMinimap,
@@ -267,6 +268,7 @@ function loop() {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
       for (const ai of AIS) aiTick(ai, subDt);
+      subordinateTick(subDt);                       // friendly AI managing G-delegated bases
       updateParticles(subDt);
       updateTracers(subDt);
       updateScorches(subDt);
@@ -542,6 +544,17 @@ function attachInput() {
     if (e.shiftKey && k === 'w') {
       e.preventDefault();
       toggleWasm();
+    }
+    // G — toggle subordinate-AI delegation on the player node under the
+    // cursor. The subordinate runs its own tick and manages building +
+    // attacks for every node carrying the delegated flag, freeing the
+    // player to focus on the strategic picture.
+    if (k === 'g') {
+      const n = nodeAt(state.mousePos.x, state.mousePos.y);
+      if (n && n.owner === 'player') {
+        n.delegated = !n.delegated;
+        n.flash = Math.max(n.flash, 0.6);
+      }
     }
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);

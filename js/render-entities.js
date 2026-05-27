@@ -24,15 +24,21 @@ export function drawNodes(ctx, zoom, now) {
   // the bottleneck. Just paint the faction rim + dark core + count text —
   // enough to read territory and unit count at strategic zoom.
   if (state._lod < 2) {
+    // At extreme zoom-out, n.size × zoom can be sub-pixel — the node becomes
+    // unclickable AND invisible. Enforce a minimum 6-screen-pixel render so
+    // nodes stay visible (and the zoom-aware nodeAt pick tolerance stays
+    // useful, since the player sees what they're aiming for).
+    const minR = 6 / zoom;
     for (const n of state.nodes) {
-      if (n.x + n.size < vL || n.x - n.size > vR || n.y + n.size < vT || n.y - n.size > vB) continue;
+      const r = Math.max(n.size, minR);
+      if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
       ctx.fillStyle = COLOR[n.owner];
       ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
       ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
+      ctx.arc(n.x, n.y, Math.max(2, r - 4), 0, Math.PI * 2);
       ctx.fill();
     }
     return;

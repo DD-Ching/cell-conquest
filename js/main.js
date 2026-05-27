@@ -11,7 +11,7 @@ import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import {
-  placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt,
+  placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt, turretAt,
 } from './world.js';
 import { sendFleet, assaultTurret, simulateFleets } from './fleets.js';
 import {
@@ -409,11 +409,9 @@ function attachInput() {
       // designates it as the salvo target. On H release, the whole stockpile
       // converges on this single point.
       if (state.holdFire) {
-        const turretAt = state.turrets.find(tt => tt.owner !== 'player'
-          && !tt.pendingEngineer
-          && Math.hypot(tt.x - wx, tt.y - wy) < 14);
-        if (turretAt) {
-          state.salvoTarget = { kind: 'turret', id: turretAt.id, x: turretAt.x, y: turretAt.y };
+        const picked = turretAt(wx, wy, 'player');
+        if (picked) {
+          state.salvoTarget = { kind: 'turret', id: picked.id, x: picked.x, y: picked.y };
           state.drag = null;
           return;
         }
@@ -438,10 +436,9 @@ function attachInput() {
       const releaseNode = nodeAt(wx, wy);
       // First check: did we release on an enemy turret? → assault dispatch.
       // Pending sites (engineer en route) are dirt placeholders, not real
-      // structures — can't assault what isn't there yet.
-      const targetTurret = state.turrets.find(t => t.owner !== 'player'
-        && !t.pendingEngineer
-        && Math.hypot(t.x - wx, t.y - wy) < 14);
+      // structures — can't assault what isn't there yet. turretAt() handles
+      // both the pendingEngineer filter and zoom-aware pick tolerance.
+      const targetTurret = turretAt(wx, wy, 'player');
       const sources = state.selectedIds.has(d.originNode.id)
         ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
         : [d.originNode];

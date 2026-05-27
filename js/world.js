@@ -219,21 +219,43 @@ export function findPath(fromId, toId, traveler) {
   return path;
 }
 
-/** Find topmost node at world coords. */
+/** Find topmost node at world coords. The pick tolerance is widened in world
+ *  units at low zoom so a 30-px node that draws as 3 on-screen pixels still
+ *  has a ~8-screen-pixel click area around it. */
 export function nodeAt(x, y) {
+  const screenSlack = 10 / state.zoom;     // at zoom 1.0 = 10 world-px slack; at zoom 0.1 = 100
   for (const n of state.nodes) {
-    if (Math.hypot(n.x - x, n.y - y) < n.size + 4) return n;
+    if (Math.hypot(n.x - x, n.y - y) < n.size + screenSlack) return n;
   }
   return null;
 }
 
-/** Nearest road segment to world coords (x,y) within tolerance. Returns road or null. */
+/** Nearest road segment to world coords (x,y) within tolerance. Returns road
+ *  or null. Tolerance is inflated at low zoom so thin roads at strategic
+ *  zoom stay clickable for net placement / road-aware interactions. */
 export function roadAt(x, y, tol = 36) {
-  let best = null, bestD = tol;
+  const adjusted = Math.max(tol, 14 / state.zoom);
+  let best = null, bestD = adjusted;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     const d = pointToSegment(x, y, a.x, a.y, b.x, b.y);
     if (d < bestD) { bestD = d; best = r; }
   }
   return best;
+}
+
+/** Topmost non-pending enemy turret near world coords for assault / salvo
+ *  targeting. Tolerance scales with zoom so a 14-px turret stays clickable
+ *  at strategic zoom levels. */
+export function turretAt(x, y, owner = 'player', filter = null) {
+  const tol = Math.max(14, 14 / state.zoom);
+  const tol2 = tol * tol;
+  for (const t of state.turrets) {
+    if (t.owner === owner) continue;
+    if (t.pendingEngineer) continue;
+    if (filter && !filter(t)) continue;
+    const dx = t.x - x, dy = t.y - y;
+    if (dx * dx + dy * dy < tol2) return t;
+  }
+  return null;
 }

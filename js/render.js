@@ -20,7 +20,7 @@ import { state } from './state.js';
 
 import { buildHUD, updateHUD } from './render-hud.js';
 import {
-  makeSnow, updateSnow, updateParticles,
+  makeSnow, updateSnow, updateParticles, bakeTerrain,
   drawBackground, drawTerrain, drawScorches, drawWorldBoundary,
   drawTracers, drawParticles,
 } from './render-atmosphere.js';
@@ -37,7 +37,7 @@ import {
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
-export { makeSnow, updateSnow, updateParticles };
+export { makeSnow, updateSnow, updateParticles, bakeTerrain };
 export { renderMinimap };
 
 export function render() {

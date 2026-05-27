@@ -24,7 +24,7 @@ import { aiTick } from './ai.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render, renderMinimap,
-  makeSnow, updateSnow, updateParticles,
+  makeSnow, updateSnow, updateParticles, bakeTerrain,
 } from './render.js';
 import { loadAssets } from './sprites.js';
 
@@ -76,6 +76,7 @@ export function newGame() {
 
   // World gen
   placeTerrain();
+  bakeTerrain();          // one-time bake — every frame thereafter is a single drawImage
   placeNodes();
   buildRoads();
   adjustHubSizes();

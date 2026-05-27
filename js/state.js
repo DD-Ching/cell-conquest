@@ -39,6 +39,11 @@ export const state = {
                              // world (WORLD_W/2 × WORLD_H/2 ≈ 4 MB) so memory stays
                              // bounded — old burns never accumulate as JS objects.
   groundScorchCtx: null,
+  bakedTerrain: null,        // OFFSCREEN canvas baked once after placeTerrain.
+                             // Each frame we drawImage this single 17 MB texture
+                             // instead of replaying ~6000 ctx ops to redraw the
+                             // sand patches / craters / rocks. Static — only
+                             // re-baked when newGame regenerates terrain.
   turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],

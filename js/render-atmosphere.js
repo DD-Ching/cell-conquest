@@ -12,6 +12,50 @@ import { state } from './state.js';
 import { WORLD_W, WORLD_H } from './config.js';
 
 // =====================================================
+// Terrain bake — sand patches, craters, rocks are all completely static once
+// placeTerrain finishes generating them. Replaying ~6000 ctx ops per frame is
+// the largest render cost we can eliminate with one drawImage of a pre-baked
+// half-res canvas. ~17 MB texture sits in VRAM; per frame is GPU bitblt.
+// =====================================================
+const TERRAIN_BAKE_SCALE = 0.2;   // 12000×9000 world → 2400×1800 offscreen ≈ 17 MB
+
+export function bakeTerrain() {
+  const c = document.createElement('canvas');
+  c.width  = Math.ceil(WORLD_W * TERRAIN_BAKE_SCALE);
+  c.height = Math.ceil(WORLD_H * TERRAIN_BAKE_SCALE);
+  const bctx = c.getContext('2d');
+  bctx.scale(TERRAIN_BAKE_SCALE, TERRAIN_BAKE_SCALE);
+
+  // Patches first (largest), then craters, then rocks — matches the live-draw
+  // painter order so transparency stacking is identical.
+  for (const t of state.terrain) {
+    if (t.kind !== 'patch') continue;
+    const g = bctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r);
+    const inner = Math.floor(80 * t.shade);
+    g.addColorStop(0, `rgba(${inner + 30}, ${Math.floor(inner * 0.55)}, ${Math.floor(inner * 0.30)}, 0.22)`);
+    g.addColorStop(1, 'rgba(60, 30, 12, 0)');
+    bctx.fillStyle = g;
+    bctx.beginPath(); bctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); bctx.fill();
+  }
+  for (const t of state.terrain) {
+    if (t.kind !== 'crater') continue;
+    bctx.fillStyle = 'rgba(20, 10, 5, 0.45)';
+    bctx.beginPath(); bctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); bctx.fill();
+    bctx.strokeStyle = `rgba(${Math.floor(200 * t.shade)}, ${Math.floor(140 * t.shade)}, ${Math.floor(90 * t.shade)}, 0.35)`;
+    bctx.lineWidth = 0.8 / TERRAIN_BAKE_SCALE;  // world-px line width inside the scaled bake ctx
+    bctx.stroke();
+  }
+  for (const t of state.terrain) {
+    if (t.kind !== 'rock') continue;
+    bctx.fillStyle = `rgba(${Math.floor(30 * t.shade)}, ${Math.floor(18 * t.shade)}, ${Math.floor(10 * t.shade)}, 0.8)`;
+    bctx.beginPath(); bctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); bctx.fill();
+    bctx.fillStyle = `rgba(${Math.floor(180 * t.shade)}, ${Math.floor(120 * t.shade)}, ${Math.floor(80 * t.shade)}, 0.35)`;
+    bctx.beginPath(); bctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.5, 0, Math.PI * 2); bctx.fill();
+  }
+  state.bakedTerrain = c;
+}
+
+// =====================================================
 // Atmosphere lifecycle (dust + particles)
 // =====================================================
 
@@ -77,9 +121,16 @@ export function drawBackground(ctx, W, H) {
 }
 
 // ---- World-space ground terrain (sand patches, craters, rocks) ----
+// Single drawImage blit of the pre-baked terrain canvas (see bakeTerrain()).
+// All the per-feature ctx work has already happened off-frame.
 export function drawTerrain(ctx, zoom) {
+  if (state.bakedTerrain) {
+    ctx.drawImage(state.bakedTerrain, 0, 0, WORLD_W, WORLD_H);
+    return;
+  }
+  // Fallback path — bake not yet ready (shouldn't happen after newGame). Run
+  // the live draw so the screen isn't blank during the one frame before bake.
   const { vL, vT, vR, vB } = state._view;
-  // Big soft sand patches first
   for (const t of state.terrain) {
     if (t.kind !== 'patch') continue;
     if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
@@ -88,35 +139,7 @@ export function drawTerrain(ctx, zoom) {
     g.addColorStop(0, `rgba(${inner + 30}, ${Math.floor(inner * 0.55)}, ${Math.floor(inner * 0.30)}, 0.22)`);
     g.addColorStop(1, 'rgba(60, 30, 12, 0)');
     ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // Then craters (slightly raised dark rim + darker inside)
-  for (const t of state.terrain) {
-    if (t.kind !== 'crater') continue;
-    if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
-    ctx.fillStyle = 'rgba(20, 10, 5, 0.45)';
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = `rgba(${Math.floor(200 * t.shade)}, ${Math.floor(140 * t.shade)}, ${Math.floor(90 * t.shade)}, 0.35)`;
-    ctx.lineWidth = 0.8 / zoom;
-    ctx.stroke();
-  }
-  // Rocks are sub-3-px specks at low zoom — invisible anyway, skip.
-  if (state._lod < 3) return;
-  for (const t of state.terrain) {
-    if (t.kind !== 'rock') continue;
-    if (t.x + t.r < vL || t.x - t.r > vR || t.y + t.r < vT || t.y - t.r > vB) continue;
-    ctx.fillStyle = `rgba(${Math.floor(30 * t.shade)}, ${Math.floor(18 * t.shade)}, ${Math.floor(10 * t.shade)}, 0.8)`;
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = `rgba(${Math.floor(180 * t.shade)}, ${Math.floor(120 * t.shade)}, ${Math.floor(80 * t.shade)}, 0.35)`;
-    ctx.beginPath();
-    ctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); ctx.fill();
   }
 }
 

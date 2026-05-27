@@ -318,17 +318,31 @@ export function updateDrones(dt) {
  *  Sorted by score (highest first). Caller picks among top-K. */
 function pickDroneTargetsFor(t) {
   const cands = [];
-  for (const et of state.turrets) {
-    if (et.owner === t.owner) continue;
-    // Pending sites = engineer not arrived yet — the place is just dirt,
-    // not a real structure. Don't waste drones on it.
-    if (et.pendingEngineer) continue;
-    const d = Math.hypot(et.x - t.x, et.y - t.y);
-    let score = 1500 / (d + 200);
-    if (et.type === 'antiair') score *= 1.5;
-    if (et.type === 'factory') score *= 1.8;
-    if (!et.active) score *= 2.0;     // under construction (engineer there) = soft target
-    cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
+  // Drones fly far but score drops sharply with distance — 1500/(d+200) is
+  // already negligible past ~1200 px. Cap the grid query at 1500 px so we
+  // skip turrets across the map that wouldn't be picked anyway.
+  const CELL = 250;
+  const range = Math.ceil(1500 / CELL);
+  const cx0 = Math.floor(t.x / CELL);
+  const cy0 = Math.floor(t.y / CELL);
+  for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
+    for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+      const bucket = state.turretGrid.get(cx * 10000 + cy);
+      if (!bucket) continue;
+      for (const et of bucket) {
+        if (et.owner === t.owner) continue;
+        if (et.pendingEngineer) continue;     // dirt placeholder, not a real target
+        const dx = et.x - t.x, dy = et.y - t.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 1500 * 1500) continue;
+        const d = Math.sqrt(d2);
+        let score = 1500 / (d + 200);
+        if (et.type === 'antiair') score *= 1.5;
+        if (et.type === 'factory') score *= 1.8;
+        if (!et.active) score *= 2.0;
+        cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
+      }
+    }
   }
   if (cands.length === 0) {
     for (const en of state.nodes) {

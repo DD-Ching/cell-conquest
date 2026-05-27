@@ -104,20 +104,20 @@ let nextTurretId = 1;
 export function placeTurretAt(x, y, type, byOwner) {
   const spec = BUILD_SPECS[type];
   if (!spec) return false;
-  let source = null, srcDist = Infinity;
+  // Single pass: track BOTH the nearest own node (anchor — start of the
+  // off-road final leg) AND the nearest own node with enough units to pay
+  // ENG_COST (source — where the engineer fleet is dispatched from). They
+  // can be the same node but often aren't on contested fronts.
+  let source = null, srcD2 = Infinity;
+  let anchor = null, anchorD2 = Infinity;
   for (const n of state.nodes) {
     if (n.owner !== byOwner) continue;
-    if (n.units < ENG_COST + 5) continue;
-    const d = Math.hypot(n.x - x, n.y - y);
-    if (d < srcDist) { srcDist = d; source = n; }
+    const dx = n.x - x, dy = n.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < anchorD2) { anchorD2 = d2; anchor = n; }
+    if (n.units >= ENG_COST + 5 && d2 < srcD2) { srcD2 = d2; source = n; }
   }
-  if (!source) return false;
-  let anchor = source, anchorDist = Math.hypot(source.x - x, source.y - y);
-  for (const n of state.nodes) {
-    if (n.owner !== byOwner) continue;
-    const d = Math.hypot(n.x - x, n.y - y);
-    if (d < anchorDist) { anchorDist = d; anchor = n; }
-  }
+  if (!source || !anchor) return false;
   const path = (source.id === anchor.id) ? [source.id] : findPath(source.id, anchor.id, byOwner);
   if (!path || path.length < 1) return false;
   const turret = {

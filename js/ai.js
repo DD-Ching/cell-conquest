@@ -307,15 +307,29 @@ export function aiTick(owner, dt) {
     if (cand && placeNetOnEdge(cand.a, cand.b, owner)) return;
   }
 
+  // Pre-bucket all fleets by their final-target node id. Phase 1 calls
+  // incomingTo(nodeId) once per my node and Phase 2 does the same per
+  // candidate target — both used to do a full state.fleets scan per call.
+  // With 30 nodes × 50 fleets that's 1500 ops; at 200/200 scale it's 40k
+  // per AI tick. Bucket once, look up in O(1).
+  const fleetsByTarget = new Map();
+  for (const f of state.fleets) {
+    let finalId;
+    if (f.kind === 'drone') finalId = f.targetNodeId;
+    else if (f.path) finalId = f.path[f.path.length - 1];
+    else continue;
+    if (finalId === undefined) continue;
+    let bucket = fleetsByTarget.get(finalId);
+    if (!bucket) { bucket = []; fleetsByTarget.set(finalId, bucket); }
+    bucket.push(f);
+  }
+
   function incomingTo(nodeId) {
     let friendly = 0, hostile = 0, hostileSrc = null;
     const targetOwner = state.nodes[nodeId].owner;
-    for (const f of state.fleets) {
-      let finalId;
-      if (f.kind === 'drone') finalId = f.targetNodeId;
-      else if (f.path) finalId = f.path[f.path.length - 1];
-      else continue;
-      if (finalId !== nodeId) continue;
+    const inbound = fleetsByTarget.get(nodeId);
+    if (!inbound) return { friendly, hostile, hostileSrc };
+    for (const f of inbound) {
       if (f.owner === targetOwner) friendly += f.units;
       else { hostile += f.units; if (!hostileSrc && f.path) hostileSrc = f.path[0]; }
     }
@@ -521,14 +535,12 @@ export function aiTick(owner, dt) {
     const minTime = Math.min(...attackers.map(a => dist(a, target) / FLEET_SPEED));
     let trueDefenders = target.units;
     if (target.owner !== 'neutral') trueDefenders += target.regenRate * minTime;
-    for (const f of state.fleets) {
-      let finalId;
-      if (f.kind === 'drone') finalId = f.targetNodeId;
-      else if (f.path) finalId = f.path[f.path.length - 1];
-      else continue;
-      if (finalId !== tId) continue;
-      if (f.owner === target.owner) trueDefenders += f.units;
-      else if (f.owner === owner) trueDefenders -= f.units;
+    const inbound = fleetsByTarget.get(tId);
+    if (inbound) {
+      for (const f of inbound) {
+        if (f.owner === target.owner) trueDefenders += f.units;
+        else if (f.owner === owner) trueDefenders -= f.units;
+      }
     }
     trueDefenders = Math.max(0, trueDefenders);
 

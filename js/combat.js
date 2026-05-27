@@ -26,20 +26,21 @@ const ARTILLERY_AOE2 = ARTILLERY_AOE * ARTILLERY_AOE;
 // Spatial-grid cell size — matches the build in main.js simulate().
 const GRID_CELL = 250;
 
-/** Iterate every turret in `state.turretGrid` within R of (x,y) and call
- *  `fn(t)`. Touches a (2*range+1)² cell window — for TANK_RADIUS that's
- *  9 cells, vs scanning the whole state.turrets array. */
-function forTurretsNear(x, y, R, fn) {
+/** Iterate every entity in `grid` within R of (x,y) and call `fn(t)`.
+ *  Touches a (2*range+1)² cell window — for TANK_RADIUS that's 9 cells. */
+function forNear(grid, x, y, R, fn) {
   const range = Math.ceil(R / GRID_CELL);
   const cx0 = Math.floor(x / GRID_CELL);
   const cy0 = Math.floor(y / GRID_CELL);
   for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
     for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
-      const bucket = state.turretGrid.get(cx * 10000 + cy);
+      const bucket = grid.get(cx * 10000 + cy);
       if (bucket) for (const t of bucket) fn(t);
     }
   }
 }
+const forTurretsNear = (x, y, R, fn) => forNear(state.turretGrid, x, y, R, fn);
+const forGroundNear  = (x, y, R, fn) => forNear(state.groundFleetGrid, x, y, R, fn);
 
 // ---- Anti-air with saturation ----
 // Each AA splits its DPS across every enemy drone currently in its range.
@@ -89,22 +90,26 @@ export function updateTanks(dt) {
   const tracerRate = 3;
   const tankTurrets = state.turretsByType.get('tank');
   if (!tankTurrets) return;
+  let anyKill = false;
   for (const t of tankTurrets) {
     if (!t.active) continue;
-    // Damage enemy ground fleets in range
-    for (let i = state.fleets.length - 1; i >= 0; i--) {
-      const f = state.fleets[i];
-      if (f.owner === t.owner) continue;
-      if (f.kind === 'drone') continue;
+    // Damage enemy ground fleets in range. Grid query skips out-of-range
+    // fleets entirely (and drones — they're in a separate grid). Kills are
+    // marked via f._dead and swept once at the end of the function so we
+    // don't splice during iteration.
+    forGroundNear(t.x, t.y, TANK_RADIUS, (f) => {
+      if (f.owner === t.owner) return;
+      if (f._dead) return;
       const dx = f.x - t.x, dy = f.y - t.y;
-      if (dx * dx + dy * dy > TANK_R2) continue;
+      if (dx * dx + dy * dy > TANK_R2) return;
       f.units -= TANK_DPS * 0.6 * dt;
       if (f.units < 0.5) {
         addWreckBlockage(f);
         spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
         spawnScorch(f.x, f.y, 'medium');
-        state.fleets.splice(i, 1);
-        continue;
+        f._dead = true;
+        anyKill = true;
+        return;
       }
       if (Math.random() < tracerRate * dt) {
         state.tracers.push({
@@ -112,7 +117,7 @@ export function updateTanks(dt) {
           age: 0, maxAge: 0.22, color: COLOR[t.owner],
         });
       }
-    }
+    });
     // Siege: slow chip damage to enemy turrets within range. Grid lookup
     // touches a 3×3 cell window instead of scanning every turret.
     forTurretsNear(t.x, t.y, TANK_RADIUS, (o) => {
@@ -128,6 +133,13 @@ export function updateTanks(dt) {
         });
       }
     });
+  }
+  // Single cleanup pass for fleets killed by any tank this tick. Skipped
+  // entirely when no tank scored a kill — pure regen-only ticks pay nothing.
+  if (anyKill) {
+    for (let i = state.fleets.length - 1; i >= 0; i--) {
+      if (state.fleets[i]._dead) state.fleets.splice(i, 1);
+    }
   }
 }
 
@@ -159,13 +171,14 @@ function fireArtilleryShell(t) {
     if (dx * dx + dy * dy > ARTILLERY_R2) return;
     cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
   });
-  for (const f of state.fleets) {
-    if (f.kind === 'drone') continue;
-    if (f.owner === t.owner) continue;
+  // Ground fleets in range via grid (skips drones automatically — they're in
+  // droneGrid). Massive saving when there are hundreds of fleets on the map.
+  forGroundNear(t.x, t.y, ARTILLERY_RANGE, (f) => {
+    if (f.owner === t.owner) return;
     const dx = f.x - t.x, dy = f.y - t.y;
-    if (dx * dx + dy * dy > ARTILLERY_R2) continue;
+    if (dx * dx + dy * dy > ARTILLERY_R2) return;
     cands.push({ x: f.x, y: f.y, weight: 1 });
-  }
+  });
   if (cands.length === 0) return;
 
   // Pick the target with the most neighbors inside the AOE — that's a "cluster"
@@ -212,19 +225,21 @@ function detonateArtillery(x, y, owner) {
     const dx = t.x - x, dy = t.y - y;
     if (dx * dx + dy * dy < ARTILLERY_AOE2) t.hp -= ARTILLERY_DAMAGE_TURRET;
   });
-  for (const f of state.fleets) {
-    if (f.kind === 'drone') continue;
-    if (f.owner === owner) continue;
+  // Ground fleets caught in the blast — small AOE radius means typically 1-2
+  // grid cells touched. Drones are immune (separate grid).
+  forGroundNear(x, y, ARTILLERY_AOE, (f) => {
+    if (f.owner === owner) return;
+    if (f._dead) return;       // already killed by an earlier overlapping shell
     const dx = f.x - x, dy = f.y - y;
-    if (dx * dx + dy * dy >= ARTILLERY_AOE2) continue;
+    if (dx * dx + dy * dy >= ARTILLERY_AOE2) return;
     f.units -= ARTILLERY_DAMAGE_FLEET;
     if (f.units < 0.5) {
       addWreckBlockage(f);
       spawnScorch(f.x, f.y, 'medium');
       f._dead = true;
     }
-  }
-  // Cleanup dead fleets
+  });
+  // Cleanup dead fleets — full state.fleets scan only when something died.
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     if (state.fleets[i]._dead) state.fleets.splice(i, 1);
   }

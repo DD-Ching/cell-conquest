@@ -29,6 +29,11 @@ import {
 // =====================================================
 // HUD (DOM)
 // =====================================================
+// Cached DOM refs — populated by buildHUD, reused by updateHUD so we don't
+// re-getElementById 10+ times per frame.
+const _hudEls = { unitsByFaction: {}, nodesByFaction: {}, timer: null, zoom: null, speed: null };
+let _hudLastT = 0;
+
 export function buildHUD() {
   const hud = document.getElementById('hud');
   if (!hud) return;
@@ -37,7 +42,6 @@ export function buildHUD() {
     if (f.id === 'neutral') continue;     // neutral isn't a competing force
     const stats = factionStats[f.id];
     const strength = stats ? stats.strength : 1.0;
-    // Strength is 0.85-1.20; map onto 0..100% bar with 1.0 as midpoint marker.
     const fillPct = Math.max(0, Math.min(100, ((strength - 0.5) / 1.0) * 100));
     const isPlayer = f.id === 'player';
     const tag = isPlayer ? 'BASE' : (
@@ -61,9 +65,26 @@ export function buildHUD() {
     `;
     hud.appendChild(row);
   }
+  // Resolve all the per-update DOM refs once. updateHUD reads from the cache.
+  _hudEls.unitsByFaction = {};
+  _hudEls.nodesByFaction = {};
+  for (const f of FACTIONS) {
+    _hudEls.unitsByFaction[f.id] = document.getElementById(`${f.id}-units`);
+    _hudEls.nodesByFaction[f.id] = document.getElementById(`${f.id}-nodes`);
+  }
+  _hudEls.timer = document.getElementById('timer');
+  _hudEls.zoom  = document.getElementById('zoom');
+  _hudEls.speed = document.getElementById('speed');
+  _hudLastT = 0;
 }
 
 export function updateHUD() {
+  // Throttle to ~10 Hz. HUD counters changing 60×/sec aren't noticeably more
+  // responsive than 10×/sec, and DOM writes are real per-frame work.
+  const now = performance.now();
+  if (now - _hudLastT < 100) return;
+  _hudLastT = now;
+
   const c = {};
   for (const f of FACTIONS) c[f.id] = [0, 0];
   for (const n of state.nodes) {
@@ -72,14 +93,14 @@ export function updateHUD() {
   }
   for (const f of state.fleets) if (c[f.owner]) c[f.owner][0] += (f.units || 0);
   for (const f of FACTIONS) {
-    const u = document.getElementById(`${f.id}-units`);
-    const ns = document.getElementById(`${f.id}-nodes`);
+    const u = _hudEls.unitsByFaction[f.id];
+    const ns = _hudEls.nodesByFaction[f.id];
     if (u) u.textContent = Math.floor(c[f.id][0]);
     if (ns) ns.textContent = c[f.id][1];
   }
-  const t = document.getElementById('timer');     if (t) t.textContent = formatTime(state.elapsed);
-  const z = document.getElementById('zoom');      if (z) z.textContent = `${Math.round(state.zoom * 100)}%`;
-  const s = document.getElementById('speed');     if (s) s.textContent = `Speed ${state.timeScale}×`;
+  if (_hudEls.timer) _hudEls.timer.textContent = formatTime(state.elapsed);
+  if (_hudEls.zoom)  _hudEls.zoom.textContent  = `${Math.round(state.zoom * 100)}%`;
+  if (_hudEls.speed) _hudEls.speed.textContent = `Speed ${state.timeScale}×`;
 }
 
 // =====================================================

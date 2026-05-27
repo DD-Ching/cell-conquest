@@ -37,7 +37,11 @@ export function ensureLieutenantRegistered() {
     added = true;
   }
   if (!factionStats.ally1) {
-    factionStats.ally1 = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
+    // Lieutenant runs *more* aggressive than baseline — you delegated to
+    // them precisely BECAUSE you want expansion. 1.3× aggression / build
+    // chance puts them above an average enemy AI, helping bridge the gap
+    // when they start with just 1-2 bases.
+    factionStats.ally1 = { strength: 1.3, aggressionMul: 1.3, buildChanceMul: 1.3 };
     added = true;
   }
   // Mutual non-aggression pact. setAlly is symmetric + idempotent.
@@ -76,6 +80,14 @@ export function toggleDelegationAt(hoveredNode) {
     n.owner = direction;
     n.flash = Math.max(n.flash, 0.6);
     n.lastRegenT = state.elapsed;          // fresh regen baseline for new owner
+    // Hand-off bonus: when transferring TO the lieutenant, top up units so
+    // the AI has working capital to act with immediately. Without this,
+    // delegating a 20-unit base means aiTick can't meet ANY of its action
+    // thresholds and the lieutenant just sits idle. Reverting back to
+    // player doesn't apply the bonus (no symmetric cheat).
+    if (direction === 'ally1') {
+      n.units = Math.min(n.capacity * 1.2, n.units * 1.5 + 20);
+    }
     flipped++;
   }
   return flipped;

@@ -127,6 +127,28 @@ function retargetOnCooldown(drone) {
   return state.elapsed - (drone._lastRetargetT || 0) < RETARGET_COOLDOWN_S;
 }
 
+// ---- Loiter ----
+// A drone awaiting a target (its objective was captured by its own side, or
+// the retarget scan is on cooldown / found nothing) used to FREEZE in place
+// (`continue` skipped its movement) — which read as drones eerily pausing in
+// mid-air, and made a cluster look like it was stuttering. Instead it now
+// flies a tight holding circle: it keeps cruising, just orbiting a fixed
+// point, so it reads as "loitering, awaiting orders" and peels off the moment
+// a real target is acquired. Orbiting (vs. coasting toward the stale target)
+// is also the SAFE choice — it never drifts onto a now-friendly node and
+// detonates, the hazard the old freeze was guarding against.
+const LOITER_R = 30;                       // orbit radius, world px
+function loiterDrone(drone, dt) {
+  if (drone._loiterCx === undefined) {     // anchor the circle on entry
+    drone._loiterCx = drone.x;
+    drone._loiterCy = drone.y;
+    drone._loiterA  = Math.atan2(drone.y - drone._loiterCy, drone.x - drone._loiterCx) || Math.random() * Math.PI * 2;
+  }
+  drone._loiterA += (DRONE_SPEED / LOITER_R) * dt;   // tangential ≈ cruise speed
+  drone.x = drone._loiterCx + Math.cos(drone._loiterA) * LOITER_R;
+  drone.y = drone._loiterCy + Math.sin(drone._loiterA) * LOITER_R;
+}
+
 // ---- Impact ----
 /** Drone hitting a STATIC target (turret or node). No net protection here —
  *  nets only protect troops on roads (handled in droneHitFleet). */
@@ -285,11 +307,7 @@ export function updateDrones(dt) {
           f.targetId = huntFleet._id;
           f.tx = huntFleet.x; f.ty = huntFleet.y;
         } else if (retargetOnCooldown(f)) {
-          // Skip both the scan AND this tick's movement/arrival. Coasting on
-          // stale tx/ty risks the drone arriving at a now-friendly node before
-          // the next retarget — droneHit doesn't check ownership. Pausing for
-          // one tick is the safe behavior-preserving choice.
-          continue;
+          loiterDrone(f, dt); continue;   // orbit while the scan is on cooldown
         } else {
           f.targetKind = 'turret';
           if (!retargetDrone(f)) {
@@ -307,18 +325,14 @@ export function updateDrones(dt) {
     } else {
       if (!droneTargetExists(f)) {
         if (retargetOnCooldown(f)) {
-          // Same throttle / same safety: pause one tick instead of coasting
-          // toward a stale (possibly now-friendly) target. See note above.
-          continue;
+          loiterDrone(f, dt); continue;       // orbit while throttled
         } else if (!retargetDrone(f)) {
-          for (let k = 0; k < 4; k++) {
-            const a = Math.random() * Math.PI * 2;
-            state.particles.push({
-              x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
-              life: 0.4, maxLife: 0.4, color: '#888', kind: 'impact',
-            });
-          }
-          state.fleets.splice(i, 1); continue;
+          // No valid target anywhere right now — orbit and await one instead
+          // of self-destructing. Stamp the cooldown so we re-scan at most
+          // every RETARGET_COOLDOWN_S; DRONE_MAX_LIFETIME eventually reaps a
+          // drone that never finds work.
+          f._lastRetargetT = state.elapsed;
+          loiterDrone(f, dt); continue;
         }
       }
       if (huntFleet) {
@@ -331,6 +345,11 @@ export function updateDrones(dt) {
         }
       }
     }
+
+    // Reaching here means the drone has a live target and resumes its run —
+    // drop any loiter anchor so the next time it needs to wait it re-circles
+    // from wherever it then is.
+    f._loiterCx = undefined;
 
     // Approach / impact — still need real `d` here because we normalize by it
     // for the movement step (dx/d, dy/d). The arrival check stays scalar.
@@ -441,6 +460,11 @@ function pickDroneTargetsFor(t) {
       // Stripped faction (no production, tiny total units) — the 10↔10 regen
       // oscillation that ate every drone last build. Ground troops handle it.
       if (state.strippedOwners.has(en.owner)) continue;
+      // Near-empty node — drones only chip UNITS (they never capture), so a
+      // base bombed down to a handful is a dead-end target: nothing worth
+      // hitting, and it's a ground-troop capture job. Skip it so we don't
+      // funnel a wave onto an empty city.
+      if (en.units < 6) continue;
       if ((inbound.get('node:' + en.id) || 0) >= TARGET_DRONE_CAP) continue;
       const d = dist(t, en);
       const score = 800 / (d + 200);

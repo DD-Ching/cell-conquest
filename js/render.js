@@ -6,6 +6,7 @@
 //   render-atmosphere.js   background, dust (2 parallax layers), terrain, hex
 //                            grid, scorches, weather haze, particles, tracers,
 //                            heat haze, vignette
+//   render-territory.js    bottom-layer faction turf wash (fades in late-game)
 //   render-world.js        roads, nets, wrecks, shells, range rings, fleet trails,
 //                            placement preview, salvo marker, drag preview, minimap,
 //                            hold-fire banner
@@ -37,6 +38,7 @@ import {
   drawNodes, drawTurrets, drawTroopFleets, drawDroneFleets,
   drawNodeLabelsOnTop,
 } from './render-entities.js';
+import { drawTerritory } from './render-territory.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -81,6 +83,7 @@ export function render() {
   ctx.translate(-state.cameraX, -state.cameraY);
 
   drawTerrain(ctx, zoom);
+  drawTerritory(ctx);                  // faction turf wash — bottom-most, below grid/units
   drawHexGrid(ctx, zoom);              // faint tactical-map watermark over terrain
   drawScorches(ctx, zoom, now);
   drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in

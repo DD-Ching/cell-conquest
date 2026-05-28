@@ -476,29 +476,30 @@ export function drawDragPreview(ctx, zoom) {
         ctx.setLineDash([]);
       }
     }
-  } else if (drag.mode === 'box') {
-    const x = Math.min(drag.startX, drag.x);
-    const y = Math.min(drag.startY, drag.y);
-    const w = Math.abs(drag.x - drag.startX);
-    const h = Math.abs(drag.y - drag.startY);
-    ctx.fillStyle = 'rgba(92, 179, 255, 0.15)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(92, 179, 255, 0.8)';
-    ctx.lineWidth = 1.2 / zoom;
-    ctx.strokeRect(x, y, w, h);
-    // Tactical L-shaped corner brackets — short perpendicular line pairs at
-    // each corner, scaled with box size so they never overwhelm small drags.
-    const tick = Math.max(6, Math.min(18, Math.min(w, h) * 0.18)) / zoom;
+  } else if (drag.mode === 'lasso' && drag.points && drag.points.length) {
+    const pts = drag.points;
+    // Filled freehand loop (auto-closed through the current cursor point).
     ctx.beginPath();
-    // TL
-    ctx.moveTo(x, y + tick); ctx.lineTo(x, y); ctx.lineTo(x + tick, y);
-    // TR
-    ctx.moveTo(x + w - tick, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + tick);
-    // BR
-    ctx.moveTo(x + w, y + h - tick); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - tick, y + h);
-    // BL
-    ctx.moveTo(x + tick, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - tick);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.lineTo(drag.x, drag.y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(92, 179, 255, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(92, 179, 255, 0.85)';
+    ctx.lineWidth = 2 / zoom;
+    ctx.lineJoin = 'round';
     ctx.stroke();
+    // Dashed tether from the cursor back to the start — signals the loop will
+    // auto-close on release.
+    ctx.beginPath();
+    ctx.moveTo(drag.x, drag.y);
+    ctx.lineTo(pts[0].x, pts[0].y);
+    ctx.setLineDash([6 / zoom, 6 / zoom]);
+    ctx.strokeStyle = 'rgba(92, 179, 255, 0.45)';
+    ctx.lineWidth = 1.2 / zoom;
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 

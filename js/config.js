@@ -44,6 +44,25 @@ export const EDGE_PAN_MARGIN = 28;
 export const ZOOM_MIN = 0.1;            // allows whole-world overview (1920×1000 canvas / 12000×9000 world ≈ 0.11 fit)
 export const ZOOM_MAX = 2.2;
 
+// ---- Territory floor tint (late-game turf shading) ----
+// A faction-coloured wash painted on the GROUND beneath connected friendly
+// nodes so an established empire reads as owned turf ("領土" feel). Baked once
+// into a small fixed-size offscreen buffer and re-baked only when ownership
+// changes — see render-territory.js. Memory is independent of WORLD size:
+// TERRITORY_TEX_MAX² · 4 bytes ≈ 4 MB worst case, same on a 12000×9000 theatre
+// as on a tiny arena.
+export const TERRITORY_TEX_MAX    = 1024;  // longest-side px of the bake buffer
+export const TERRITORY_MAX_ALPHA  = 0.20;  // opacity once fully settled
+// Fade driver = fraction of the map that's been claimed (a self-calibrating
+// "the game has settled" proxy that holds at any speed / game length). Below
+// START the wash is invisible (early/mid game); it ramps to full by FULL.
+export const TERRITORY_FADE_START = 0.45;
+export const TERRITORY_FADE_FULL  = 0.85;
+// Footprint sizing, as multiples of the median same-owner edge length so the
+// wash fills the gaps between nodes at any map density.
+export const TERRITORY_NODE_R_MUL = 0.55;  // disc radius = medLen·this (+ node.size)
+export const TERRITORY_EDGE_W_MUL = 0.60;  // connector width = medLen·this
+
 // ---- Time / speed presets ----
 // 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME
 // per-frame sim budget as 20× — the sub-step loop in main.js is capped at 10

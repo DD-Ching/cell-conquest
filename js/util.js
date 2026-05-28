@@ -15,6 +15,21 @@ export function pointToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - x, py - y);
 }
 
+/** Even-odd ray-cast: is (px,py) inside the polygon `poly` (array of {x,y})?
+ *  Used by lasso selection. Treats the vertex list as a closed loop. */
+export function pointInPolygon(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > py) !== (yj > py)) &&
+        (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 export function formatTime(s) {
   const m = Math.floor(s / 60);
   const ss = Math.floor(s % 60);

@@ -8,7 +8,7 @@ import {
   NET_PICK_R,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
-import { dist, formatTime } from './util.js';
+import { dist, formatTime, pointInPolygon } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import {
   placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt, turretAt,
@@ -549,9 +549,18 @@ function attachInput() {
         // override authority. Fleet owner remains the source-node owner
         // (ally1's drag → ally1's fleet → combat behaves the same).
         if (state.drag.originNode && isAlly(state.drag.originNode.owner, 'player')) state.drag.mode = 'send';
-        else if (!state.drag.originNode) state.drag.mode = 'box';
+        else if (!state.drag.originNode) { state.drag.mode = 'lasso'; state.drag.points = [{ x: state.drag.startX, y: state.drag.startY }]; }
         else state.drag.mode = 'none';
       }
+    }
+    // Lasso: accumulate the freehand loop, throttled by a min world-space step
+    // so a long sweep stays a few dozen points instead of thousands.
+    if (state.drag.mode === 'lasso') {
+      const pts = state.drag.points;
+      const last = pts[pts.length - 1];
+      const sx = state.drag.x - last.x, sy = state.drag.y - last.y;
+      const minStep = 7 / state.zoom;
+      if (sx * sx + sy * sy >= minStep * minStep) pts.push({ x: state.drag.x, y: state.drag.y });
     }
   });
 
@@ -622,14 +631,16 @@ function attachInput() {
           sendFleet(from, releaseNode, amt);
         }
       }
-    } else if (d.mode === 'box') {
+    } else if (d.mode === 'lasso') {
       if (!d.shift && !d.ctrl) state.selectedIds.clear();
-      const x1 = Math.min(d.startX, wx), x2 = Math.max(d.startX, wx);
-      const y1 = Math.min(d.startY, wy), y2 = Math.max(d.startY, wy);
-      for (const nd of state.nodes) {
-        // Box-select pulls in both player and Lieutenant nodes (same side).
-        if (isAlly(nd.owner, 'player') && nd.x >= x1 && nd.x <= x2 && nd.y >= y1 && nd.y <= y2) {
-          state.selectedIds.add(nd.id);
+      const pts = d.points;
+      pts.push({ x: wx, y: wy });          // close the loop on the release point
+      if (pts.length >= 3) {
+        for (const nd of state.nodes) {
+          // Lasso pulls in both player and Lieutenant nodes (same side).
+          if (isAlly(nd.owner, 'player') && pointInPolygon(nd.x, nd.y, pts)) {
+            state.selectedIds.add(nd.id);
+          }
         }
       }
     }

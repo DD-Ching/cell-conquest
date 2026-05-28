@@ -265,7 +265,42 @@ export function drawTracers(ctx, zoom) {
   for (const t of state.tracers) {
     if (Math.max(t.x1, t.x2) < vL || Math.min(t.x1, t.x2) > vR ||
         Math.max(t.y1, t.y2) < vT || Math.min(t.y1, t.y2) > vB) continue;
-    const a = 1 - t.age / t.maxAge;
+    const p = t.age / t.maxAge;          // 0 at muzzle → 1 at target
+    if (t.kind === 'aa') {
+      // Machine-gun tracer ROUND: a bright streak travelling from the gun to
+      // the drone + a muzzle flash at the barrel. A rapid stream of these reads
+      // as automatic flak fire and lets you actually see the individual rounds.
+      const bx = t.x1 + (t.x2 - t.x1) * p;
+      const by = t.y1 + (t.y2 - t.y1) * p;
+      let dx = t.x2 - t.x1, dy = t.y2 - t.y1;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len; dy /= len;
+      const streak = 14;                 // streak tail length (world px)
+      ctx.strokeStyle = t.color;
+      ctx.globalAlpha = 0.95 * (1 - p * 0.4);
+      ctx.lineWidth = 2.2 / zoom;
+      ctx.beginPath();
+      ctx.moveTo(bx - dx * streak, by - dy * streak);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      // white-hot bullet tip
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.9 * (1 - p);
+      ctx.beginPath();
+      ctx.arc(bx, by, 1.8 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+      // muzzle flash, brightest the instant the round leaves the barrel
+      if (p < 0.35) {
+        ctx.fillStyle = '#ffe08a';
+        ctx.globalAlpha = (0.35 - p) / 0.35 * 0.8;
+        ctx.beginPath();
+        ctx.arc(t.x1, t.y1, 3.2 / zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      continue;
+    }
+    // Default beam (tank shells, drone tracers): a fading line.
+    const a = 1 - p;
     ctx.strokeStyle = t.color;
     ctx.globalAlpha = a * 0.85;
     ctx.lineWidth = (1.0 + 1.5 * a) / zoom;

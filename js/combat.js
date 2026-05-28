@@ -50,7 +50,12 @@ const forGroundNear  = (x, y, R, fn) => forNear(state.groundFleetGrid, x, y, R, 
 // One drone in range = full AA_DPS; ten drones = AA_DPS / 10 each. So massed
 // drone swarms saturate the defense and a fraction can punch through.
 export function updateAntiAir(dt) {
-  const totalTracerRate = 5;   // total beams/sec per AA (split across targets)
+  // AA is a flak MACHINE GUN, not a missile battery: it spits a rapid stream
+  // of visible tracer ROUNDS at its target (rendered as travelling bullets in
+  // render-atmosphere.drawTracers, tagged kind:'aa'). Cadence is high so the
+  // stream reads as automatic fire; each round is short-lived.
+  const AA_FIRE_RATE = 13;     // tracer rounds/sec per firing AA (machine-gun cadence)
+  const AA_ROUND_AGE = 0.12;   // round lifetime — snappy, so bullets streak fast
   const aaTurrets = state.turretsByType.get('antiair');
   if (!aaTurrets) return;
 
@@ -65,10 +70,9 @@ export function updateAntiAir(dt) {
     const newHp = wasmAaApplyDamage(activeAAs, drones, AA_R2, AA_DPS, dt);
     if (newHp) {
       for (let i = 0; i < drones.length; i++) drones[i].hp = newHp[i];
-      // Tracer pass — purely cosmetic, sample a handful per AA. Skip the
-      // exact per-target tracer-rate math the JS path does; saves a per-
-      // drone-in-range loop while still producing the visual beams.
-      const TRACER_PROB = totalTracerRate * dt * 0.15;
+      // Tracer pass — purely cosmetic machine-gun rounds, one per firing AA
+      // per frame at the cadence above. Doesn't affect damage (Rust did that).
+      const TRACER_PROB = AA_FIRE_RATE * dt;
       const aaRange = Math.ceil(AA_RADIUS / GRID_CELL);
       for (const t of activeAAs) {
         if (Math.random() > TRACER_PROB) continue;
@@ -90,7 +94,7 @@ export function updateAntiAir(dt) {
         if (target) {
           state.tracers.push({
             x1: t.x, y1: t.y, x2: target.x, y2: target.y,
-            age: 0, maxAge: 0.18, color: COLOR[t.owner],
+            age: 0, maxAge: AA_ROUND_AGE, color: COLOR[t.owner], kind: 'aa',
           });
         }
       }
@@ -120,15 +124,14 @@ export function updateAntiAir(dt) {
     }
     if (inRange.length === 0) continue;
     const dpsPerTarget = AA_DPS / inRange.length;
-    const tracerPerTarget = totalTracerRate / inRange.length;
-    for (const f of inRange) {
-      f.hp -= dpsPerTarget * dt;
-      if (Math.random() < tracerPerTarget * dt) {
-        state.tracers.push({
-          x1: t.x, y1: t.y, x2: f.x, y2: f.y,
-          age: 0, maxAge: 0.18, color: COLOR[t.owner],
-        });
-      }
+    for (const f of inRange) f.hp -= dpsPerTarget * dt;
+    // Machine-gun round at the cadence above, aimed at a random in-range drone.
+    if (Math.random() < AA_FIRE_RATE * dt) {
+      const f = inRange[(Math.random() * inRange.length) | 0];
+      state.tracers.push({
+        x1: t.x, y1: t.y, x2: f.x, y2: f.y,
+        age: 0, maxAge: AA_ROUND_AGE, color: COLOR[t.owner], kind: 'aa',
+      });
     }
   }
 }

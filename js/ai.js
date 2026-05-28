@@ -95,6 +95,23 @@ export function aiTick(owner, dt) {
     counts[n.owner] = (counts[n.owner] || 0) + 1;
   }
   const leaderEntry = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+
+  // ===== Elimination focus =====
+  // The win condition is wiping factions out, not painting the map. Drones
+  // only SUPPRESS (chip units) — they can't capture. So when an enemy has
+  // been ground down to its last node or two, the right move is to send
+  // GROUND TROOPS to finish + eliminate it, not keep bombing or wander off
+  // grabbing neutrals. Mark those near-dead enemies; tryCoordinatedAttack
+  // heavily boosts the capture score for their nodes so the AI converges
+  // for the kill. Gated on the AI being established (>=3 nodes) so a 1v1
+  // opening doesn't read the other player's single start base as a "finish".
+  const eliminationOwners = new Set();
+  if (myNodes.length >= 3) {
+    for (const o in counts) {
+      if (isAlly(o, owner) || o === 'neutral') continue;
+      if (counts[o] <= 2) eliminationOwners.add(o);   // down to its last 1-2 bases
+    }
+  }
   const iAmLeader = leaderEntry && leaderEntry[0] === owner;
   let aggression = 1.3 + Math.min(state.elapsed / 180, 2.0);
   if (iAmLeader && myShare > 0.40) aggression *= 1.4;
@@ -237,6 +254,7 @@ export function aiTick(owner, dt) {
   const ctx = {
     owner, myNodes,
     saturationRatio, aggression, antiTurtle, farBehind, fstats,
+    eliminationOwners,
     fleetsByTarget,
     incomingTo, attackerAvail, turretThreatTo, isExposedToEnemyTank,
     // Side-effects (see ai-effects.js):

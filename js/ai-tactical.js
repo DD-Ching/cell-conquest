@@ -111,7 +111,7 @@ export function tryAssaultTurrets(ctx) {
  *  hub next tick. */
 export function tryCoordinatedAttack(ctx) {
   const { owner, myNodes, aggression, fleetsByTarget, attackerAvail, turretThreatTo,
-          sendFleet, assaultTurret } = ctx;
+          eliminationOwners, sendFleet, assaultTurret } = ctx;
 
   const targetMap = new Map();
   for (const my of myNodes) {
@@ -154,6 +154,12 @@ export function tryCoordinatedAttack(ctx) {
     const value = adjCount * 2.8 + target.regenRate * 9 + target.size * 0.5;
     let score = value / (required + 8);
     if (target.owner === 'neutral') score *= 1.5;
+    // ELIMINATION FOCUS — a node belonging to a near-dead enemy (its last
+    // 1-2 bases) is the win-the-game move: capturing it shrinks/eliminates a
+    // faction. Drones can only suppress; ground troops finish the job. Heavy
+    // boost so the AI converges to KILL instead of drifting off grabbing
+    // neutrals while a suppressed enemy sits there regenerating.
+    if (eliminationOwners && eliminationOwners.has(target.owner)) score *= 5.0;
     score *= aggression;
     score *= (1.0 + 0.6 * (1.0 - sat));         // opportunism: emptier targets first
     const avgDist = attackers.reduce((s, a) => s + dist(a, target), 0) / attackers.length;

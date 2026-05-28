@@ -3,17 +3,14 @@
 //
 // Two layers:
 //  1. Programmatic canvas drawing (always works, no assets needed).
-//  2. PNG asset overlay — if a file exists under assets/<name>.png it
-//     will be drawn instead of the primitive. Designed to accept the
-//     Kenney.nl "Top-Down Tanks" and "Tower Defense Top-Down" packs;
-//     see assets/README.md for the exact filenames expected.
+//  2. PNG asset overlay — if assets/<name>.png exists it's drawn instead
+//     of the primitive. Accepts the Kenney.nl "Top-Down Tanks" and
+//     "Tower Defense Top-Down" packs; see assets/README.md for filenames.
 //
 // Sprites do not depend on game state, only on (ctx, x, y, angle,
 // owner, zoom, ...). The faction tint is applied via the owner color.
-//
-// Scale note: dimensions sit at "1.5×" of the original pre-3x sprite
-// pass — i.e., halved from the previous 3× attempt because that looked
-// oversized on the map.
+// Scale note: dimensions sit at "1.5×" — halved from a previous 3× pass
+// that looked oversized on the map.
 // =====================================================
 import { COLOR } from './factions.js';
 
@@ -73,6 +70,14 @@ function loadOne(name) {
     .then(r => r.ok ? r.blob() : null)
     .then(b => b ? createImageBitmap(b) : null)
     .catch(() => null);
+}
+
+/** Drop shadow — flat ellipse offset down-right of the (already
+ *  translated) sprite origin. No shadowBlur — that's very expensive on
+ *  canvas2d at scale; just one arc fill. Drone / troop / engineer use it. */
+function _dropShadow(ctx, rx, ry, ox = 1, oy = 1, alpha = 0.3) {
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  ctx.beginPath(); ctx.ellipse(ox, oy, rx, ry, 0, 0, TAU); ctx.fill();
 }
 
 /** Blit a sprite, sized to fit in `size` world units. Caller has already
@@ -147,6 +152,7 @@ export function drawTroopSprite(ctx, x, y, angle, units, owner, zoom) {
     blitSprite(ctx, Asset.truck, 28.5, c);
   } else if (units >= 40) {
     // ---- Tank (heavy) ----
+    _dropShadow(ctx, 19, 17);
     ctx.fillStyle = '#231509';
     ctx.fillRect(-18, -16.5, 36, 33);              // treads shadow
     ctx.fillStyle = c;
@@ -165,8 +171,10 @@ export function drawTroopSprite(ctx, x, y, angle, units, owner, zoom) {
     ctx.fillRect(6, -2.25, 16.5, 4.5);
     ctx.fillStyle = c;
     ctx.fillRect(6, -1.05, 15, 2.1);
+    _wheelDust(ctx, -18, 6);
   } else if (units >= 12) {
     // ---- APC ----
+    _dropShadow(ctx, 14, 11);
     ctx.fillStyle = '#231509';
     ctx.fillRect(-13.5, -10.5, 27, 21);
     ctx.fillStyle = c;
@@ -175,8 +183,10 @@ export function drawTroopSprite(ctx, x, y, angle, units, owner, zoom) {
     ctx.fillRect(4.5, -4.5, 7.5, 9);                // hatch
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.fillRect(5.25, -3, 6, 2.1);
+    _wheelDust(ctx, -13.5, 4);
   } else {
     // ---- Jeep / light truck ----
+    _dropShadow(ctx, 11, 8);
     ctx.fillStyle = '#231509';
     ctx.fillRect(-10.5, -7.5, 21, 15);
     ctx.fillStyle = c;
@@ -185,8 +195,19 @@ export function drawTroopSprite(ctx, x, y, angle, units, owner, zoom) {
     ctx.fillRect(0, -4.5, 6, 9);                    // cab
     ctx.fillStyle = 'rgba(180,220,255,0.5)';
     ctx.fillRect(1.05, -3, 4.5, 2.1);               // windshield
+    _wheelDust(ctx, -10.5, 3);
   }
   ctx.restore();
+}
+
+/** Dust puffs behind a moving vehicle. `backX` = trailing edge (local
+ *  space, negative); `spread` = band half-width. Three static dots. */
+function _wheelDust(ctx, backX, spread) {
+  ctx.fillStyle = 'rgba(120, 85, 55, 0.4)';
+  ctx.beginPath(); ctx.arc(backX - 1.5, -spread, 1.4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(backX - 1.5,  spread, 1.4, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(110, 78, 50, 0.22)';
+  ctx.beginPath(); ctx.arc(backX - 4.5, 0,       1.2, 0, TAU); ctx.fill();
 }
 
 // =====================================================
@@ -204,6 +225,8 @@ export function drawEngineerSprite(ctx, x, y, angle, owner, zoom) {
     return;
   }
 
+  // Ground drop shadow — sells the chassis sitting above the dust
+  _dropShadow(ctx, 13, 11);
   // Body shadow
   ctx.fillStyle = '#231509';
   ctx.fillRect(-12, -10.5, 27, 21);
@@ -227,9 +250,17 @@ export function drawEngineerSprite(ctx, x, y, angle, owner, zoom) {
 // Drone — clean isosceles triangle (top-down delta-wing silhouette).
 // We're looking straight down on the surface, so the drone reads as a
 // pure arrowhead with a faction-colored body and a thin dark outline.
+// `trail` is an optional array of recent {x,y} world positions (oldest
+// first). When supplied, a fading motion line is drawn behind the drone;
+// when null/undefined the sprite behaves exactly as before. Caller
+// (render-entities.js drawDroneFleets) opts in by maintaining f._trail.
 // =====================================================
-export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
+export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time, trail) {
   const c = COLOR[owner];
+
+  // Trail is in WORLD space — draw it before the local translate/rotate.
+  if (trail) drawDroneTrail(ctx, trail, owner, zoom);
+
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
@@ -239,6 +270,9 @@ export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
     ctx.restore();
     return;
   }
+
+  // Ground drop shadow, offset down-right — drone reads as airborne
+  _dropShadow(ctx, 13, 9, 1.5, 1.5, 0.35);
 
   // Filled isosceles triangle in faction color
   ctx.fillStyle = c;
@@ -274,7 +308,34 @@ export function drawDroneSprite(ctx, x, y, angle, owner, zoom, time) {
   // Tiny orange nose marker
   ctx.fillStyle = '#ff8a3a';
   ctx.beginPath(); ctx.arc(16.5, 0, 1.8, 0, TAU); ctx.fill();
+
+  // Wingtip running lights at the two trailing tips, faction-coloured
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(-10.5, -14.25, 1, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(-10.5,  14.25, 1, 0, TAU); ctx.fill();
   ctx.restore();
+}
+
+// =====================================================
+// Drone fly trail — fading polyline through recent world positions (oldest
+// first), drawn in WORLD space. drawDroneSprite calls it when given `trail`.
+// =====================================================
+export function drawDroneTrail(ctx, trail, owner, zoom) {
+  if (!trail || trail.length < 2) return;
+  const n = trail.length;
+  ctx.strokeStyle = COLOR[owner];
+  ctx.lineCap = 'round';
+  for (let i = 1; i < n; i++) {
+    const t = i / (n - 1);                 // 0 at tail, 1 at head (fade up)
+    ctx.globalAlpha = 0.05 + t * 0.3;
+    ctx.lineWidth = (0.6 + t * 1.2) / zoom;
+    ctx.beginPath();
+    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+    ctx.lineTo(trail[i].x,     trail[i].y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineCap = 'butt';
 }
 
 // =====================================================

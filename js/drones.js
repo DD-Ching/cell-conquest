@@ -581,13 +581,31 @@ function pickDroneTargetsFor(t) {
 }
 
 /** Launch a single drone from factory `t` toward a randomly chosen top-3 target.
- *  Called from engineering.js updateBuildings during normal factory ticks. */
+ *  Returns true if a drone actually launched (so the caller can drain a held
+ *  stockpile). Called from engineering.js updateBuildings during factory ticks. */
 export function launchOneDroneFrom(t) {
   const cands = pickDroneTargetsFor(t);
-  if (cands.length === 0) return;
-  const top = cands.slice(0, Math.min(3, cands.length));
-  const pick = top[Math.floor(Math.random() * top.length)];
-  spawnDrone(t.x, t.y, t.owner, pick.target);
+  let target;
+  if (cands.length) {
+    const top = cands.slice(0, Math.min(3, cands.length));
+    target = top[Math.floor(Math.random() * top.length)].target;
+  } else {
+    // Nothing in scoring range — fall back to the NEAREST enemy node with units
+    // anywhere on the map, so drones never pile up unable to fire just because
+    // the enemy is across the no-man's gap. They'll cross to reach it. (Only
+    // genuinely no enemy-with-units left → hold.)
+    let best = null, bestD2 = Infinity;
+    for (const en of state.nodes) {
+      if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
+      if (state.strippedOwners.has(en.owner) || en.units < DRONE_ENGAGE_UNITS) continue;
+      const dx = en.x - t.x, dy = en.y - t.y, d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = en; }
+    }
+    if (!best) return false;
+    target = { kind: 'node', id: best.id, x: best.x, y: best.y };
+  }
+  spawnDrone(t.x, t.y, t.owner, target);
+  return true;
 }
 
 /** Resolve a stored salvo target (player or AI) against current state.

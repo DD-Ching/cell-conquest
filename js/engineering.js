@@ -500,11 +500,17 @@ export function updateBuildings(dt) {
           if (stockpiling && t.dronesReady < FACTORY_MAX_STOCKPILE) {
             t.dronesReady += 1;
           } else {
-            // Soft cap: if this faction already has DRONE_CAP_PER_FACTION
-            // drones airborne, skip the launch (cooldown still ticks). Keeps
-            // mid-late game from drowning in thousands of in-flight drones.
+            // Not stockpiling (or stockpile full): trickle a drone out. Soft cap:
+            // skip if this faction already has DRONE_CAP_PER_FACTION airborne.
+            // Crucially, a successful launch DRAINS any held stockpile — so a
+            // salvo remainder (drones with no target at release time) or a
+            // leftover never sits stuck on the factory; it trickles out the
+            // moment Hold-Fire is off.
             const live = state.droneCountByOwner.get(t.owner) || 0;
-            if (live < DRONE_CAP_PER_FACTION) launchOneDroneFrom(t);
+            if (live < DRONE_CAP_PER_FACTION) {
+              const launched = launchOneDroneFrom(t);
+              if (launched && t.dronesReady > 0) t.dronesReady -= 1;
+            }
           }
         }
       }

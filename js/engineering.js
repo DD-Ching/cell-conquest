@@ -28,6 +28,7 @@ import {
   TRACER_CAP,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
+import { sfxExplosion } from './audio.js';
 
 export { ENG_SPEED } from './config.js';
 
@@ -319,6 +320,7 @@ export function addWreckBlockage(f) {
 
 /** Cinematic "爆肥" explosion when a turret (esp. tank) dies. */
 export function spawnBigExplosion(x, y, color = '#ff8a3a', n = 20) {
+  sfxExplosion(x, y, n / 20);            // spatialised boom (no-op if audio off/muted)
   for (let k = 0; k < n; k++) {
     const a = Math.random() * Math.PI * 2;
     const sp = 80 + Math.random() * 160;

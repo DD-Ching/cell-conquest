@@ -16,6 +16,7 @@ import {
   ENG_SPEED, ekey,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
+import { sfxCapture } from './audio.js';
 
 // Short final-leg off-road speed (engineer→build-site, assault→turret,
 // return→home). These are 30–150 px hops, not the "stuck behind a wreck
@@ -353,6 +354,7 @@ function arriveAt(fleet, target) {
 }
 
 function spawnCaptureParticles(node, owner) {
+  sfxCapture(node.x, node.y);            // spatialised capture blip (no-op if audio off/muted)
   for (let i = 0; i < 24; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 80 + Math.random() * 140;

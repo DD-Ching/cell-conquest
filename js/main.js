@@ -33,6 +33,7 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm, toggleWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
+import { initAudio, updateAudio, toggleMute } from './audio.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -390,6 +391,7 @@ function loop() {
   state._perfFrameMs[state._perfIdx] = realDt * 1000;
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
   updateSnow(realDt);
+  updateAudio(realDt);     // drone-swarm buzz + AA gunfire, spatialised by the live view
   updateHUD();
   // World canvas: either the worker renders it OR we do it locally on the
   // main thread. The worker owns the canvas after transferControlToOffscreen
@@ -659,9 +661,12 @@ function attachInput() {
       state.paused = !state.paused;
       document.body.classList.toggle('paused', state.paused);
     }
-    // (Minimap removed — the M-key toggle and the bottom-right minimap canvas
-    // are gone; it cost a full node + fleet replot every frame for little
-    // tactical value.)
+    // M — mute / unmute all sound (the M key is free now the minimap is gone;
+    // the bottom-right minimap canvas + its replot-every-frame cost are gone).
+    if (k === 'm') {
+      const m = toggleMute();
+      console.log('[audio] ' + (m ? 'muted' : 'unmuted'));
+    }
     // Debug: Shift+W toggles wasm hot loops on/off so the player can A/B
     // compare the perf overlay (ms sim) between Rust and JS paths.
     if (e.shiftKey && k === 'w') {
@@ -768,6 +773,7 @@ if (wantRenderWorker) {
 }
 resize();
 attachInput();
+initAudio();            // arm Web Audio (context starts on first click/key — autoplay policy)
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
 loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS until ready
 newGame();              // rolls factions, builds HUD, generates world

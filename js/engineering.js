@@ -25,6 +25,7 @@ import {
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
   WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
   DRONE_CAP_PER_FACTION,
+  TRACER_CAP,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
 
@@ -330,6 +331,15 @@ export function spawnBigExplosion(x, y, color = '#ff8a3a', n = 20) {
 }
 
 export function updateTracers(dt) {
+  // FIFO budget: AA / tank ticks emit a tracer per kill-chance roll, which
+  // can spike high in a swarm fight. Cap here, not at spawn, so combat
+  // tuning doesn't have to care. Front-trim is safe because the loop
+  // iterates from the end — splicing index 0 doesn't move anything we
+  // haven't visited yet. Oldest tracers are also the most faded, so they
+  // are the least missed visually.
+  if (state.tracers.length > TRACER_CAP) {
+    state.tracers.splice(0, state.tracers.length - TRACER_CAP);
+  }
   for (let i = state.tracers.length - 1; i >= 0; i--) {
     state.tracers[i].age += dt;
     if (state.tracers[i].age >= state.tracers[i].maxAge) state.tracers.splice(i, 1);

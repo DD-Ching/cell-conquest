@@ -124,6 +124,18 @@ export function tryCoordinatedAttack(ctx) {
     }
   }
 
+  // Hunt mode: is a near-dead / suppressed enemy's node reachable THIS tick?
+  // If so, CONCENTRATE — roll up that enemy's territory instead of wandering
+  // off to paint neutral nodes. (Capture HIS land, not the whole map: the
+  // attack is directional, aimed at finishing one weak enemy, not opportunistic
+  // map-painting.) Neutrals get dampened below so the enemy's own nodes win.
+  let huntMode = false;
+  if (eliminationOwners && eliminationOwners.size) {
+    for (const tId of targetMap.keys()) {
+      if (eliminationOwners.has(state.nodes[tId].owner)) { huntMode = true; break; }
+    }
+  }
+
   let bestAtt = null, bestScore = 0;
   for (const [tId, attackers] of targetMap) {
     const target = state.nodes[tId];
@@ -153,7 +165,10 @@ export function tryCoordinatedAttack(ctx) {
     const sat = target.units / Math.max(1, target.capacity);
     const value = adjCount * 2.8 + target.regenRate * 9 + target.size * 0.5;
     let score = value / (required + 8);
-    if (target.owner === 'neutral') score *= 1.5;
+    // Neutral opportunism — but when we're hunting a weak enemy, DAMP neutrals
+    // hard so the offensive stays pointed at the enemy's territory instead of
+    // peeling off to grab empty land.
+    if (target.owner === 'neutral') score *= huntMode ? 0.4 : 1.5;
     // ELIMINATION FOCUS — a node belonging to a near-dead enemy (its last
     // 1-2 bases) is the win-the-game move: capturing it shrinks/eliminates a
     // faction. Drones can only suppress; ground troops finish the job. Heavy

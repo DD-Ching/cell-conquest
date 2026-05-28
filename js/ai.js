@@ -98,18 +98,43 @@ export function aiTick(owner, dt) {
 
   // ===== Elimination focus =====
   // The win condition is wiping factions out, not painting the map. Drones
-  // only SUPPRESS (chip units) — they can't capture. So when an enemy has
-  // been ground down to its last node or two, the right move is to send
-  // GROUND TROOPS to finish + eliminate it, not keep bombing or wander off
-  // grabbing neutrals. Mark those near-dead enemies; tryCoordinatedAttack
-  // heavily boosts the capture score for their nodes so the AI converges
-  // for the kill. Gated on the AI being established (>=3 nodes) so a 1v1
-  // opening doesn't read the other player's single start base as a "finish".
+  // only SUPPRESS (chip units) — they can't capture. Two kinds of enemy are
+  // worth CONVERGING ground troops on (tryCoordinatedAttack ×5-boosts the
+  // capture score for their nodes so the AI rolls them up rather than drifting
+  // off to grab neutrals):
+  //   (a) near-dead — down to its last 1-2 bases; finish it off.
+  //   (b) SUPPRESSED — it may still hold a lot of ground, but those nodes are
+  //       pinned near-empty: drones bomb it faster than it can rebuild, so its
+  //       garrisons stay tiny and it can't make anything. A suppressed enemy's
+  //       land is CHEAP to take, so the right move is to pour ground troops in
+  //       and roll up its territory WHILE the drones keep it down — suppress +
+  //       capture in the same beat (exactly the "20 bases, all bombed flat,
+  //       just sitting there" case the player flagged).
+  // Case (b) is deliberately SEPARATE from state.strippedOwners (the near-dead
+  // drone-skip set): a suppressed-but-large enemy should KEEP getting bombed,
+  // so it must NOT land in strippedOwners — only here, where GROUND attack
+  // converges on it. Gated on the AI being established (>=3 nodes); case (b)
+  // also waits out the opening (>60s) so early land-grab thinness isn't
+  // misread as suppression.
   const eliminationOwners = new Set();
   if (myNodes.length >= 3) {
+    const enemyUnits = {}, enemyCap = {};
+    for (const n of state.nodes) {
+      if (n.owner === 'neutral' || isAlly(n.owner, owner)) continue;
+      enemyUnits[n.owner] = (enemyUnits[n.owner] || 0) + n.units;
+      enemyCap[n.owner]   = (enemyCap[n.owner]   || 0) + n.capacity;
+    }
     for (const o in counts) {
       if (isAlly(o, owner) || o === 'neutral') continue;
-      if (counts[o] <= 2) eliminationOwners.add(o);   // down to its last 1-2 bases
+      if (counts[o] <= 2) { eliminationOwners.add(o); continue; }   // (a) near-dead
+      // (b) suppressed: still holds ground (>=4 nodes) but the empire is pinned
+      // near-empty (fill < 28%) AND its average garrison is tiny (< 14) — it
+      // can neither defend nor rebuild. Roll it up.
+      if (state.elapsed > 60 && counts[o] >= 4) {
+        const fill = (enemyUnits[o] || 0) / Math.max(1, enemyCap[o] || 1);
+        const avgGarrison = (enemyUnits[o] || 0) / counts[o];
+        if (fill < 0.28 && avgGarrison < 14) eliminationOwners.add(o);
+      }
     }
   }
   const iAmLeader = leaderEntry && leaderEntry[0] === owner;

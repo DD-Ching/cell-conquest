@@ -40,11 +40,18 @@ export const FACTIONS = [];
 export const factionStats = {};
 
 import { resetAlliances } from './alliance.js';
+import { activeTheme } from './themes.js';
 
 /** Roll a new lineup. Called from newGame() before world placement.
  *  Resets alliances + enemy rosters. Ally / subordinate factions are
  *  registered by their own modules (see subordinate.ensureLieutenantRegistered)
- *  AFTER this runs. */
+ *  AFTER this runs.
+ *
+ *  Visual skin (palette / name pool / glow strength) comes from the
+ *  active theme — see themes.js. Default = `mars`, which restores the
+ *  exact original palette + name pool. Override via `?theme=NAME` URL
+ *  param. IDs are theme-invariant so any id-keyed system (NN_OWNERS,
+ *  alliance pacts, persisted state) keeps working across themes. */
 export function rollFactions() {
   AIS.length = 0;
   for (const k of Object.keys(COLOR))   delete COLOR[k];
@@ -53,19 +60,35 @@ export function rollFactions() {
   FACTIONS.length = 0;
   resetAlliances();
 
+  const theme = activeTheme();
+
+  // Build a theme-skinned copy of the AI pool. Both palette and namePool
+  // are applied positionally; AI_POOL itself is left untouched so a
+  // re-roll without reload picks up the same theme cleanly.
+  const themedPool = AI_POOL.map((f, i) => ({
+    id:    f.id,
+    name:  theme.namePool[i % theme.namePool.length],
+    color: theme.palette[i % theme.palette.length],
+  }));
+
   // Pick 1-4 AIs (so total active = 2-5 with player)
   const nAI = 1 + Math.floor(Math.random() * 4);
-  const shuffled = [...AI_POOL].sort(() => Math.random() - 0.5);
+  const shuffled = [...themedPool].sort(() => Math.random() - 0.5);
   for (let i = 0; i < nAI; i++) AIS.push(shuffled[i].id);
 
   // Display order: player first, then enemy AIs, then neutral.
   // Ally factions insert themselves between player and AIs via their own
   // ensure* registration (see subordinate.js).
-  const enemyDefs = AIS.map(id => AI_POOL.find(f => f.id === id));
+  // Player + neutral colours are theme-invariant — the player anchor
+  // needs to read the same regardless of skin so muscle memory carries.
+  const enemyDefs = AIS.map(id => themedPool.find(f => f.id === id));
   const active = [PLAYER_DEF, ...enemyDefs, NEUTRAL_DEF];
   for (const f of active) {
     COLOR[f.id] = f.color;
-    GLOW[f.id]  = hexToRgba(f.color, f.id === 'neutral' ? 0.18 : 0.40);
+    const alpha = (f.id === 'neutral') ? 0.18
+                : (f.id === 'player')  ? 0.40
+                : theme.glowMul;
+    GLOW[f.id]  = hexToRgba(f.color, alpha);
     FACTIONS.push(f);
   }
 

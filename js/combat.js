@@ -161,7 +161,8 @@ export function updateTanks(dt) {
         for (let i = 0; i < groundFleets.length; i++) {
           const f = groundFleets[i];
           if (f._dead) continue;
-          f.units = newUnits[i];
+          const nu = newUnits[i];
+          f.units = Number.isFinite(nu) ? nu : 0;   // firewall: a non-finite result becomes a kill, never a NaN fleet
           if (f.units < 0.5) {
             addWreckBlockage(f);
             spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);

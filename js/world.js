@@ -258,7 +258,21 @@ export function roadAt(x, y, tol = 36) {
  *  Called at every site that reads or writes node.units (AI tick, HUD,
  *  render of a visible node, fleet dispatch/arrival, turret placement).
  *  Replaces the old 1200-Hz × all-nodes regen loop with on-demand work. */
+let _nanHealWarned = false;
 export function catchUpRegen(n) {
+  // Self-heal firewall: if a node's units ever went non-finite (some upstream
+  // bug divided by zero / multiplied by NaN), reset it so the corruption can't
+  // persist or spread when this node next ships a fleet. Warn ONCE with enough
+  // detail to chase the real source — this should never fire in normal play.
+  if (!Number.isFinite(n.units)) {
+    if (!_nanHealWarned) {
+      _nanHealWarned = true;
+      console.warn('[NaN firewall] healed non-finite node.units', { id: n.id, owner: n.owner, cap: n.capacity, regen: n.regenRate, elapsed: state.elapsed });
+    }
+    n.units = 0;
+    n.lastRegenT = state.elapsed;
+    return;
+  }
   // Neutral nodes don't regen (matches the original per-tick logic).
   if (n.owner === 'neutral') { n.lastRegenT = state.elapsed; return; }
   if (n.units >= n.capacity) { n.lastRegenT = state.elapsed; return; }

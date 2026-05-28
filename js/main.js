@@ -355,14 +355,17 @@ function loop() {
   }
 
   if (!state.gameOver && !state.paused) {
-    // Cap sub-steps so high timescales don't blow the per-frame sim budget.
-    // The cap is 10, so 20×/30×/40× all run the SAME 10 sub-steps — a faster
-    // gear just gives each step a larger dt (coarser integration), not more
-    // work. Granularity stays safe: a fleet moves ≤ ~19 px per sub-step even
-    // at 40× (FLEET_SPEED 95 × realDt 0.05 × 40/10), well under DRONE_DETECT_R
-    // (110) and the detour look-ahead, so wreck detour + drone hunt still
-    // resolve. Combat damage is dt-scaled so DPS outcome is unchanged.
-    const subSteps = Math.max(1, Math.min(10, Math.ceil(state.timeScale)));
+    // Sub-step count is derived from a SAFE maximum dt, not a fixed cap, so a
+    // faster gear never enlarges the per-step dt past the value the sim is
+    // proven stable at. 20× worst case (realDt pegged at 0.05) was subDt 0.1
+    // and combat dt 0.2 — rock solid — so we hold every speed to that bound.
+    // 40× on a hitching frame (gameDt 2.0) therefore runs up to 20 sub-steps
+    // of 0.1 rather than 10 of 0.2 (the latter blew unit counts to NaN). On a
+    // smooth 60 fps frame it's only ~7 sub-steps — the count scales with real
+    // frame time, so fast frames stay cheap and slow frames stay numerically
+    // safe. Capped at 20 so a pathological hitch can't explode the budget.
+    const MAX_SUBDT = 0.1;
+    const subSteps = Math.max(1, Math.min(20, Math.ceil(gameDt / MAX_SUBDT)));
     const subDt = gameDt / subSteps;
     // Combat decimation at high time-scale: damage passes run every Nth
     // sub-step with N×dt, while movement / production / drone updates still

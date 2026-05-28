@@ -27,10 +27,10 @@ const OFFROAD_SPEED_MUL = 0.35;
 /** Try to dispatch a troop fleet (own-territory path). Returns true on success. */
 export function sendFleet(from, to, amount) {
   amount = Math.floor(amount);
-  if (amount < 1) return false;
+  if (!(amount >= 1)) return false;        // rejects NaN/Infinity/≤0 (a NaN amount must never subtract from a node)
   catchUpRegen(from);                       // fresh units count before subtracting
   amount = Math.min(amount, Math.floor(from.units));
-  if (amount < 1) return false;
+  if (!(amount >= 1)) return false;        // rejects NaN/Infinity/≤0 (a NaN amount must never subtract from a node)
   const path = findPath(from.id, to.id, from.owner);
   if (!path || path.length < 2) {
     from.flash = Math.max(from.flash, 0.6);
@@ -51,10 +51,10 @@ export function sendFleet(from, to, amount) {
  *  anchor node then leave the road to suicide-attack an enemy turret. */
 export function assaultTurret(from, turret, amount) {
   amount = Math.floor(amount);
-  if (amount < 1) return false;
+  if (!(amount >= 1)) return false;        // rejects NaN/Infinity/≤0 (a NaN amount must never subtract from a node)
   catchUpRegen(from);                       // fresh units count before subtracting
   amount = Math.min(amount, Math.floor(from.units));
-  if (amount < 1) return false;
+  if (!(amount >= 1)) return false;        // rejects NaN/Infinity/≤0 (a NaN amount must never subtract from a node)
   // Anchor: nearest own node to the turret.
   let anchor = from, anchorDist = Math.hypot(from.x - turret.x, from.y - turret.y);
   for (const n of state.nodes) {
@@ -328,6 +328,10 @@ export function simulateFleets(dt) {
 /** Apply a troop fleet's arrival: capture, reinforce, or weaken. Internal —
  *  only called from simulateFleets above when a fleet hits its destination. */
 function arriveAt(fleet, target) {
+  // Firewall: a non-finite arriving force would poison target.units (and then
+  // cascade across the map as that node feeds new fleets). Drop it. sendFleet
+  // already rejects non-finite amounts, so this is belt-and-suspenders.
+  if (!Number.isFinite(fleet.units)) return;
   // Capture-or-reinforce combat needs the current defender count — pull
   // the regen accrual into target.units before the comparison so a node
   // last touched 30 game-seconds ago doesn't fight at stale strength.

@@ -187,6 +187,11 @@ function endGame(win, sub) {
     ? '0 0 24px rgba(255, 200, 90, 0.55)'
     : '0 0 24px rgba(255, 100, 110, 0.55)';
   document.getElementById('msg-sub').textContent = sub;
+  // Cinematic split: victory / defeat get distinct entrance, glow, and CTA
+  // styling via these classes. Always strip the other class first so back-to-back
+  // game-overs don't inherit the previous outcome's flavor.
+  m.classList.remove(win ? 'defeat' : 'victory');
+  m.classList.add(win ? 'victory' : 'defeat');
   // Force the CSS entrance animation to replay on every show
   m.style.display = 'none';
   void m.offsetHeight;        // trigger reflow

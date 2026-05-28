@@ -131,7 +131,10 @@
   #help em { color: var(--text-dim); font-style: normal; }
   #help strong { color: var(--text-base); font-weight: 600; }
 
-  /* ---- Victory / Defeat modal ---- */
+  /* ---- Victory / Defeat modal ----
+     Two outcome flavors share the base #message styles; JS toggles
+     `.victory` / `.defeat` on the modal which selects the entrance
+     animation, glow, subtitle tint, and CTA button gradient. */
   #message {
     position: fixed; top: 50%; left: 50%;
     transform: translate(-50%, -50%) scale(0.96);
@@ -148,14 +151,35 @@
     backdrop-filter: blur(14px) saturate(1.1);
     -webkit-backdrop-filter: blur(14px) saturate(1.1);
     min-width: 320px;
-    animation: modal-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
-  @keyframes modal-enter {
-    from { opacity: 0; transform: translate(-50%, -54%) scale(0.92); }
+  #message.victory {
+    border-color: rgba(255, 200, 140, 0.55);
+    box-shadow:
+      0 0 120px rgba(255, 200, 90, 0.4),
+      0 30px 90px rgba(0, 0, 0, 0.7),
+      0 1px 0 rgba(255, 220, 160, 0.18) inset;
+    animation: modal-enter-victory 0.6s ease-out forwards;
+  }
+  #message.defeat {
+    border-color: rgba(255, 120, 130, 0.45);
+    box-shadow:
+      0 0 80px rgba(255, 100, 110, 0.3),
+      0 30px 90px rgba(0, 0, 0, 0.78),
+      0 1px 0 rgba(255, 180, 180, 0.1) inset;
+    animation: modal-enter-defeat 0.6s ease-out forwards;
+  }
+  @keyframes modal-enter-victory {
+    from { opacity: 0; transform: translate(-50%, -54%) scale(0.88); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes modal-enter-defeat {
+    from { opacity: 0; transform: translate(-50%, -52%) scale(0.94); }
     to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
   #message h1 { margin: 0 0 10px; font-size: 36px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
-  #message p { margin: 0 0 22px; color: var(--text-dim); font-size: 13px; letter-spacing: 0.04em; }
+  #message p#msg-sub { margin: 0 0 22px; color: var(--text-dim); font-size: 14px; letter-spacing: 0.02em; }
+  #message.victory #msg-sub { color: #ffd066; }
+  #message.defeat  #msg-sub { color: #ff8a96; }
   #message button {
     padding: 11px 28px; font-size: 13px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
     background: linear-gradient(180deg, var(--accent), #e09030);
@@ -163,7 +187,17 @@
     box-shadow: 0 4px 16px rgba(255, 130, 50, 0.35), 0 1px 0 rgba(255, 220, 160, 0.4) inset;
     transition: transform 0.15s, box-shadow 0.15s;
   }
+  #message.victory button {
+    background: linear-gradient(180deg, var(--accent), #e09030);
+    box-shadow: 0 4px 16px rgba(255, 130, 50, 0.35), 0 1px 0 rgba(255, 220, 160, 0.4) inset;
+  }
+  #message.defeat button {
+    background: linear-gradient(180deg, #e8a8a8, #d07878);
+    color: #2a0808;
+    box-shadow: 0 4px 16px rgba(220, 110, 110, 0.4), 0 1px 0 rgba(255, 210, 210, 0.45) inset;
+  }
   #message button:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(255, 130, 50, 0.5), 0 1px 0 rgba(255, 220, 160, 0.5) inset; }
+  #message.defeat button:hover { box-shadow: 0 6px 20px rgba(220, 110, 110, 0.55), 0 1px 0 rgba(255, 210, 210, 0.55) inset; }
   #message button:active { transform: translateY(0); }
 
   /* ---- Minimap ---- */

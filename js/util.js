@@ -30,6 +30,18 @@ export function pointInPolygon(px, py, poly) {
   return inside;
 }
 
+/** Do segments (ax,ay)-(bx,by) and (cx,cy)-(dx,dy) properly intersect?
+ *  Orientation-sign test; ignores collinear-touch edge cases (fine for the
+ *  procgen barrier-crossing check — a road grazing a river endpoint is rare
+ *  and harmless either way). */
+export function segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+
 export function formatTime(s) {
   const m = Math.floor(s / 60);
   const ss = Math.floor(s % 60);

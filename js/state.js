@@ -59,6 +59,7 @@ export const state = {
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],
   regions: [],               // procgen: [{id,x,y,type,radius,value,danger}] — empty in legacy gen
+  barriers: [],              // procgen: [{kind:'river'|'canyon',points:[{x,y}]}] — terrain that forces chokepoints
   worldSeed: 0,              // procgen deterministic seed (0 = legacy random gen)
   procgen: false,            // opt-in geography-first generator (?procgen=1)
   adj: new Map(),

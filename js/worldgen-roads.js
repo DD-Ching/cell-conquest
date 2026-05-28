@@ -19,7 +19,7 @@
 // terrain-blocker pass lands — they want to cut across a barrier near a pass.
 // =====================================================
 import { state } from './state.js';
-import { dist } from './util.js';
+import { dist, segmentsIntersect } from './util.js';
 
 const LOCAL_K = 3;
 
@@ -139,5 +139,64 @@ export function generateRoads(rng) {
     let w = importance + gauss(rng) * 0.12;
     if (r.kind === 'highway') w = Math.max(w, 1.25) + 0.2;
     r.widthMul = Math.max(0.5, Math.min(1.8, w));
+  }
+}
+
+/** Whole-graph connectivity (BFS from node 0). */
+function isConnected() {
+  const { nodes, adj } = state;
+  if (!nodes.length) return true;
+  const seen = new Set([0]); const q = [0];
+  while (q.length) { const id = q.shift(); for (const nb of adj.get(id)) if (!seen.has(nb)) { seen.add(nb); q.push(nb); } }
+  return seen.size === nodes.length;
+}
+
+/** Funnel cross-barrier traffic through a few "pass" nodes. Removes every road
+ *  that crosses a terrain barrier, then re-adds the SHORTEST crossings (the
+ *  natural narrow points) until the graph is connected again, keeping ≥2 so a
+ *  chokepoint always reads. Re-added roads become kind 'bridge' and their
+ *  endpoints nodeType 'bridge'. Connectivity is guaranteed (playability beats
+ *  chokepoint purity). Runs after generateRoads; needs state.barriers set. */
+export function applyBarrierChokepoints() {
+  const { barriers, nodes, adj } = state;
+  if (!barriers || !barriers.length) return;
+
+  const crossing = [];
+  for (const r of state.roads) {
+    const a = nodes[r.a], b = nodes[r.b];
+    let hit = false;
+    for (const bar of barriers) {
+      const p = bar.points;
+      for (let i = 0; i < p.length - 1; i++) {
+        if (segmentsIntersect(a.x, a.y, b.x, b.y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y)) { hit = true; break; }
+      }
+      if (hit) break;
+    }
+    if (hit) crossing.push(r);
+  }
+  if (crossing.length < 2) return;   // can't form a meaningful chokepoint
+
+  const crossSet = new Set(crossing);
+  for (const r of crossing) { adj.get(r.a).delete(r.b); adj.get(r.b).delete(r.a); }
+  state.roads = state.roads.filter(r => !crossSet.has(r));
+
+  crossing.sort((x, y) => x.length - y.length);
+  let kept = 0;
+  for (const r of crossing) {
+    adj.get(r.a).add(r.b); adj.get(r.b).add(r.a);
+    r.kind = 'bridge';
+    state.roads.push(r);
+    nodes[r.a].nodeType = 'bridge';
+    nodes[r.b].nodeType = 'bridge';
+    if (++kept >= 2 && isConnected()) break;
+  }
+  if (!isConnected()) {                 // safety: re-add until fully reachable
+    for (const r of crossing) {
+      if (adj.get(r.a).has(r.b)) continue;
+      adj.get(r.a).add(r.b); adj.get(r.b).add(r.a);
+      r.kind = 'bridge'; state.roads.push(r);
+      nodes[r.a].nodeType = 'bridge'; nodes[r.b].nodeType = 'bridge';
+      if (isConnected()) break;
+    }
   }
 }

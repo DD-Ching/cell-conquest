@@ -71,6 +71,8 @@ function hydrate(snap) {
   state.fleets    = snap.fleets;
   state.roads     = snap.roads;
   state.edgeData  = new Map(snap.edgeData);
+  state.regions   = snap.regions  || [];   // procgen region tint
+  state.barriers  = snap.barriers || [];   // procgen river/canyon shapes
 
   state.particles = snap.particles;
   state.dust      = snap.dust;

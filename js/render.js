@@ -7,6 +7,7 @@
 //                            grid, scorches, weather haze, particles, tracers,
 //                            heat haze, vignette
 //   render-territory.js    bottom-layer faction turf wash (fades in late-game)
+//   render-procgen.js      procgen region tint + river/canyon barrier shapes
 //   render-world.js        roads, nets, wrecks, shells, range rings, fleet trails,
 //                            placement preview, salvo marker, drag preview, minimap,
 //                            hold-fire banner
@@ -39,6 +40,7 @@ import {
   drawNodeLabelsOnTop,
 } from './render-entities.js';
 import { drawTerritory } from './render-territory.js';
+import { drawProcgen } from './render-procgen.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -84,6 +86,7 @@ export function render() {
 
   drawTerrain(ctx, zoom);
   drawTerritory(ctx);                  // faction turf wash — bottom-most, below grid/units
+  drawProcgen(ctx);                    // procgen region tint + river/canyon barriers (below grid/roads)
   drawHexGrid(ctx, zoom);              // faint tactical-map watermark over terrain
   drawScorches(ctx, zoom, now);
   drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in

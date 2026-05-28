@@ -130,11 +130,12 @@ function blitSprite(ctx, asset, size, tint) {
 // ~0.5 for outskirts, ~1.5 for hub arteries) layers natural road hierarchy
 // on top.
 // =====================================================
-export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1) {
+export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null) {
   ctx.lineCap = 'round';
-  // Dark outer (path edge)
-  ctx.strokeStyle = 'rgba(38, 22, 11, 0.95)';
-  ctx.lineWidth = 8 * widthMul;
+  // Dark outer (path edge). Bridges get a wider steel deck shadow so a
+  // chokepoint reads even before the accent stroke.
+  ctx.strokeStyle = kind === 'bridge' ? 'rgba(20, 26, 36, 0.95)' : 'rgba(38, 22, 11, 0.95)';
+  ctx.lineWidth = (kind === 'bridge' ? 9.5 : 8) * widthMul;
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -157,6 +158,19 @@ export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1) {
   } else if (blockage > 0.08) {
     ctx.strokeStyle = `rgba(180, 70, 35, ${blockage * 0.55})`;
     ctx.lineWidth = 3.5 * widthMul;
+    ctx.stroke();
+  }
+  // Road-class accent (procgen): a warm median dash marks inter-region highways;
+  // a cool steel deck marks bridges/passes so chokepoints read at a glance.
+  if (kind === 'highway') {
+    ctx.strokeStyle = 'rgba(255, 208, 120, 0.5)';
+    ctx.lineWidth = 1.6 * widthMul;
+    ctx.setLineDash([14, 10]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if (kind === 'bridge') {
+    ctx.strokeStyle = 'rgba(150, 170, 200, 0.85)';
+    ctx.lineWidth = 3 * widthMul;
     ctx.stroke();
   }
   ctx.lineCap = 'butt';

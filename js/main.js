@@ -33,7 +33,7 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm, toggleWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
-import { generateWorld } from './worldgen.js';
+import { generateWorld, pickRegionStarts } from './worldgen.js';
 import { initAudio, updateAudio, toggleMute } from './audio.js';
 
 // =====================================================
@@ -133,37 +133,41 @@ export function newGame() {
   }
   adjustHubSizes();
 
-  // Faction starts (spread out)
+  // Faction starts. Procgen: one capital per DISTINCT high-value region, spread
+  // out + with viable expansion (worldgen.pickRegionStarts) so each faction has
+  // a geographic identity instead of a random corner. Legacy gen — or any
+  // shortfall — falls back to farthest-point from already-placed starts. Stats
+  // are applied identically regardless of how the node was chosen.
+  // Skip 'ally1' — the Lieutenant is YOUR AI, not a separate faction. It starts
+  // with zero bases; the player grows it by pressing G to delegate.
+  const factionOwners = ['player', ...AIS].filter(o => o !== 'ally1');
   const placed = [];
-  function pickFar(owner, others) {
+  function applyCapitalStats(node, owner) {
+    const fs = factionStats[owner];
+    const strength = fs ? fs.strength : 1.0;
+    node.owner     = owner;
+    node.units     = Math.floor(48 * strength);
+    node.size      = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
+    node.capacity  = Math.floor(145 * strength);
+    node.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
+  }
+  function pickFarNode() {
     let best = null, bestD = -1;
     for (const n of state.nodes) {
       if (n.owner !== 'neutral') continue;
       let minD;
-      if (others.length === 0) minD = dist(n, { x: WORLD_W / 2, y: WORLD_H / 2 });
-      else { minD = Infinity; for (const o of others) { const d = dist(n, o); if (d < minD) minD = d; } }
+      if (placed.length === 0) minD = dist(n, { x: WORLD_W / 2, y: WORLD_H / 2 });
+      else { minD = Infinity; for (const o of placed) { const d = dist(n, o); if (d < minD) minD = d; } }
       if (minD > bestD) { bestD = minD; best = n; }
-    }
-    if (best) {
-      const fs = factionStats[owner];
-      const strength = fs ? fs.strength : 1.0;
-      best.owner = owner;
-      best.units    = Math.floor(48 * strength);
-      best.size     = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
-      best.capacity = Math.floor(145 * strength);
-      best.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
     }
     return best;
   }
-  // Skip 'ally1' — the Lieutenant is YOUR AI, not a separate faction.
-  // It starts with zero bases; the player grows it by pressing G to
-  // delegate. Auto-spawning a Lieutenant base would mean the player
-  // begins with two disjoint armies they didn't ask for.
-  for (const owner of ['player', ...AIS]) {
-    if (owner === 'ally1') continue;
-    const n = pickFar(owner, placed);
-    if (n) placed.push(n);
-  }
+  const regionStarts = state.procgen ? pickRegionStarts(factionOwners.length) : [];
+  factionOwners.forEach((owner, i) => {
+    let node = (regionStarts[i] != null) ? state.nodes[regionStarts[i]] : null;
+    if (!node || node.owner !== 'neutral') node = pickFarNode();
+    if (node) { applyCapitalStats(node, owner); placed.push(node); }
+  });
 
   // Center on player
   const playerStart = state.nodes.find(n => n.owner === 'player');

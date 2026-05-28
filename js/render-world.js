@@ -247,6 +247,16 @@ export function drawPlacementPreview(ctx, zoom, now) {
       ctx.setLineDash([]);
     }
   }
+  // Attention-pulse — single ring expands + fades once per ~1s at the cursor.
+  // Triggered by both branches (net + turret) since either benefits from the cue.
+  const pulseT = (now % 1000) / 1000;             // 0..1 once per second
+  const pulseR = 14 + pulseT * 36;                // 14 -> 50 world-px
+  const pulseA = (1 - pulseT) * 0.55;
+  ctx.strokeStyle = `rgba(255, 220, 130, ${pulseA})`;
+  ctx.lineWidth = 1.5 / zoom;
+  ctx.beginPath();
+  ctx.arc(wx, wy, pulseR, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 // ---- Salvo-target marker (pulsing crosshair on designated enemy during Hold-Fire) ----
@@ -261,12 +271,24 @@ export function drawSalvoMarker(ctx, zoom, now) {
     const n = state.nodes[s.id];
     if (n) { tx = n.x; ty = n.y; }
   }
-  const pulse = 0.6 + 0.4 * Math.sin(now / 200);
+  // Inner ring pulses in/out; outer ring inverts the phase so the two breathe
+  // against each other — gives an unmistakable "target locked" silhouette.
+  const phase = Math.sin(now / 200);
+  const pulse = 0.6 + 0.4 * phase;
+  const innerR = 24 + 2 * phase;
+  const outerR = (24 * 1.5) - 4 * phase;
   ctx.strokeStyle = `rgba(255, 80, 60, ${pulse})`;
-  ctx.lineWidth = 2 / zoom;
+  ctx.lineWidth = 2.4 / zoom;
   ctx.setLineDash([6 / zoom, 4 / zoom]);
   ctx.beginPath();
-  ctx.arc(tx, ty, 24, 0, Math.PI * 2);
+  ctx.arc(tx, ty, innerR, 0, Math.PI * 2);
+  ctx.stroke();
+  // Outer ring — thinner, inverse-pulse alpha, offset dash for layered feel
+  ctx.strokeStyle = `rgba(255, 80, 60, ${0.45 + 0.35 * -phase})`;
+  ctx.lineWidth = 1.6 / zoom;
+  ctx.setLineDash([4 / zoom, 6 / zoom]);
+  ctx.beginPath();
+  ctx.arc(tx, ty, outerR, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.strokeStyle = `rgba(255, 80, 60, ${pulse * 0.9})`;
@@ -323,8 +345,12 @@ export function drawDragPreview(ctx, zoom) {
         const path = findPath(src.id, releaseNode.id, src.owner);
         if (path && path.length > 1) {
           const isAttack = releaseNode.owner !== src.owner;
-          ctx.strokeStyle = isAttack ? 'rgba(255,102,120,0.9)' : 'rgba(92,179,255,0.9)';
-          ctx.lineWidth = 2 / zoom;
+          const lineColor = isAttack ? 'rgba(255,120,140,1)' : 'rgba(120,200,255,1)';
+          // Glow pass — bright halo around the path/arrow for legibility
+          ctx.shadowColor = lineColor;
+          ctx.shadowBlur = 8 / zoom;
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = 2.5 / zoom;
           ctx.setLineDash([6 / zoom, 6 / zoom]);
           ctx.beginPath();
           for (let i = 0; i < path.length; i++) {
@@ -346,15 +372,22 @@ export function drawDragPreview(ctx, zoom) {
           ctx.moveTo(tipX, tipY);
           ctx.lineTo(tipX - ah * Math.cos(ang + 0.4), tipY - ah * Math.sin(ang + 0.4));
           ctx.stroke();
+          ctx.shadowBlur = 0;
         } else {
-          ctx.strokeStyle = 'rgba(200, 90, 90, 0.6)';
-          ctx.lineWidth = 2 / zoom;
+          // No reachable path — bright dashed warning + small ✗ glyph at cursor
+          ctx.strokeStyle = 'rgba(255,100,100,0.85)';
+          ctx.lineWidth = 2.5 / zoom;
           ctx.setLineDash([3 / zoom, 5 / zoom]);
           ctx.beginPath();
           ctx.moveTo(src.x, src.y);
           ctx.lineTo(releaseNode.x, releaseNode.y);
           ctx.stroke();
           ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(255,100,100,0.95)';
+          ctx.font = `bold ${14 / zoom}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('✗', releaseNode.x, releaseNode.y - 8 / zoom);
         }
       } else {
         ctx.strokeStyle = 'rgba(180, 190, 210, 0.5)';
@@ -372,11 +405,24 @@ export function drawDragPreview(ctx, zoom) {
     const y = Math.min(drag.startY, drag.y);
     const w = Math.abs(drag.x - drag.startX);
     const h = Math.abs(drag.y - drag.startY);
-    ctx.fillStyle = 'rgba(92, 179, 255, 0.1)';
+    ctx.fillStyle = 'rgba(92, 179, 255, 0.15)';
     ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(92, 179, 255, 0.6)';
-    ctx.lineWidth = 1 / zoom;
+    ctx.strokeStyle = 'rgba(92, 179, 255, 0.8)';
+    ctx.lineWidth = 1.2 / zoom;
     ctx.strokeRect(x, y, w, h);
+    // Tactical L-shaped corner brackets — short perpendicular line pairs at
+    // each corner, scaled with box size so they never overwhelm small drags.
+    const tick = Math.max(6, Math.min(18, Math.min(w, h) * 0.18)) / zoom;
+    ctx.beginPath();
+    // TL
+    ctx.moveTo(x, y + tick); ctx.lineTo(x, y); ctx.lineTo(x + tick, y);
+    // TR
+    ctx.moveTo(x + w - tick, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + tick);
+    // BR
+    ctx.moveTo(x + w, y + h - tick); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - tick, y + h);
+    // BL
+    ctx.moveTo(x + tick, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - tick);
+    ctx.stroke();
   }
 }
 
@@ -384,6 +430,11 @@ export function drawDragPreview(ctx, zoom) {
 export function renderMinimap() {
   const mctx = state.mctx;
   if (!mctx) return;
+  // Heat overlay state — defensive init so we don't have to touch state.js.
+  // TODO(combat): push points from damage/explosion sites:
+  //   state.minimapHeat.points.push({ x, y, age: 0 })
+  // (reset via state.minimapHeat = { points: [] } in newGame).
+  state.minimapHeat ||= { points: [] };
   const mw = state.minimap.width, mh = state.minimap.height;
   mctx.clearRect(0, 0, mw, mh);
   mctx.fillStyle = 'rgba(8, 16, 30, 0.6)';
@@ -404,7 +455,33 @@ export function renderMinimap() {
     mctx.arc(n.x * sx, n.y * sy, Math.max(2, n.size * sx * 0.5), 0, Math.PI * 2);
     mctx.fill();
   }
-  mctx.strokeStyle = 'rgba(220, 230, 245, 0.7)';
-  mctx.lineWidth = 1;
+  // Faction-coloured fleet dots — small squares so they don't blur into nodes.
+  for (const f of state.fleets) {
+    mctx.fillStyle = COLOR[f.owner];
+    mctx.fillRect(f.x * sx - 0.75, f.y * sy - 0.75, 1.5, 1.5);
+  }
+  // Heat dots — combat sites fade over ~3s. Cheap red specks; advance age
+  // here and prune in-place so the array can't grow without bound.
+  const heat = state.minimapHeat.points;
+  if (heat.length > 0) {
+    const HEAT_LIFE = 3000;       // ms
+    const nowH = performance.now();
+    let write = 0;
+    for (let i = 0; i < heat.length; i++) {
+      const p = heat[i];
+      if (p.t0 == null) p.t0 = nowH;       // first-seen stamp
+      const age = nowH - p.t0;
+      if (age >= HEAT_LIFE) continue;
+      const alpha = (1 - age / HEAT_LIFE) * 0.85;
+      mctx.fillStyle = `rgba(255, 90, 70, ${alpha})`;
+      mctx.beginPath();
+      mctx.arc(p.x * sx, p.y * sy, 1.8, 0, Math.PI * 2);
+      mctx.fill();
+      heat[write++] = p;
+    }
+    heat.length = write;
+  }
+  mctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  mctx.lineWidth = 1.5;
   mctx.strokeRect(state.cameraX * sx, state.cameraY * sy, (state.W / state.zoom) * sx, (state.H / state.zoom) * sy);
 }

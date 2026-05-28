@@ -3,7 +3,9 @@
 // then calls each layer in painter order. Layer implementations live in:
 //
 //   render-hud.js          DOM: faction roster, timer, speed, zoom
-//   render-atmosphere.js   background, dust, terrain, scorches, particles, tracers
+//   render-atmosphere.js   background, dust (2 parallax layers), terrain, hex
+//                            grid, scorches, weather haze, particles, tracers,
+//                            heat haze, vignette
 //   render-world.js        roads, nets, wrecks, shells, range rings, fleet trails,
 //                            placement preview, salvo marker, drag preview, minimap,
 //                            hold-fire banner
@@ -23,6 +25,7 @@ import {
   makeSnow, updateSnow, updateParticles, bakeTerrain,
   drawBackground, drawTerrain, drawScorches, drawWorldBoundary,
   drawTracers, drawParticles,
+  drawHexGrid, drawWeatherHaze, drawHeatHaze, drawVignette,
 } from './render-atmosphere.js';
 import {
   drawRoads, drawWreckPiles, drawNets, drawShells,
@@ -78,13 +81,16 @@ export function render() {
   ctx.translate(-state.cameraX, -state.cameraY);
 
   drawTerrain(ctx, zoom);
+  drawHexGrid(ctx, zoom);              // faint tactical-map watermark over terrain
   drawScorches(ctx, zoom, now);
+  drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in
   drawWorldBoundary(ctx, zoom);
   drawRoads(ctx, zoom);
   drawWreckPiles(ctx, zoom);
   drawNets(ctx, zoom);
   drawShells(ctx, zoom);
   drawTracers(ctx, zoom);
+  drawHeatHaze(ctx, zoom, now);       // combat shimmer over fresh-tracer hotspots
   drawFleetTrails(ctx, zoom);
   drawRangeRings(ctx, zoom);
   drawNodes(ctx, zoom, now);
@@ -102,5 +108,8 @@ export function render() {
   ctx.restore();
   // --- end world space ----------------------------------------
 
+  // Screen-space vignette: dark corners framing the world. Above everything
+  // except the HUD, so it must sit after the world restore + before the banner.
+  drawVignette(ctx, W, H);
   drawHoldFireBanner(ctx, W, now);
 }

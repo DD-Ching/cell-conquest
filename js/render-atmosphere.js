@@ -1,12 +1,15 @@
 // =====================================================
 // Atmosphere + environment layers — Mars dust, sand patches, craters,
-// rocks, scorch marks, particles, AA tracer beams.
+// rocks, scorch marks, particles, AA tracer beams, weather, vignette.
 //
-// Two parts:
-//  1. State-update helpers (makeSnow / updateSnow / updateParticles) —
-//     not draw fns, but presentation-only so they live here, not in sim.
-//  2. Draw layers (background, terrain, scorches, particles, tracers,
-//     world boundary).
+// Three parts:
+//  1. State-update helpers (makeSnow / updateSnow / updateParticles +
+//     weather lerp) — not draw fns, but presentation-only so they live
+//     here, not in sim.
+//  2. Draw layers (background, terrain, hex grid, scorches, weather
+//     haze, particles, tracers, world boundary, heat haze, vignette).
+//  3. Private helpers (#region "private" at bottom) for shared
+//     dust-layer plumbing.
 // =====================================================
 import { state } from './state.js';
 import { WORLD_W, WORLD_H, PARTICLE_CAP } from './config.js';
@@ -67,35 +70,30 @@ export function bakeTerrain() {
 }
 
 // =====================================================
-// Atmosphere lifecycle (dust + particles)
+// Atmosphere lifecycle (dust + particles + weather)
 // =====================================================
 
-// Mars dust — drifts mostly sideways with slow vertical haze.
+// Mars dust — drifts mostly sideways with slow vertical haze. Two parallax
+// layers: state.dust (foreground) + state.dustFar (background, half density &
+// speed). makeSnow seeds both; the name stays makeSnow so main.js / the render
+// worker keep their existing imports. (makeDustLayer is in the private section.)
 export function makeSnow() {
-  state.dust = [];
-  const count = Math.floor((state.W * state.H) / 14000);
-  for (let i = 0; i < count; i++) {
-    state.dust.push({
-      x: Math.random() * state.W, y: Math.random() * state.H,
-      vx: 18 + Math.random() * 30,            // wind blowing right
-      vy: -4 + Math.random() * 10,            // slight vertical drift
-      r: 0.5 + Math.random() * 1.4,
-      a: 0.18 + Math.random() * 0.4,
-      drift: Math.random() * Math.PI * 2,
-      hue: 18 + Math.random() * 22,           // 18..40 = sandy orange range
-    });
-  }
+  const fgCount = Math.floor((state.W * state.H) / 14000);
+  makeDustLayer(state.dust = [], fgCount, 1.0, 1.0);
+  // Background layer: half the particles, smaller, slower (speedMul stamped on
+  // each particle drives the slower advance in stepDustLayer).
+  makeDustLayer(state.dustFar = [], Math.floor(fgCount * 0.5), 0.7, 0.5);
 }
 
 export function updateSnow(dt) {
-  for (const s of state.dust) {
-    s.x += (s.vx + Math.sin(performance.now() / 1500 + s.drift) * 4) * dt;
-    s.y += s.vy * dt;
-    if (s.x > state.W + 5) { s.x = -5; s.y = Math.random() * state.H; }
-    if (s.x < -5) s.x = state.W + 5;
-    if (s.y > state.H + 5) s.y = -5;
-    if (s.y < -5) s.y = state.H + 5;
-  }
+  // Advance the weather state machine first — a sand storm injects extra grit
+  // into the foreground layer, so it must be current before we step particles.
+  updateWeather(dt);
+  stepDustLayer(state.dustFar, dt);
+  stepDustLayer(state.dust, dt);
+  // Storm grit: while a storm is blowing, top up the foreground layer with
+  // fast transient particles so the air visibly thickens. Bounded per frame.
+  spawnStormGrit(dt);
 }
 
 export function updateParticles(dt) {
@@ -130,12 +128,10 @@ export function drawBackground(ctx, W, H) {
   haze.addColorStop(1, 'rgba(60, 30, 12, 0)');
   ctx.fillStyle = haze;
   ctx.fillRect(0, 0, W, H);
-  // Wind-blown grit — short horizontal streaks, not stars
-  for (const s of state.dust) {
-    ctx.globalAlpha = s.a * 0.55;
-    ctx.fillStyle = `hsl(${s.hue}, 50%, 45%)`;
-    ctx.fillRect(s.x, s.y, s.r * 1.4, 0.6);
-  }
+  // Far parallax grit first (dimmer, behind), then foreground so near grit
+  // visually occludes the far layer. Both are short horizontal streaks, not stars.
+  drawDustStreaks(ctx, state.dustFar, 0.35);
+  drawDustStreaks(ctx, state.dust, 0.55);
   ctx.globalAlpha = 1;
 }
 
@@ -160,6 +156,52 @@ export function drawTerrain(ctx, zoom) {
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); ctx.fill();
   }
+}
+
+// ---- Hex grid watermark (faint tactical-map overlay, world-space) ----
+// Drawn AFTER terrain, BEFORE scorches. Skipped at LOD < 2 — at low zoom the
+// 80-px cells collapse to a moiré smear that reads as noise, not a grid, and
+// the extra strokes aren't worth their cost when zoomed out.
+const HEX_SIZE = 80;                  // world-px, flat-to-flat radius of a hex cell
+export function drawHexGrid(ctx, zoom) {
+  if (state._lod < 2) return;
+  const { vL, vT, vR, vB } = state._view;
+  // Pointy-top hex layout. Column spacing = 1.5*size, row spacing = sqrt(3)*size.
+  const colStep = HEX_SIZE * 1.5;
+  const rowStep = HEX_SIZE * Math.sqrt(3);
+  ctx.strokeStyle = 'rgba(220, 180, 140, 0.025)';
+  ctx.lineWidth = 1 / zoom;
+  ctx.beginPath();
+  // Iterate only the visible window of hex centres (+1 cell margin).
+  const c0 = Math.floor(vL / colStep) - 1, c1 = Math.ceil(vR / colStep) + 1;
+  const r0 = Math.floor(vT / rowStep) - 1, r1 = Math.ceil(vB / rowStep) + 1;
+  for (let c = c0; c <= c1; c++) {
+    const cx = c * colStep;
+    const yOff = (c & 1) ? rowStep / 2 : 0;   // odd columns shift down half a row
+    for (let r = r0; r <= r1; r++) {
+      const cy = r * rowStep + yOff;
+      strokeHex(ctx, cx, cy, HEX_SIZE);
+    }
+  }
+  ctx.stroke();
+}
+
+// ---- Weather haze (full-screen rust overlay, world-space, before units) ----
+// A single fillRect with a rust gradient — one cheap call per frame. Alpha
+// tracks weather intensity (capped 0.35) so a sand storm visibly thickens the
+// air WITHOUT touching any gameplay query. Drawn over terrain/scorches but
+// under units so the world recedes into the murk.
+export function drawWeatherHaze(ctx, zoom) {
+  const intensity = state.weather ? state.weather.intensity : 0;
+  if (intensity <= 0.05) return;
+  const a = Math.min(0.35, intensity * 0.5);
+  const { vL, vT, vR, vB } = state._view;
+  // Subtle vertical gradient: thicker at the horizon (top) than the foreground.
+  const g = ctx.createLinearGradient(0, vT, 0, vB);
+  g.addColorStop(0, `rgba(150, 80, 38, ${a})`);
+  g.addColorStop(1, `rgba(120, 62, 28, ${a * 0.7})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(vL, vT, vR - vL, vB - vT);
 }
 
 // ---- Scorch marks: permanent ground-baked layer + currently-burning marks ----
@@ -301,4 +343,173 @@ export function drawParticles(ctx, zoom) {
     }
   }
   ctx.globalAlpha = 1;
+}
+
+// ---- Heat haze near combat (world-space, additive shimmer over hotspots) ----
+// Where lots of fresh tracers cluster (active firefight), lay a faint warm
+// brightness bloom that pulses — a cheap stand-in for air distortion. Capped
+// at HEAT_MAX hotspots/frame and skipped at LOD < 2 so cost stays bounded.
+const HEAT_MAX = 10;
+export function drawHeatHaze(ctx, zoom, now) {
+  if (state._lod < 2) return;
+  const tracers = state.tracers;
+  if (!tracers || tracers.length === 0) return;
+  const { vL, vT, vR, vB } = state._view;
+  ctx.globalCompositeOperation = 'lighter';
+  let drawn = 0;
+  for (let i = 0; i < tracers.length && drawn < HEAT_MAX; i++) {
+    const t = tracers[i];
+    // Only fresh tracers (firefight still hot) — old ones are nearly faded.
+    const heat = 1 - t.age / t.maxAge;
+    if (heat < 0.5) continue;
+    // Hotspot at the muzzle end (x1,y1 = the firing turret).
+    const x = t.x1, y = t.y1;
+    if (x < vL || x > vR || y < vT || y > vB) continue;
+    const pulse = 0.6 + 0.4 * Math.sin(now / 90 + x * 0.05 + y * 0.03);
+    const R = 34 + 10 * pulse;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+    g.addColorStop(0, `rgba(255, 180, 120, ${0.06 * heat * pulse})`);
+    g.addColorStop(1, 'rgba(255, 150, 90, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.fill();
+    drawn++;
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// ---- Vignette (screen-space, drawn LAST before HUD) ----
+// Full-screen radial darkening at the edges — focuses the eye on the centre
+// and seats the bright Mars surface inside a deep frame. MUST be called
+// OUTSIDE the world transform (screen coords): one fillRect with a cached-ish
+// radial gradient, ~free per frame.
+export function drawVignette(ctx, W, H) {
+  const g = ctx.createRadialGradient(
+    W * 0.5, H * 0.5, Math.min(W, H) * 0.32,
+    W * 0.5, H * 0.5, Math.max(W, H) * 0.72,
+  );
+  g.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  g.addColorStop(1, 'rgba(10, 5, 2, 0.55)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// =====================================================
+// Private helpers — not part of the render() painter order. Shared dust-layer
+// plumbing + the weather state machine + small geometry/draw utilities. Kept
+// down here so the public draw layers above read top-to-bottom in z-order.
+// (makeDustLayer is exported because the unit spec names it as the generalized
+// dust constructor; the rest are module-private.)
+// =====================================================
+
+// Seed `arr` with `count` grit particles. sizeMul scales radius; speedMul is
+// stamped on each particle so stepDustLayer can advance far/near layers at
+// different rates without a second update fn.
+export function makeDustLayer(arr, count, sizeMul, speedMul) {
+  for (let i = 0; i < count; i++) {
+    arr.push({
+      x: Math.random() * state.W, y: Math.random() * state.H,
+      vx: 18 + Math.random() * 30,            // wind blowing right
+      vy: -4 + Math.random() * 10,            // slight vertical drift
+      r: (0.5 + Math.random() * 1.4) * sizeMul,
+      a: 0.18 + Math.random() * 0.4,
+      drift: Math.random() * Math.PI * 2,
+      hue: 18 + Math.random() * 22,           // 18..40 = sandy orange range
+      speedMul,
+    });
+  }
+}
+
+// Advance one dust array. speedMul (stamped at creation) lets the background
+// layer crawl while the foreground races, selling parallax depth.
+function stepDustLayer(arr, dt) {
+  const now = performance.now();
+  for (const s of arr) {
+    const sm = s.speedMul || 1;
+    s.x += (s.vx * sm + Math.sin(now / 1500 + s.drift) * 4 * sm) * dt;
+    s.y += s.vy * sm * dt;
+    if (s.x > state.W + 5) { s.x = -5; s.y = Math.random() * state.H; }
+    if (s.x < -5) s.x = state.W + 5;
+    if (s.y > state.H + 5) s.y = -5;
+    if (s.y < -5) s.y = state.H + 5;
+  }
+}
+
+// Render one dust layer as wind-blown horizontal streaks. alphaMul dims the
+// far layer relative to the foreground for depth separation.
+function drawDustStreaks(ctx, arr, alphaMul) {
+  if (!arr) return;
+  for (const s of arr) {
+    ctx.globalAlpha = s.a * alphaMul;
+    ctx.fillStyle = `hsl(${s.hue}, 50%, 45%)`;
+    ctx.fillRect(s.x, s.y, s.r * 1.4, 0.6);
+  }
+}
+
+// Mars weather state machine. Picks a new target every ~60 game-seconds
+// (0 = clear, 0.3 = light haze, 0.7 = sand storm) and lerps intensity toward
+// it over ~10 s. Pure presentation — nothing here is read by sim/AI/pathing.
+function updateWeather(dt) {
+  const w = state.weather;
+  if (!w) return;
+  // Gate the target pick on game-elapsed so a fast time-scale doesn't churn
+  // the weather every frame.
+  if (state.elapsed - w.lastChangeT > 60) {
+    w.lastChangeT = state.elapsed;
+    const roll = Math.random();
+    w.target = roll < 0.45 ? 0 : roll < 0.8 ? 0.3 : 0.7;
+  }
+  // Glide intensity → target. ~10 s time constant, frame-rate independent.
+  const k = Math.min(1, dt / 10);
+  w.intensity += (w.target - w.intensity) * k;
+  if (Math.abs(w.intensity - w.target) < 0.001) w.intensity = w.target;
+}
+
+// Keep the foreground dust count tracking the weather: thicken the air with
+// extra fast grit as a storm rises, and trim that grit back out as it clears so
+// calm weather returns to base density. Bounded at base + maxWant either way.
+function spawnStormGrit(dt) {
+  const intensity = state.weather ? state.weather.intensity : 0;
+  const base = Math.floor((state.W * state.H) / 14000);
+  const arr = state.dust;
+  // Target foreground count for the current intensity. <=0.3 collapses to base.
+  const want = intensity > 0.3 ? Math.floor(base * intensity * 0.6) : 0;
+  const target = base + want;
+  if (arr.length < target) {
+    // Spawn extra storm grit from the left edge (fast gusts).
+    const add = Math.min(target - arr.length, Math.ceil(base * dt * 2) + 1);
+    for (let i = 0; i < add; i++) {
+      arr.push({
+        x: -5, y: Math.random() * state.H,
+        vx: 60 + Math.random() * 90,          // storm gusts move FAST
+        vy: -8 + Math.random() * 20,
+        r: 0.6 + Math.random() * 1.8,
+        a: 0.25 + Math.random() * 0.45,
+        drift: Math.random() * Math.PI * 2,
+        hue: 16 + Math.random() * 18,
+        speedMul: 1.0, storm: true,
+      });
+    }
+  } else if (arr.length > target) {
+    // Storm easing — pop the surplus storm grit a few per frame so density
+    // glides back to base without a visible pop. Only remove `storm` particles
+    // (never the original base layer); guard against an empty pop.
+    let remove = Math.min(arr.length - target, Math.ceil(base * dt * 2) + 1);
+    for (let i = arr.length - 1; i >= 0 && remove > 0; i--) {
+      if (arr[i].storm) { arr.splice(i, 1); remove--; }
+    }
+  }
+}
+
+// Append one pointy-top hexagon's outline to the current path (single stroke
+// for the whole grid keeps it to one GPU call).
+function strokeHex(ctx, cx, cy, size) {
+  for (let i = 0; i < 6; i++) {
+    const ang = Math.PI / 180 * (60 * i - 30);
+    const x = cx + size * Math.cos(ang);
+    const y = cy + size * Math.sin(ang);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
 }

@@ -228,18 +228,69 @@ export function drawTracers(ctx, zoom) {
 }
 
 // ---- Particles (life-based alpha fade) ----
+// Branched by p.kind so different events read differently. Untagged particles
+// (embers / smoke from scorches) fall through to the default circle shape so
+// glowing dots and rising ash still look right.
+//   'impact'    — rotated speck square (small combat hits)
+//   'explosion' — circle + outer halo (big bangs, drone impacts)
+//   'capture'   — expanding ring (no fill) for node ownership change
+//   'dust'      — short elongated streak oriented along velocity
+//   (none)      — circle (default)
+// Hot path: thousands of particles per frame in late game. Branch must be
+// allocation-free; `p.rot` is lazy-initialized so the spawn site doesn't
+// pay Math.random() for kinds that don't read it.
+const TAU = Math.PI * 2;
 export function drawParticles(ctx, zoom) {
   // Particles are 2-3 px specks — drop them at low zoom.
   if (state._lod < 2) return;
   const { vL, vT, vR, vB } = state._view;
+  const r = 2 / zoom;                            // base draw radius (zoom-stable)
   for (const p of state.particles) {
     if (p.x < vL || p.x > vR || p.y < vT || p.y > vB) continue;
     const a = p.life / p.maxLife;
     ctx.globalAlpha = a;
     ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 2 / zoom, 0, Math.PI * 2);
-    ctx.fill();
+    const k = p.kind;
+    if (k === 'impact') {
+      // Tiny rotated square — debris fleck.
+      if (p.rot === undefined) p.rot = Math.random() * TAU;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      const s = 1.5 / zoom;
+      ctx.fillRect(-s, -s, s * 2, s * 2);
+      ctx.restore();
+    } else if (k === 'explosion') {
+      // Core + faint outer halo so the bang reads bigger than a flat dot.
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, TAU);
+      ctx.fill();
+      ctx.globalAlpha = a * 0.3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 1.8, 0, TAU);
+      ctx.fill();
+    } else if (k === 'capture') {
+      // Expanding ring — radius grows as life drains. Stroked (no fill).
+      const ringR = (1 - a) * 18 / zoom;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.2 / zoom;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, ringR, 0, TAU);
+      ctx.stroke();
+    } else if (k === 'dust') {
+      // Elongated streak oriented along the velocity vector.
+      const rot = Math.atan2(p.vy, p.vx);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(rot);
+      ctx.fillRect(-1.5 / zoom, -0.5 / zoom, 3 / zoom, 1 / zoom);
+      ctx.restore();
+    } else {
+      // Default (no kind) — original circle. Used by embers / smoke / etc.
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, TAU);
+      ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
 }

@@ -259,7 +259,7 @@ function flashEdgeWork(a, b, color) {
     const sp = 30 + Math.random() * 60;
     state.particles.push({
       x: mx, y: my, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-      life: 0.5, maxLife: 0.5, color,
+      life: 0.5, maxLife: 0.5, color, kind: 'impact',
     });
   }
 }
@@ -325,6 +325,7 @@ export function spawnBigExplosion(x, y, color = '#ff8a3a', n = 20) {
       x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
       life: 0.6 + Math.random() * 0.3, maxLife: 0.9,
       color: k % 3 === 0 ? '#ffe080' : color,
+      kind: 'explosion',
     });
   }
 }

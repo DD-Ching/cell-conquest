@@ -102,12 +102,20 @@ function retargetDrone(drone) {
     if (best && Math.sqrt(bestD2) < range * CELL) break;
   }
   if (!best) {
+    // Value-first node pick (not nearest): a drone that lost its target should
+    // reach for a node with units worth chipping, skipping bombed-flat husks
+    // and dying factions. Distance is only a mild taper so it can push deep.
+    let bestNodeScore = 0;
     for (const n of state.nodes) {
       if (isAlly(n.owner, drone.owner) || n.owner === 'neutral') continue;
-      if (state.strippedOwners.has(n.owner)) continue;  // skip dying-faction nodes
+      if (state.strippedOwners.has(n.owner)) continue;  // dying faction — ground troops' job
+      if (n.units < 12) continue;                        // bombed-flat — nothing to chip
       const dx = n.x - drone.x, dy = n.y - drone.y;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestD2) { bestD2 = d2; best = { kind: 'node', id: n.id, x: n.x, y: n.y }; }
+      const score = Math.min(n.units, 55) / (1 + Math.sqrt(dx * dx + dy * dy) / 800);
+      if (score > bestNodeScore) {
+        bestNodeScore = score;
+        best = { kind: 'node', id: n.id, x: n.x, y: n.y };
+      }
     }
   }
   if (!best) return false;
@@ -448,22 +456,24 @@ export function updateDrones(dt) {
  *  Sorted by score (highest first). Caller picks among top-K. */
 function pickDroneTargetsFor(t) {
   const cands = [];
-  // Drones fly far but score drops sharply with distance — 1500/(d+200) is
-  // already negligible past ~1200 px. Cap the grid query at 1500 px so we
-  // skip turrets across the map that wouldn't be picked anyway.
   const CELL = 250;
   const range = Math.ceil(1500 / CELL);
   const cx0 = Math.floor(t.x / CELL);
   const cy0 = Math.floor(t.y / CELL);
-  // Per-target inbound-drone budget. Each drone does DRONE_DAMAGE=50; even
-  // an L1 net intercepts only ~20 drones per kill. 4 drones in flight =
-  // 200 incoming damage, enough to wipe any node or every turret type.
-  // Beyond that we're feeding a "drone black hole": when faction C is
-  // dying, A and B keep dumping drones on C's leftover targets instead
-  // of attacking each other. Cap stops it.
+  // Per-target inbound-drone budget. Each drone does DRONE_DAMAGE=50. Capping
+  // how many drones are already committed to one target makes the swarm SPREAD
+  // instead of dogpiling — and for nodes the cap is VALUE-AWARE (a 20-unit town
+  // needs ~1 drone, a 90-unit hub a few). Freeing the surplus is precisely what
+  // lets drones reach DEEPER, higher-value targets instead of overkilling the
+  // bombed-flat outer ring. Also stops the old "drone black hole": A and B
+  // dumping their whole stockpile on a dying C's leftovers.
   const TARGET_DRONE_CAP = 4;
   const inbound = state.inboundDronesByTarget;
 
+  // ---- Turrets: the enemy's AA wall + drone economy. High intrinsic value,
+  // and thinning them opens a lane for follow-up drones to push deeper. The
+  // score is value-by-type with only a MILD distance taper, so a juicy turret
+  // deep in enemy territory still gets picked (penetration, not nearest-first). ----
   for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
     for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
       const bucket = state.turretGrid.get(cx * 10000 + cy);
@@ -476,31 +486,44 @@ function pickDroneTargetsFor(t) {
         const d2 = dx * dx + dy * dy;
         if (d2 > 1500 * 1500) continue;
         const d = Math.sqrt(d2);
-        let score = 1500 / (d + 200);
-        if (et.type === 'antiair') score *= 1.5;
-        if (et.type === 'factory') score *= 1.8;
-        if (!et.active) score *= 2.0;
-        cands.push({ score, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
+        let v = et.type === 'factory'   ? 7.5   // their drone source — kill it
+              : et.type === 'antiair'   ? 6.0   // the wall — thin it to open a lane
+              : et.type === 'tank'      ? 5.0
+              : et.type === 'artillery' ? 4.5
+              : 3.0;
+        if (!et.active) v *= 1.6;               // half-built — cheap, high-value kill
+        v *= 1 / (1 + d / 700);                 // distance: mild taper only
+        cands.push({ score: v, target: { kind: 'turret', id: et.id, x: et.x, y: et.y } });
       }
     }
   }
-  if (cands.length === 0) {
-    for (const en of state.nodes) {
-      if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
-      // Stripped faction (no production, tiny total units) — the 10↔10 regen
-      // oscillation that ate every drone last build. Ground troops handle it.
-      if (state.strippedOwners.has(en.owner)) continue;
-      // Near-empty node — drones only chip UNITS (they never capture), so a
-      // base bombed down to a handful is a dead-end target: nothing worth
-      // hitting, and it's a ground-troop capture job. Skip it so we don't
-      // funnel a wave onto an empty city.
-      if (en.units < 6) continue;
-      if ((inbound.get('node:' + en.id) || 0) >= TARGET_DRONE_CAP) continue;
-      const d = dist(t, en);
-      const score = 800 / (d + 200);
-      cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
-    }
+
+  // ---- Nodes: drones only CHIP UNITS (they never capture), so a node is worth
+  // a strike only for the units sitting on it. A node already bombed near-flat
+  // is a DEAD END — skip it so the swarm stops hammering the spent outer ring
+  // and reaches for the stocked-up nodes behind it. Because the enemy's core
+  // holds the most units, value-first scoring naturally drives drones DEEP
+  // (the penetration the outer-ring dogpile never achieved). Production hubs
+  // (high road degree) are worth proportionally more. ----
+  for (const en of state.nodes) {
+    if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
+    if (state.strippedOwners.has(en.owner)) continue;   // near-dead faction — ground troops' job
+    if (en.units < 12) continue;                         // bombed-flat — nothing meaningful to chip
+    // Value-aware cap: ~1 drone per 45 units of garrison (each does 50 dmg), so
+    // a small town isn't overkilled and the rest of the wave flows onward.
+    const nodeCap = Math.min(TARGET_DRONE_CAP, Math.max(1, Math.ceil(en.units / 45)));
+    if ((inbound.get('node:' + en.id) || 0) >= nodeCap) continue;
+    const dx = en.x - t.x, dy = en.y - t.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 1700 * 1700) continue;
+    const d = Math.sqrt(d2);
+    const degree = state.adj.get(en.id).size;
+    const valueUnits = Math.min(en.units, 55);           // diminishing returns past ~55
+    let score = valueUnits * 0.11 * (1 + degree * 0.12); // production hubs worth more
+    score *= 1 / (1 + d / 800);                          // distance: mild taper only
+    cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
   }
+
   cands.sort((a, b) => b.score - a.score);
   return cands;
 }
@@ -551,8 +574,13 @@ function releaseStockpileFor(owner, fixedTarget) {
       pool = [{ target: fixedTarget }];
     } else {
       const cands = pickDroneTargetsFor(t);
-      if (cands.length === 0) { t.dronesReady = 0; continue; }
-      pool = cands.slice(0, Math.min(5, cands.length));
+      // No worthwhile target in range — HOLD the stockpile (don't vaporise it):
+      // the drones wait / aggregate until a real target appears rather than
+      // being flung at the bombed-flat outer ring for nothing.
+      if (cands.length === 0) continue;
+      // Spread a big salvo across more of the top VALUE targets (including deep
+      // ones) instead of overkilling the nearest handful.
+      pool = cands.slice(0, Math.min(8, cands.length));
     }
 
     for (let k = 0; k < t.dronesReady; k++) {

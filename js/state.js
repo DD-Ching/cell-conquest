@@ -24,7 +24,18 @@ export const state = {
   nodes: [],
   fleets: [],
   particles: [],
-  dust: [],                  // atmospheric Mars dust (was 'snowflakes')
+  dust: [],                  // atmospheric Mars dust (foreground layer)
+  dustFar: [],               // parallax background dust — half density, half
+                             //   speed, smaller particles. Drawn BEHIND state.dust
+                             //   so foreground grit occludes the far layer.
+
+  // Mars weather — slow lerp between calm / haze / sand storm. Visual only;
+  // never read by AI, pathing, or combat. Cadence: a new target is picked
+  // roughly every 60 game seconds; intensity glides toward it over ~10 s.
+  //   intensity: 0..1, current haze strength
+  //   target:    0..1, where intensity is heading
+  //   lastChangeT: state.elapsed at last target pick
+  weather: { intensity: 0, target: 0, lastChangeT: 0 },
   terrain: [],               // world-space ground features: rocks, craters, sand patches
   tracers: [],               // AA-fire tracer beams: {x1,y1,x2,y2,age,maxAge,color}
   shells: [],                // artillery shells in flight: {x1,y1,x2,y2,t,maxT,owner}

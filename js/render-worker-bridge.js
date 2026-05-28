@@ -126,6 +126,8 @@ function buildSnapshot() {
 
     particles: state.particles,
     dust:      state.dust,
+    dustFar:   state.dustFar,         // background parallax dust layer
+    weather:   state.weather,         // Mars weather state (main thread owns the lerp)
     tracers:   state.tracers,
     shells:    state.shells,
     scorches:  state.scorches,

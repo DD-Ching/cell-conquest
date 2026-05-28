@@ -29,7 +29,7 @@
 // `state` here is independent from the main thread's `state`.
 // =====================================================
 import { state } from './state.js';
-import { render, bakeTerrain, makeSnow, updateSnow, updateParticles } from './render.js';
+import { render, bakeTerrain, makeSnow, updateParticles } from './render.js';
 import { loadAssets } from './sprites.js';
 import { WORLD_W, WORLD_H } from './config.js';
 
@@ -66,6 +66,11 @@ function hydrate(snap) {
 
   state.particles = snap.particles;
   state.dust      = snap.dust;
+  // dustFar / weather are owned by the main thread (it runs the dust step +
+  // weather lerp and ships the result). Fall back to the worker's own copy if
+  // an older bridge doesn't send them, so render never reads undefined.
+  if (snap.dustFar) state.dustFar = snap.dustFar;
+  if (snap.weather) state.weather = snap.weather;
   state.tracers   = snap.tracers;
   state.shells    = snap.shells;
   state.scorches  = snap.scorches;
@@ -158,12 +163,11 @@ self.onmessage = (e) => {
 
     case 'frame': {
       hydrate(msg.snapshot);
-      // Step ambient particles + dust ourselves — these are visual-only,
-      // so the worker can advance them without main-thread coordination.
-      // (Main thread still maintains its own copies for the case where
-      // user toggles worker render off; harmless duplicate work.)
+      // Dust (both layers) + weather are now stepped on the main thread and
+      // arrive already-advanced in the snapshot — re-stepping here would
+      // double-advance the weather lerp and fire a duplicate target-pick RNG.
+      // Particles still aren't shipped pre-stepped, so we advance those.
       updateParticles(msg.dt || 0);
-      updateSnow(msg.dt || 0);
       render();
       return;
     }

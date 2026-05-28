@@ -97,6 +97,12 @@ export function newGame() {
   document.getElementById('message').style.display = 'none';
   state.startTime = performance.now();
   state.elapsed = 0;
+  // Reset Mars weather alongside the clock — lastChangeT is measured against
+  // state.elapsed, so leaving it stale would freeze the weather machine (and
+  // any in-progress sandstorm) for minutes into the new game.
+  state.weather.intensity = 0;
+  state.weather.target = 0;
+  state.weather.lastChangeT = 0;
   state.aiTimers = {};
   // Short opening window — AI starts land-grabbing almost immediately so the
   // player can't quietly take every neutral while the AI sleeps.

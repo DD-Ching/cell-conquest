@@ -52,6 +52,17 @@ export const state = {
                              //   wrecks: [{x,y,hp,hpMax,rot}] — physical piles on
                              //   the road segment. Fleets detour around them; engineers
                              //   chip away at hp until pile is removed.
+  wrecksByEdge:   new Map(), // ekey(a,b) -> { projs: Float32Array, perps: Float32Array,
+                             //   segLen: number, aId: number, bId: number }
+                             //   Per-tick spatial cache for the fleet detour scan
+                             //   (fleets.js). `projs` is sorted along the canonical
+                             //   direction (from low-id node to high-id node, so
+                             //   aId < bId); `perps` stores the matching signed
+                             //   perpendicular offset in the canonical frame. Built
+                             //   only for edges with wrecks. Lets simulateFleets
+                             //   binary-search "nearest wreck ahead on my segment"
+                             //   in O(log W) instead of O(W) per fleet sub-step.
+                             //   Rebuilt inside simulateFleets's prologue.
   selectedIds: new Set(),
   _nextFleetId: 1,           // monotonic; lets drones lock onto a specific fleet by id
 

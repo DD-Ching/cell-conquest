@@ -248,7 +248,7 @@ export function drawTurrets(ctx, zoom, now) {
         }
       }
       t.aimAngle = aimAngle;
-      drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle);
+      drawTankTurret(ctx, t.x, t.y, t.owner, t.active, zoom, aimAngle, now);
     } else if (t.type === 'factory') {
       drawFactoryTurret(ctx, t.x, t.y, t.owner, t.active, zoom, now, t.prodCooldown < 1.5);
       // Stockpile badge: when Hold-Fire is on, factories accumulate drones

@@ -296,33 +296,47 @@ export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
   ctx.beginPath(); ctx.arc(x, y, 24,    0, TAU); ctx.fill();
   ctx.fillStyle = c;
   ctx.beginPath(); ctx.arc(x, y, 20.25, 0, TAU); ctx.fill();
+  // Idle brown glow ring when inactive — signals "powering up / dormant"
+  if (!active) {
+    ctx.strokeStyle = 'rgba(120, 80, 45, 0.35)';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.beginPath(); ctx.arc(x, y, 16, 0, TAU); ctx.stroke();
+  }
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(x, y, 10.5,  0, TAU); ctx.fill();
-  // Rotating dish + antenna
+  // Rotating dish + antenna + sweep line (sweep lags dish by ~30°)
   const rot = active ? (time / 700) % TAU : 0;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rot);
-  // Dish (pie slice)
   ctx.fillStyle = c;
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.arc(0, 0, 16.5, -0.6, 0.6);
   ctx.closePath();
   ctx.fill();
-  // Antenna stick
   ctx.strokeStyle = '#ffd066';
   ctx.lineWidth = 2 / zoom;
   ctx.beginPath();
   ctx.moveTo(0, 0); ctx.lineTo(19.5, 0);
+  ctx.stroke();
+  // Sweep line — lagging radial pulse, brighter when active
+  ctx.rotate(-0.524);
+  ctx.strokeStyle = active ? 'rgba(255, 240, 200, 0.30)' : 'rgba(180, 150, 110, 0.12)';
+  ctx.lineWidth = 1.2 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(16.5, 0);
   ctx.stroke();
   ctx.restore();
 }
 
 // =====================================================
 // Turret: tank — chassis + turret + cannon
+// `aimAngle === 0` is the caller's "no live target" sentinel (initial
+// state / placement preview). In that case we add a gentle ±3° idle
+// sway so the barrel doesn't look frozen.
 // =====================================================
-export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
+export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, time = 0) {
   const c = active ? COLOR[owner] : '#7a6a55';
 
   if (Asset.turret_tank?.ready) {
@@ -332,6 +346,12 @@ export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
     ctx.restore();
     return;
   }
+
+  // Idle sway only when no target — locked-on barrel must point at enemy.
+  // Compute locally so we don't mutate caller args (rendering side-effect).
+  const drawAngle = (aimAngle === 0)
+    ? 0.05 * Math.sin(time / 1300)
+    : aimAngle;
 
   // Chassis (square base with tread highlights)
   ctx.fillStyle = '#1a1206';
@@ -344,7 +364,7 @@ export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0) {
   // Turret + cannon
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(aimAngle);
+  ctx.rotate(drawAngle);
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(0, 0, 13.5, 0, TAU); ctx.fill();
   ctx.fillStyle = c;
@@ -375,14 +395,22 @@ export function drawArtilleryTurret(ctx, x, y, owner, active, zoom, aimAngle = 0
   ctx.fillStyle = '#1a1206';
   ctx.fillRect(x - 28.5, y - 19.5, 7.5, 40.5);
   ctx.fillRect(x + 21,   y - 19.5, 7.5, 40.5);
-  // Carriage body
+  // Carriage body — tilt ~2° when aim is steep to suggest elevation
+  const sinAim = Math.sin(aimAngle);
+  const steep = Math.abs(sinAim) > 0.7;
+  if (steep) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sinAim > 0 ? 0.035 : -0.035);
+    ctx.translate(-x, -y);
+  }
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(x, y, 24,    0, TAU); ctx.fill();
   ctx.fillStyle = c;
   ctx.beginPath(); ctx.arc(x, y, 20.25, 0, TAU); ctx.fill();
-  // Rivets
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(x, y, 8.25, 0, TAU); ctx.fill();
+  if (steep) ctx.restore();
   // Long barrel (rotates to aim)
   ctx.save();
   ctx.translate(x, y);
@@ -425,9 +453,22 @@ export function drawFactoryTurret(ctx, x, y, owner, active, zoom, time, producin
   ctx.fillRect(x - 24,   y - 24,   48, 48);
   ctx.fillStyle = c;
   ctx.fillRect(x - 22.5, y - 22.5, 45, 45);
-  // Hangar door (front)
-  ctx.fillStyle = '#0a0604';
-  ctx.fillRect(x - 13.5, y - 19.5, 28.5, 13.5);
+  // Hangar door (front) — when producing, door cycles open/closed and a
+  // warm interior glow reads through. When idle, door stays closed.
+  const doorTop = y - 19.5;
+  const doorMaxH = 13.5;
+  if (producing) {
+    // Bright interior shows through the opening
+    ctx.fillStyle = 'rgba(255, 180, 80, 0.6)';
+    ctx.fillRect(x - 13.5, doorTop, 28.5, doorMaxH);
+    // Door height oscillates — when doorH is small, the opening is large
+    const doorH = doorMaxH * (0.5 + 0.5 * Math.sin(time / 400));
+    ctx.fillStyle = '#0a0604';
+    ctx.fillRect(x - 13.5, doorTop + (doorMaxH - doorH), 28.5, doorH);
+  } else {
+    ctx.fillStyle = '#0a0604';
+    ctx.fillRect(x - 13.5, doorTop, 28.5, doorMaxH);
+  }
   // Roof corrugation
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   for (let i = -18; i <= 16.5; i += 7.5) {

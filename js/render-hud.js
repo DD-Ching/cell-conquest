@@ -62,6 +62,14 @@ export function buildHUD() {
   _hudEls.zoom  = document.getElementById('zoom');
   _hudEls.speed = document.getElementById('speed');
   _hudEls.perf  = document.getElementById('perf');
+  // Stamp the topright stat glyphs once. updateHUD only writes the value
+  // spans (#timer, #speed, #zoom, #perf), so the glyphs never get rewritten
+  // per frame — no layout thrash from emoji shaping.
+  const glyphs = { timer: '⏱', speed: '⚡', zoom: '🔍', perf: '📊' };
+  for (const [k, g] of Object.entries(glyphs)) {
+    const el = document.querySelector(`#topright .glyph[data-glyph="${k}"]`);
+    if (el) el.textContent = g;
+  }
   _hudLastT = 0;
 }
 

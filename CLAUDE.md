@@ -4,6 +4,9 @@
 
 - GitHub: https://github.com/DD-Ching/cell-conquest (private)
 - Branches: `main` (stable), `dev` (work-in-progress)
+- Multi-machine setup: same user, two checkouts (MacBook + Intel NUC).
+  Always pull before starting work — the other machine may have pushed
+  while this one was off. See "Running on a new machine" below.
 
 ## Git workflow — **always follow**
 
@@ -72,6 +75,88 @@ works. Bases differ — some only spit infantry, some only drones, etc.
    Drop sprites into `assets/` and have `render.js` swap canvas primitives for
    `Image()` blits where appropriate. Keep code paths so missing assets fall
    back to current primitive shapes.
+
+## Running on a new machine (Intel NUC / second laptop)
+
+First-time setup:
+
+```bash
+git clone https://github.com/DD-Ching/cell-conquest.git
+cd cell-conquest
+git checkout dev          # work always happens on dev
+```
+
+Run the game (no build step, plain ES modules):
+
+```bash
+python3 -m http.server 8765
+# browse http://localhost:8765/node-conquest.html
+```
+
+Optional flags / hotkeys (see node-conquest.html help panel for the full
+list):
+
+- URL `?renderWorker=1` — boot with the OffscreenCanvas render worker
+  already on (transferControlToOffscreen has to happen before any
+  getContext('2d'), so the URL flag is the clean way to enable). U key
+  toggles by reloading with the flag flipped.
+- Y key — move enemy AI to a Web Worker (`ai-worker`). Safe to toggle
+  mid-game.
+- G key — delegate the hovered (or all selected) base(s) to the
+  Lieutenant; press again to revoke.
+- H key — Hold-Fire drone stockpile; second press launches the salvo.
+
+Rust / wasm toolchain (only needed when changing wasm code):
+
+```bash
+brew install rustup-init && rustup-init -y       # macOS
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh    # Linux NUC
+cargo install wasm-pack
+cd wasm && ./build.sh        # rebuilds wasm/pkg/cell_sim.wasm
+```
+
+The wasm artifacts in `wasm/pkg/` are committed — second machine doesn't
+need the Rust toolchain to *play*, only to *build*.
+
+## Collaboration discipline — keep modules small
+
+Adding a feature? Default to a **new file**, not new lines in an existing one.
+
+Hard ceilings (when crossed, split):
+
+| File type | Soft cap | Hard cap |
+|---|---|---|
+| Single module (`.js`) | 300 lines | 500 lines |
+| Single function | 50 lines | 80 lines |
+| `main.js` | 600 lines | 800 lines (then move concerns out) |
+
+Established patterns (mimic these when adding new domains):
+
+- **Domain split** — when a single concern grows past ~250 lines, slice
+  by sub-concern. Example: `ai.js` (670 lines) → `ai.js` (orchestrator)
+  + `ai-build.js` + `ai-tactical.js` + `ai-strategic.js`.
+- **Effects facade** — when a module needs to run both main-thread and
+  worker-side, route side-effects through a `ctx.sendFleet` / etc.
+  bundle so the same phase code works both contexts.
+  Reference: `ai-effects.js` + `makeEffects(actions)`.
+- **Worker pair** — every off-thread feature is two files: `X-worker.js`
+  (the worker entry) and `X-worker-bridge.js` (main-thread proxy).
+  Reference: `ai-worker.js` + `ai-worker-bridge.js`,
+  `render-worker.js` + `render-worker-bridge.js`.
+- **Lazy / opt-in** — perf experiments ship behind a state flag +
+  hotkey, default OFF. WASM (Shift+W), AI worker (Y), render worker (U).
+  Lets the user A/B compare and lets a broken experiment fail safely
+  without breaking the main-thread path.
+
+Avoid in `main.js`:
+
+- New cross-module orchestration (extract a `*-bridge.js` instead)
+- New rendering primitives (those belong in `render-*.js`)
+- New AI logic (one of `ai-*.js`)
+- New combat tuning constants (`config.js`)
+
+When in doubt: read the existing comments at the top of similar modules
+— they explain the boundary the file is supposed to defend.
 
 ## Kaggle deployment notes
 

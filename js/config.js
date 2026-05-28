@@ -36,6 +36,14 @@ export function setNodeRange(min, max) {
   N_NODES_MAX = max;
 }
 
+// ---- Procedural map generation (?procgen=1) ----
+// Geography-first generator (worldgen.js): the map is built in region → node →
+// road layers instead of a uniform scatter. Opt-in via URL flag, default OFF so
+// the legacy world.js path stays the baseline. Region count scales the theatre's
+// macro structure (more regions = more distinct clusters / chokepoints).
+export const PROCGEN_REGIONS_MIN = 8;
+export const PROCGEN_REGIONS_MAX = 15;
+
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec
 export const PAN_SPEED = 1800;          // camera key-pan speed (bumped for big map)

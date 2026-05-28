@@ -33,6 +33,7 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm, toggleWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
+import { generateWorld } from './worldgen.js';
 import { initAudio, updateAudio, toggleMute } from './audio.js';
 
 // =====================================================
@@ -120,8 +121,16 @@ export function newGame() {
   // World gen
   placeTerrain();
   bakeTerrain();          // one-time bake — every frame thereafter is a single drawImage
-  placeNodes();
-  buildRoads();
+  if (state.procgen) {
+    // Geography-first generator (regions → nodes → roads). Replaces the legacy
+    // scatter+mesh; outputs the same state.nodes/roads/adj shape. An unpinned
+    // seed re-rolls each new game (fresh map on R); ?seed=N pins it (replayable).
+    if (!state.seedPinned) state.worldSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
+    generateWorld(state.worldSeed);
+  } else {
+    placeNodes();
+    buildRoads();
+  }
   adjustHubSizes();
 
   // Faction starts (spread out)
@@ -782,6 +791,15 @@ function attachInput() {
 // applyPreset mutates the `let` exports in config.js.
 const presetName = new URLSearchParams(location.search).get('preset');
 applyPreset(presetName);
+
+// Procedural map generation (opt-in). ?procgen=1 swaps in the geography-first
+// generator; ?seed=N pins a deterministic, replayable map (otherwise each new
+// game rolls a fresh seed). Default OFF → legacy world.js scatter+mesh.
+const _mapParams = new URLSearchParams(location.search);
+state.procgen = _mapParams.get('procgen') === '1';
+const _seedParam = _mapParams.get('seed');
+state.seedPinned = _seedParam != null;
+if (state.seedPinned) state.worldSeed = parseInt(_seedParam, 10) >>> 0;
 
 // Render worker MUST be enabled before resize() (which would otherwise
 // touch canvas.width and before initWorldCtx() gets called by anything).

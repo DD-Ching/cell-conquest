@@ -58,6 +58,9 @@ export const state = {
   turrets: [],               // world-coord buildings: {id,owner,type,x,y,hp,hpMax,active,progress,total,prodCooldown,engineers}
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],
+  regions: [],               // procgen: [{id,x,y,type,radius,value,danger}] — empty in legacy gen
+  worldSeed: 0,              // procgen deterministic seed (0 = legacy random gen)
+  procgen: false,            // opt-in geography-first generator (?procgen=1)
   adj: new Map(),
   edgeData: new Map(),       // ekey(a,b) -> { wrecks, netLevel, netCharges, netOwner }
                              //   wrecks: [{x,y,hp,hpMax,rot}] — physical piles on

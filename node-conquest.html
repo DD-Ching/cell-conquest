@@ -313,20 +313,19 @@
 <div id="nn-badge" class="loading">NPC model loading…</div>
 <div id="hud" class="tac"></div>
 <div id="topright" class="tac"><div class="row"><span class="glyph" data-glyph="timer"></span><span id="timer">00:00</span></div><div class="sub"><span class="glyph" data-glyph="speed"></span><span id="speed">Speed 1×</span></div><div class="sub"><span class="glyph" data-glyph="zoom"></span><span id="zoom">100%</span></div><div class="sub"><span class="glyph" data-glyph="perf"></span><span id="perf">— fps · — ms</span></div></div>
-<canvas id="minimap"></canvas>
 <div id="pause-banner" class="tac">⏸ Paused — Space to resume</div>
 <div id="help" class="tac">
-  <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Space</kbd> pause &middot; <kbd>Tab</kbd> hide HUD &middot; <kbd>M</kbd> toggle minimap</div>
+  <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Space</kbd> pause &middot; <kbd>Tab</kbd> hide HUD</div>
   <div class="help-full">
     <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>
     <div><kbd>Shift</kbd>+drag = send all units</div>
-    <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan &middot; click minimap to jump</div>
+    <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan</div>
     <div><kbd>1</kbd>–<kbd>5</kbd> speed (1× / 2× / 5× / 10× / 20×) &middot; <kbd>[</kbd> <kbd>]</kbd> step speed</div>
     <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
     <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a turret (Anti-Air / Tank / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
     <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
     <div><kbd>G</kbd> = hand the base under the cursor (or every selected base) to your Lieutenant 🤖 — an allied NPC that uses the full enemy AI brain. Press G on a Lieutenant base to take it back. Box-select first to delegate many at once.</div>
-    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>M</kbd> toggle minimap &middot; <kbd>?</kbd> toggle this help</div>
+    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>?</kbd> toggle this help</div>
     <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
     <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
     <div>URL <code>?theme=mars</code> (default) / <code>?theme=ice-mars</code> / <code>?theme=alien-biome</code> reskins enemy factions — palette, name pool, glow. Player + Lieutenant colour stay the same. Reload to switch.</div>

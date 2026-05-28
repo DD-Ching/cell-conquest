@@ -27,7 +27,7 @@ import * as renderBridge from './render-worker-bridge.js';
 import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
-  buildHUD, updateHUD, render, renderMinimap,
+  buildHUD, updateHUD, render,
   makeSnow, updateSnow, updateParticles, bakeTerrain,
 } from './render.js';
 import { loadAssets } from './sprites.js';
@@ -38,8 +38,12 @@ import { applyPreset } from './game-presets.js';
 // DOM bootstrap & resize
 // =====================================================
 state.canvas  = document.getElementById('game');
-state.minimap = document.getElementById('minimap');
-state.mctx    = state.minimap.getContext('2d');
+// Minimap removed — it re-plotted every node + every fleet/drone each frame
+// (hundreds of draws at late game) for little tactical value. The element is
+// gone from the DOM; state.minimap stays null and all minimap code paths are
+// guarded on it.
+state.minimap = document.getElementById('minimap');   // null now
+state.mctx    = state.minimap ? state.minimap.getContext('2d') : null;
 // The world canvas's 2D context is created LAZILY (see initWorldCtx). If
 // the URL has ?renderWorker=1 we transfer the canvas to the render worker
 // BEFORE anything calls getContext('2d') on it (transferControlToOffscreen
@@ -64,12 +68,14 @@ function resize() {
     state.canvas.height = innerHeight;
   }
   renderBridge.notifyResize(state.W, state.H);
-  const MM_W = Math.min(240, Math.max(140, Math.floor(state.W * 0.16)));
-  const MM_H = Math.floor(MM_W * (WORLD_H / WORLD_W));
-  state.minimap.width = MM_W;
-  state.minimap.height = MM_H;
-  state.minimap.style.width = MM_W + 'px';
-  state.minimap.style.height = MM_H + 'px';
+  if (state.minimap) {
+    const MM_W = Math.min(240, Math.max(140, Math.floor(state.W * 0.16)));
+    const MM_H = Math.floor(MM_W * (WORLD_H / WORLD_W));
+    state.minimap.width = MM_W;
+    state.minimap.height = MM_H;
+    state.minimap.style.width = MM_W + 'px';
+    state.minimap.style.height = MM_H + 'px';
+  }
   clampCamera();
 }
 addEventListener('resize', () => { resize(); makeSnow(); });
@@ -382,7 +388,6 @@ function loop() {
   } else {
     render();
   }
-  renderMinimap();
   requestAnimationFrame(loop);
 }
 
@@ -642,13 +647,9 @@ function attachInput() {
       state.paused = !state.paused;
       document.body.classList.toggle('paused', state.paused);
     }
-    // Minimap collapse (M). Toggles a body class that the CSS uses to slide
-    // / hide the bottom-right minimap when the player wants that screen real
-    // estate for clicking on a node hiding under it.
-    if (k === 'm') {
-      e.preventDefault();
-      document.body.classList.toggle('minimap-hidden');
-    }
+    // (Minimap removed — the M-key toggle and the bottom-right minimap canvas
+    // are gone; it cost a full node + fleet replot every frame for little
+    // tactical value.)
     // Debug: Shift+W toggles wasm hot loops on/off so the player can A/B
     // compare the perf overlay (ms sim) between Rust and JS paths.
     if (e.shiftKey && k === 'w') {
@@ -733,18 +734,7 @@ function attachInput() {
     if (k === 'd' || k === 'arrowright') state.panKeys.right = false;
   });
 
-  state.minimap.addEventListener('mousedown', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    const rect = state.minimap.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const wx = (mx / state.minimap.width) * WORLD_W;
-    const wy = (my / state.minimap.height) * WORLD_H;
-    state.cameraX = wx - (state.W / state.zoom) / 2;
-    state.cameraY = wy - (state.H / state.zoom) / 2;
-    clampCamera();
-  });
+  // (Minimap click-to-jump removed with the minimap.)
 }
 
 // =====================================================

@@ -201,9 +201,16 @@ const LOITER_R = 90;                       // ring radius, world px (big, visibl
 const LOITER_ROT = 0.5;                    // ring angular velocity, rad/s
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));   // 2.39996… — even angular spread
 
-// owner -> {cx,cy} rally centre, rebuilt once per updateDrones() tick.
+// owner -> {cx,cy} rally centre. Rebuilt ONCE PER FRAME, not per sub-step:
+// updateDrones runs up to 20× a frame at 40×, but state.elapsed is constant
+// across a frame's sub-steps (it advances after the loop), so we key the cache
+// on it. The forward-staging rally does an all-nodes scan per owner — doing
+// that 20× a frame was a real chunk of the drone-update cost.
 let _loiterCenters = new Map();
+let _loiterStamp = -1;
 function rebuildLoiterCenters() {
+  if (_loiterStamp === state.elapsed && _loiterCenters.size) return;
+  _loiterStamp = state.elapsed;
   _loiterCenters = new Map();
   for (const [o, turrets] of state.turretsByOwner) {
     let sx = 0, sy = 0, n = 0;

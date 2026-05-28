@@ -612,19 +612,20 @@ export function launchOneDroneFrom(t) {
  *  Drops it if the entity died / was captured by the salvo owner / belongs
  *  to a stripped faction (would just funnel into the regen-and-die black
  *  hole — let the salvo re-pick a real threat). */
-function resolveSalvoTarget(s, salvoOwner) {
+function resolveSalvoTarget(s, salvoOwner, respectValue = true) {
   if (!s) return null;
+  // respectValue=false → the PLAYER explicitly clicked this target, so honour
+  // it even if it's bombed-flat / stripped. The value gates below are an AI
+  // anti-waste heuristic; a human's deliberate alpha-strike isn't second-guessed.
   if (s.kind === 'turret') {
     const t = state.turretById.get(s.id);
-    if (t && !isAlly(t.owner, salvoOwner) && !state.strippedOwners.has(t.owner)) {
+    if (t && !isAlly(t.owner, salvoOwner) && (!respectValue || !state.strippedOwners.has(t.owner))) {
       return { kind: 'turret', id: t.id, x: t.x, y: t.y };
     }
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];
-    // Reject a node that's already bombed flat — dumping the whole salvo onto a
-    // near-empty city is exactly the waste we're killing; let it re-pick value.
-    if (n && !isAlly(n.owner, salvoOwner) && !state.strippedOwners.has(n.owner)
-        && n.units >= DRONE_ENGAGE_UNITS) {
+    if (n && !isAlly(n.owner, salvoOwner) &&
+        (!respectValue || (!state.strippedOwners.has(n.owner) && n.units >= DRONE_ENGAGE_UNITS))) {
       return { kind: 'node', id: n.id, x: n.x, y: n.y };
     }
   }
@@ -673,11 +674,31 @@ function buildSalvoPlan(t, fixedTarget, n) {
  *  budgeted value plan; drones with no worthwhile target STAY stockpiled
  *  (aggregate, don't vaporise onto a dead front). Internal — both
  *  releasePlayerStockpile and releaseAIStockpile delegate here. */
-function releaseStockpileFor(owner, fixedTarget) {
+function releaseStockpileFor(owner, fixedTarget, fullDump = false) {
   let launched = 0;
   for (const t of state.turrets) {
     if (t.owner !== owner || t.type !== 'factory' || !t.dronesReady) continue;
     const n = t.dronesReady;
+
+    // PLAYER ALPHA-STRIKE (fullDump): launch the ENTIRE stockpile at once — no
+    // anti-waste value budget, no per-node cap. The player held fire to amass
+    // a wall of drones and pressed launch; they want ALL of them in the air.
+    // Every drone aims at the clicked target (overkill drones auto-abandon a
+    // flattened node and re-pick the next enemy in flight); with no clicked
+    // target each self-picks its nearest worthwhile/closest enemy.
+    if (fullDump) {
+      for (let k = 0; k < n; k++) {
+        const jx = (Math.random() - 0.5) * 18;
+        const jy = (Math.random() - 0.5) * 18;
+        if (fixedTarget) { spawnDrone(t.x + jx, t.y + jy, t.owner, fixedTarget); launched++; }
+        else if (launchOneDroneFrom(t)) launched++;
+      }
+      t.dronesReady = 0; t.prodCooldown = DF_PRODUCTION_T;
+      continue;
+    }
+
+    // AI release: spread across the value-budgeted plan; un-budgeted drones
+    // STAY stockpiled (don't vaporise onto a dead front).
     const plan = buildSalvoPlan(t, fixedTarget, n);
     for (let k = 0; k < plan.length; k++) {
       const jx = (Math.random() - 0.5) * 14;
@@ -693,8 +714,10 @@ function releaseStockpileFor(owner, fixedTarget) {
 
 /** Player-facing release — driven by the second H press. */
 export function releasePlayerStockpile() {
-  const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player');
-  const launched = releaseStockpileFor('player', fixedTarget);
+  // respectValue=false: honour the player's explicit click even on a suppressed
+  // target. fullDump=true: launch every stockpiled drone, no value budget.
+  const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player', false);
+  const launched = releaseStockpileFor('player', fixedTarget, true);
   state.salvoTarget = null;
   return launched;
 }

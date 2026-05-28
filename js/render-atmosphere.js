@@ -9,7 +9,7 @@
 //     world boundary).
 // =====================================================
 import { state } from './state.js';
-import { WORLD_W, WORLD_H } from './config.js';
+import { WORLD_W, WORLD_H, PARTICLE_CAP } from './config.js';
 
 // =====================================================
 // Terrain bake — sand patches, craters, rocks are all completely static once
@@ -99,6 +99,14 @@ export function updateSnow(dt) {
 }
 
 export function updateParticles(dt) {
+  // FIFO budget: spawn sites are unbounded, so cap here. Loop iterates from
+  // the END, so splicing OLDEST entries off the front first does not shift
+  // any index we are about to visit. Drops the eldest particles (which are
+  // also the most faded — alpha is life/maxLife), which is exactly what a
+  // human eye would lose first anyway.
+  if (state.particles.length > PARTICLE_CAP) {
+    state.particles.splice(0, state.particles.length - PARTICLE_CAP);
+  }
   for (let i = state.particles.length - 1; i >= 0; i--) {
     const p = state.particles[i];
     p.x += p.vx * dt; p.y += p.vy * dt;

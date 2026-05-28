@@ -113,3 +113,15 @@ export const NN_MODEL_URL = 'cell_policy.onnx';
 export const NN_N = 40;
 export const NN_F = 21;
 export const NN_HIDDEN = 96;
+
+// ---- VFX FIFO caps ----
+// Hard ceilings on the cosmetic-only ephemeral arrays. Spawn sites are
+// intentionally unbounded — explosions, salvos, and burst events shouldn't
+// have to second-guess whether their effect will appear. Instead, each
+// update loop trims the array down to its cap before iterating, dropping
+// the OLDEST entries first (FIFO). Caps protect frame time and the
+// per-frame view-cull cost on big mid-late-game battles; under normal
+// play the arrays sit well below these numbers.
+export const PARTICLE_CAP = 1500;
+export const TRACER_CAP   = 500;
+export const SHELL_CAP    = 100;

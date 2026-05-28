@@ -13,6 +13,7 @@ import {
   ARTILLERY_RANGE, ARTILLERY_AOE, ARTILLERY_INTERVAL,
   ARTILLERY_INACCURACY, ARTILLERY_DAMAGE_TURRET, ARTILLERY_DAMAGE_FLEET,
   ARTILLERY_SHELL_FLIGHT,
+  SHELL_CAP,
 } from './config.js';
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
@@ -287,6 +288,15 @@ function fireArtilleryShell(t) {
 
 /** Advance shells in flight; detonate when their flight time expires. */
 export function updateShells(dt) {
+  // FIFO budget: under normal play in-flight shells stay well under SHELL_CAP
+  // (5 s ARTILLERY_INTERVAL × 0.7 s flight ≈ <1 shell per turret in air at
+  // any moment). The cap is a saturation safety against pathological cases
+  // (many artillery firing in lockstep). Front-trim is safe because the loop
+  // iterates from the end; oldest shells are closest to impact so dropping
+  // them is the smallest gameplay loss available.
+  if (state.shells.length > SHELL_CAP) {
+    state.shells.splice(0, state.shells.length - SHELL_CAP);
+  }
   for (let i = state.shells.length - 1; i >= 0; i--) {
     const s = state.shells[i];
     s.t += dt;

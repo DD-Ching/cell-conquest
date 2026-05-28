@@ -107,12 +107,24 @@ export function updateAudio(dt) {
   scanAAFire(dt);
 }
 
+// View bounds derived straight from the camera (NOT state._view): when the
+// render worker owns drawing, render() runs off-thread and never sets
+// state._view on the main thread, so audio must compute its own visible box or
+// it crashes every frame. No margin needed — audio only cares about on-screen.
+function viewBounds() {
+  const z = state.zoom || 1;
+  return {
+    vL: state.cameraX, vT: state.cameraY,
+    vR: state.cameraX + state.W / z, vB: state.cameraY + state.H / z,
+  };
+}
+
 function updateBuzz() {
   if (!buzz) return;
   const zoomF = clamp((state.zoom - ZOOM_AUDIBLE_MIN) / (ZOOM_AUDIBLE_FULL - ZOOM_AUDIBLE_MIN), 0, 1);
   let energy = 0, panSum = 0;
   if (zoomF > 0) {
-    const { vL, vT, vR, vB } = state._view;
+    const { vL, vT, vR, vB } = viewBounds();
     let count = 0;
     for (const f of state.fleets) {
       if (f.kind !== 'drone') continue;
@@ -136,7 +148,7 @@ function scanAAFire(dt) {
   // AA rounds spawned THIS frame (age still ~dt) = gunfire events. Rate-limited
   // so a big battle is a rattle, not a wall of noise.
   const fresh = dt * 1.6;
-  const { vL, vT, vR, vB } = state._view;
+  const { vL, vT, vR, vB } = viewBounds();
   let fired = 0;
   for (const t of state.tracers) {
     if (t.kind !== 'aa' || t.age > fresh) continue;

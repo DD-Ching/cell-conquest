@@ -28,6 +28,7 @@
 // painful).
 // =====================================================
 import { state } from './state.js';
+import { COLOR, GLOW } from './factions.js';
 import {
   sliceNodes, sliceTurrets, sliceFleets, sliceAdj, sliceEdgeData,
 } from './snapshot-utils.js';
@@ -142,6 +143,13 @@ function buildSnapshot() {
     salvoTarget: state.salvoTarget,
     mousePos:    state.mousePos,
     painting:    state.painting,
+
+    // Faction colours: COLOR/GLOW are populated by rollFactions() on the MAIN
+    // thread; the worker's own factions.js module starts empty, so without this
+    // every COLOR[owner] is undefined and node rendering crashes. Tiny payload
+    // (~a dozen short strings); survives new-game / theme swaps for free.
+    colors: COLOR,
+    glow:   GLOW,
   };
 }
 

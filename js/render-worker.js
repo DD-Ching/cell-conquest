@@ -32,6 +32,7 @@ import { state } from './state.js';
 import { render, bakeTerrain, makeSnow, updateParticles } from './render.js';
 import { loadAssets } from './sprites.js';
 import { WORLD_W, WORLD_H } from './config.js';
+import { COLOR, GLOW } from './factions.js';   // populated from the snapshot (see hydrate)
 
 const GRID_CELL = 250;
 
@@ -48,6 +49,13 @@ function ensureGroundScorch() {
  *  rebuild caches here (turretById etc.) — render() doesn't query them,
  *  it iterates the raw arrays. */
 function hydrate(snap) {
+  // Faction colours are rolled on the main thread; mirror them into THIS
+  // worker's factions.js maps so COLOR[owner] / GLOW[owner] resolve when the
+  // render layers draw nodes/turrets. Without this the worker crashes on the
+  // first frame that an AI faction owns a visible node.
+  if (snap.colors) Object.assign(COLOR, snap.colors);
+  if (snap.glow)   Object.assign(GLOW, snap.glow);
+
   state.elapsed   = snap.elapsed;
   state.paused    = snap.paused;
   state.cameraX   = snap.cameraX;

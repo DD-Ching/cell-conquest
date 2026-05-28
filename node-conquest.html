@@ -217,6 +217,7 @@
     <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>M</kbd> toggle minimap &middot; <kbd>?</kbd> toggle this help</div>
     <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
     <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
+    <div>URL flag <code>?preset=skirmish</code> / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. Default (no flag) is the standard 12000×9000 / 700–900-node theatre. Console logs the applied preset.</div>
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

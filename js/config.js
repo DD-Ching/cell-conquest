@@ -10,10 +10,31 @@
 // Camera ZOOM_MIN dropped so the player can fit the whole world in view
 // for strategic overview, and PAN_SPEED bumped so WASD traversal isn't
 // glacial across the bigger canvas.
-export const WORLD_W = 12000;
-export const WORLD_H = 9000;
-export const N_NODES_MIN = 700;
-export const N_NODES_MAX = 900;
+//
+// These four are `let` exports so `js/game-presets.js` can re-bind them at
+// boot via the setters below. ESM live bindings mean every importing module
+// (world.js, camera.js, render-*, main.js, …) sees the updated value
+// automatically — no need to plumb arguments through. See game-presets.js
+// header for the full story and known limitations (render-worker.js runs
+// in a separate module graph and won't see the mutation, so presets that
+// change WORLD dims are incompatible with ?renderWorker=1).
+export let WORLD_W = 12000;
+export let WORLD_H = 9000;
+export let N_NODES_MIN = 700;
+export let N_NODES_MAX = 900;
+
+/** Override world size. Call BEFORE newGame() — already-generated state
+ *  (cameras, baked terrain, scorch buffers) won't redo themselves. */
+export function setWorldDims(w, h) {
+  WORLD_W = w;
+  WORLD_H = h;
+}
+/** Override node-count target. Call BEFORE newGame(); world.js samples
+ *  these at placeNodes() time. */
+export function setNodeRange(min, max) {
+  N_NODES_MIN = min;
+  N_NODES_MAX = max;
+}
 
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec

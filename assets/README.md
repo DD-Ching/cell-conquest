@@ -6,26 +6,29 @@ use it instead — useful if you want richer art from Kenney.nl etc.
 
 ## Shipped art (current)
 
-Ground units + turret structures use **Kenney "Sci-Fi RTS" (CC0)** sprites
-— <https://opengameart.org/content/sci-fi-rts-120-sprites>. The pack's
-rust/grey palette suits Mars and tints cleanly to faction colours.
-`drone` and `engineer` deliberately stay PROCEDURAL: the pack has no
-aircraft (the delta-wing suicide drone is hand-drawn) and its engineer is
-a standing soldier that looks wrong rotated to travel direction (the
-built-in bulldozer reads better). Credit "Kenney.nl" — not mandatory under
-CC0 but appreciated.
+Two Kenney CC0 packs, chosen so each sprite READS as its function:
+- **Tower Defense (top-down)** — <https://opengameart.org/content/tower-defense-300-tilessprites>
+  — the actual WEAPON turrets (missile launcher = AA, cannon = artillery,
+  tank). These are unmistakable, unlike a generic building.
+- **Sci-Fi RTS** — <https://opengameart.org/content/sci-fi-rts-120-sprites>
+  — the ground VEHICLES + the factory building.
+
+`drone` and `engineer` stay PROCEDURAL: no aircraft in either pack (the
+delta-wing suicide drone is hand-drawn) and the soldier engineer looks
+wrong rotated to travel direction (the built-in bulldozer reads better).
+Credit "Kenney.nl" — not mandatory under CC0 but appreciated.
 
 Source → in-game mapping:
 
 | In-game file | Kenney source | Notes |
 |---|---|---|
-| `tank.png` | scifiUnit_45 | rotated 90° CW (Kenney points up; game angle 0 = east) |
-| `apc.png` | scifiUnit_46 | rotated 90° CW |
-| `truck.png` | scifiUnit_47 | rotated 90° CW |
-| `turret_aa.png` | scifiStructure_13 | radar dish, upright (no aim-rotate) |
-| `turret_tank.png` | scifiStructure_14 | round turret, upright |
-| `turret_factory.png` | scifiStructure_05 | factory w/ orange roof, upright |
-| `turret_artillery.png` | scifiStructure_09 | barreled gun, rotated 90° CW — sprite tracks aim |
+| `tank.png` | Sci-Fi RTS scifiUnit_45 | top-down tank, rotated 90° CW (pack points up; game angle 0 = east) |
+| `apc.png` | Sci-Fi RTS scifiUnit_46 | rotated 90° CW |
+| `truck.png` | Sci-Fi RTS scifiUnit_47 | rotated 90° CW |
+| `turret_aa.png` | TD towerDefense_tile205 | **missile launcher, missiles point up** = anti-air. Upright (no aim-rotate). |
+| `turret_tank.png` | TD towerDefense_tile249 | **tank body + turret**. Upright. |
+| `turret_artillery.png` | TD towerDefense_tile291 | **cannon, barrel points east** — matches the artillery aim-rotation, so the barrel tracks its target. No pre-rotation. |
+| `turret_factory.png` | Sci-Fi RTS scifiStructure_05 | factory w/ orange roof, upright |
 
 ## Expected filenames
 

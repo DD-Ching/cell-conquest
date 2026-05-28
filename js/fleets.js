@@ -13,7 +13,7 @@ import { dist } from './util.js';
 import { findPath, catchUpRegen } from './world.js';
 import { isAlly } from './alliance.js';
 import {
-  ENG_SPEED, getEdge,
+  ENG_SPEED, ekey,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
 
@@ -76,8 +76,81 @@ export function assaultTurret(from, turret, amount) {
   return true;
 }
 
+// =====================================================
+// Per-edge wreck spatial cache
+// =====================================================
+// Each entry stores wrecks along the edge's CANONICAL direction (low-id node
+// → high-id node), sorted ascending by projection. The detour scan binary-
+// searches this in O(log W) per fleet sub-step instead of the O(W) linear
+// loop it replaces. At late-game scale (≥100 fleets × 10 sub-steps × heavy
+// edges) the savings dominate sim time.
+//
+// Rebuilt at the top of every simulateFleets() call — wrecks die / spawn
+// freely between calls, and keeping the cache fresh is cheaper than
+// invalidating it from every mutation site.
+function rebuildWrecksByEdge() {
+  state.wrecksByEdge.clear();
+  for (const [key, e] of state.edgeData) {
+    if (!e.wrecks || e.wrecks.length === 0) continue;
+    // Recover the canonical (low-id, high-id) endpoints from the key. ekey
+    // stores them sorted, so splitting on '_' gives them directly.
+    const us = key.indexOf('_');
+    const aId = +key.slice(0, us);
+    const bId = +key.slice(us + 1);
+    const aN = state.nodes[aId], bN = state.nodes[bId];
+    if (!aN || !bN) continue;
+    const dx = bN.x - aN.x, dy = bN.y - aN.y;
+    const segLen = Math.hypot(dx, dy) || 1;
+    const dirX = dx / segLen, dirY = dy / segLen;
+    // perpendicular (90° CCW) in canonical frame
+    const pxn = -dirY, pyn = dirX;
+    const ws = e.wrecks;
+    const n = ws.length;
+    // Compute (proj, perp) pairs, then sort ascending by proj.
+    // For small n (cap = WRECK_MAX_PER_EDGE = 18) an inline insertion sort
+    // beats Array.sort() — no comparator-call overhead, predictable cost.
+    // Allocation cost (two small Float32Arrays per edge with wrecks per
+    // sub-step) is dwarfed by the per-fleet O(W) scan it replaces once
+    // either fleet count or wrecks-per-edge grow into late-game scale.
+    const projs = new Float32Array(n);
+    const perps = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const w = ws[i];
+      const wDx = w.x - aN.x, wDy = w.y - aN.y;
+      const p = wDx * dirX + wDy * dirY;
+      const q = wDx * pxn + wDy * pyn;
+      // Insertion-sort the new entry into [0..i].
+      let j = i;
+      while (j > 0 && projs[j - 1] > p) {
+        projs[j] = projs[j - 1];
+        perps[j] = perps[j - 1];
+        j--;
+      }
+      projs[j] = p;
+      perps[j] = q;
+    }
+    state.wrecksByEdge.set(key, { projs, perps, segLen, aId, bId });
+  }
+}
+
+/** Binary search: lowest index `i` such that `arr[i] >= target`.
+ *  Returns `arr.length` if no element satisfies. */
+function lowerBound(arr, target) {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /** Advance path-based fleets (troops + deploy-engineers). Drones in engineering.js. */
 export function simulateFleets(dt) {
+  // Refresh the per-edge wreck spatial cache before the fleet loop so the
+  // inner detour scan can binary-search a sorted projection array instead
+  // of linearly scanning each edge's wreck list per fleet sub-step.
+  rebuildWrecksByEdge();
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind === 'drone') continue;
@@ -155,27 +228,53 @@ export function simulateFleets(dt) {
     // slower (off-road tax — natural cause of congestion behind a wreck cluster).
     let speedMul = 1.0;
     let lateralX = 0, lateralY = 0;
-    let segDirX = 0, segDirY = 0;
     if (f.segIdx < f.path.length - 1) {
-      const aN = state.nodes[f.path[f.segIdx]];
-      const bN = state.nodes[f.path[f.segIdx + 1]];
+      const aId = f.path[f.segIdx], bId = f.path[f.segIdx + 1];
+      const aN = state.nodes[aId];
+      const bN = state.nodes[bId];
       const dx = bN.x - aN.x, dy = bN.y - aN.y;
       const segLen = Math.hypot(dx, dy) || 1;
-      segDirX = dx / segLen; segDirY = dy / segLen;
-      // perpendicular (90° CCW)
+      const segDirX = dx / segLen, segDirY = dy / segLen;
+      // perpendicular (90° CCW) in the fleet's traversal frame
       const pxn = -segDirY, pyn = segDirX;
-      const e = getEdge(f.path[f.segIdx], f.path[f.segIdx + 1]);
-      if (e && e.wrecks && e.wrecks.length > 0) {
-        // Find the nearest pile AHEAD on this segment (within DETOUR_LOOKAHEAD)
+      const cache = state.wrecksByEdge.get(ekey(aId, bId));
+      if (cache) {
+        // Cache stores wrecks along the canonical direction (low-id → high-id),
+        // sorted by projection. We translate the fleet's "ahead in my direction"
+        // search window into a canonical-proj range and binary-search.
+        const { projs, perps, segLen: cSegLen } = cache;
+        const canonical = aId < bId;
         let nearestAhead = Infinity, nearestPerp = 0;
-        for (const w of e.wrecks) {
-          const wDx = w.x - aN.x, wDy = w.y - aN.y;
-          const wt = wDx * segDirX + wDy * segDirY;        // proj onto seg
-          const wperp = wDx * pxn + wDy * pyn;             // perpendicular signed
-          const ahead = wt - f.segTraveled;
-          if (ahead > -WRECK_RENDER_R && ahead < DETOUR_LOOKAHEAD && ahead < nearestAhead) {
-            nearestAhead = ahead;
-            nearestPerp = wperp;
+        if (canonical) {
+          // Fleet traverses canonically: fleet-proj == canon-proj. We want the
+          // smallest canon-proj > f.segTraveled - WRECK_RENDER_R that is also
+          // < f.segTraveled + DETOUR_LOOKAHEAD.
+          const lo = lowerBound(projs, f.segTraveled - WRECK_RENDER_R);
+          if (lo < projs.length) {
+            const cp = projs[lo];
+            const ahead = cp - f.segTraveled;
+            if (ahead < DETOUR_LOOKAHEAD) {
+              nearestAhead = ahead;
+              nearestPerp = perps[lo];
+            }
+          }
+        } else {
+          // Fleet traverses reverse: fleet-proj == cSegLen - canon-proj. The
+          // smallest fleet-ahead corresponds to the LARGEST canon-proj that is
+          // still < cSegLen - f.segTraveled + WRECK_RENDER_R.
+          const upper = cSegLen - f.segTraveled + WRECK_RENDER_R;
+          // lowerBound returns first index with proj >= upper; one before that
+          // is the largest with proj < upper.
+          const idx = lowerBound(projs, upper) - 1;
+          if (idx >= 0) {
+            const cp = projs[idx];
+            const ahead = (cSegLen - cp) - f.segTraveled;
+            if (ahead < DETOUR_LOOKAHEAD) {
+              nearestAhead = ahead;
+              // Perpendicular flips sign when traversal direction reverses
+              // (segDir rotated 180° → CCW perpendicular flipped).
+              nearestPerp = -perps[idx];
+            }
           }
         }
         if (nearestAhead < Infinity) {

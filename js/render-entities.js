@@ -17,24 +17,37 @@ import {
 
 const CELL = 250;                          // matches the spatial-grid cell size
 const _warnedOwners = new Set();           // dedupe console warnings per owner
+const _tintCache = new Map();              // hex → 70%-toward-white rgb string
+
+/** Brighten a faction hex 70% toward white. Cached per hex so the selection
+ *  ring doesn't re-parse on every frame. */
+function tintBright(hex) {
+  let s = _tintCache.get(hex);
+  if (s) return s;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const m = (c) => Math.round(255 * 0.7 + c * 0.3);
+  s = `rgb(${m(r)}, ${m(g)}, ${m(b)})`;
+  _tintCache.set(hex, s);
+  return s;
+}
 
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
+// Per-layer passes over the visible set so uniform-alpha layers (selection,
+// wounded) set globalAlpha once per pass instead of once per node.
 export function drawNodes(ctx, zoom, now) {
   const { vL, vT, vR, vB } = state._view;
-  // LOW LOD: skip the glow halo + breathing pulse + inner buildings + flash
-  // animations. Each draws ~8 ctx ops/node, which at 1000+ visible nodes is
-  // the bottleneck. Just paint the faction rim + dark core + count text —
-  // enough to read territory and unit count at strategic zoom.
+  // LOW LOD: skip glow / breathing / inner buildings / flash to keep 1000+
+  // visible nodes affordable. catchUpRegen is NOT called here — sim()'s AI
+  // tick + HUD pass already ran catchUpAllNodes this frame.
   if (state._lod < 2) {
-    // At extreme zoom-out, n.size × zoom can be sub-pixel — the node becomes
-    // unclickable AND invisible. Enforce a minimum 6-screen-pixel render so
-    // nodes stay visible (and the zoom-aware nodeAt pick tolerance stays
-    // useful, since the player sees what they're aiming for).
+    // 6-screen-pixel floor so sub-pixel n.size at extreme zoom-out stays
+    // visible AND clickable (nodeAt uses a zoom-aware pick tolerance).
     const minR = 6 / zoom;
     for (const n of state.nodes) {
       const r = Math.max(n.size, minR);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
-      catchUpRegen(n);                       // visible-only refresh
       ctx.fillStyle = COLOR[n.owner];
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
@@ -46,22 +59,21 @@ export function drawNodes(ctx, zoom, now) {
     }
     return;
   }
+
+  // Visible set — 2.4× halo margin to keep the glow gradient inside the cull.
+  const visible = [];
   for (const n of state.nodes) {
-    // Nodes have a 2.4× glow halo around them — cull with that margin.
     const halo = n.size * 2.4;
     if (n.x + halo < vL || n.x - halo > vR || n.y + halo < vT || n.y - halo > vB) continue;
-    catchUpRegen(n);                         // fresh units for the label render
-    const degree = state.adj.get(n.id)?.size || 0;
+    visible.push(n);
+  }
 
-    // Outer glow halo — defensive fallback so an unknown owner never
-    // breaks the entire frame; log once per unknown owner to surface
-    // the underlying faction-setup gap.
+  // Pass 1 — glow halos (alpha baked into gradient stops).
+  for (const n of visible) {
     const glow = GLOW[n.owner] || GLOW.neutral || 'rgba(160,135,116,0.3)';
-    if (!GLOW[n.owner]) {
-      if (!_warnedOwners.has(n.owner)) {
-        console.warn('[render] no GLOW for owner', n.owner, '— check rollFactions');
-        _warnedOwners.add(n.owner);
-      }
+    if (!GLOW[n.owner] && !_warnedOwners.has(n.owner)) {
+      console.warn('[render] no GLOW for owner', n.owner, '— check rollFactions');
+      _warnedOwners.add(n.owner);
     }
     const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.5, n.x, n.y, n.size * 2.4);
     grad.addColorStop(0, glow);
@@ -70,103 +82,90 @@ export function drawNodes(ctx, zoom, now) {
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.size * 2.4, 0, Math.PI * 2);
     ctx.fill();
+  }
 
-    // Capture pulse (one-shot animation)
-    if (n.pulse > 0) {
-      ctx.strokeStyle = COLOR[n.owner];
-      ctx.globalAlpha = n.pulse;
-      ctx.lineWidth = 2 / zoom;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size + (1 - n.pulse) * 28, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+  // Pass 2 — capture pulses (per-node phase ⇒ per-node alpha).
+  for (const n of visible) {
+    if (n.pulse <= 0) continue;
+    ctx.strokeStyle = COLOR[n.owner];
+    ctx.globalAlpha = n.pulse;
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.size + (1 - n.pulse) * 28, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
-    // Ambient breathing pulse — owned nodes feel alive (different phase per node)
-    if (n.owner !== 'neutral') {
-      const breath = 0.35 + 0.25 * Math.sin(now / 600 + n.id * 0.7);
-      ctx.strokeStyle = COLOR[n.owner];
-      ctx.globalAlpha = breath * 0.45;
-      ctx.lineWidth = 1.5 / zoom;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size + 3 + breath * 2, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+  // Pass 3 — ambient breathing (owned nodes feel alive; phase varies per id).
+  for (const n of visible) {
+    if (n.owner === 'neutral') continue;
+    const breath = 0.35 + 0.25 * Math.sin(now / 600 + n.id * 0.7);
+    ctx.strokeStyle = COLOR[n.owner];
+    ctx.globalAlpha = breath * 0.45;
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.size + 3 + breath * 2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
-    // Lieutenant-managed bases share the player's faction colour (they're
-    // the player's AI agent, not a separate side). The visual difference
-    // between "you-controlled" and "auto-controlled" is the UNDERLINE on
-    // the unit-count label — drawn below alongside the count.
-
-    if (state.selectedIds.has(n.id)) {
-      ctx.strokeStyle = '#fff';
-      ctx.globalAlpha = 0.65 + Math.sin(now / 180) * 0.25;
-      ctx.lineWidth = 2 / zoom;
+  // Pass 4 — selection ring. Faction-tinted toward white (reads as "yours").
+  // The pulsing alpha is identical across selected nodes ⇒ set once per pass.
+  if (state.selectedIds.size > 0) {
+    ctx.globalAlpha = 0.65 + Math.sin(now / 180) * 0.25;
+    ctx.lineWidth = 2 / zoom;
+    for (const n of visible) {
+      if (!state.selectedIds.has(n.id)) continue;
+      ctx.strokeStyle = tintBright(COLOR[n.owner] || COLOR.neutral || '#ffffff');
       ctx.beginPath();
       ctx.arc(n.x, n.y, n.size + 6, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.globalAlpha = 1;
     }
+  }
 
-    // Faction rim
+  // Pass 5 — wounded warning ring (< 35% capacity). Sits OUTSIDE the rim
+  // at n.size+10 as a quick "in trouble" cue before the player reads the
+  // HP count. Neutral nodes are skipped — they spawn well below 35% by
+  // design, so the alarm would fire on every empty neutral.
+  ctx.globalAlpha = 0.3 + 0.3 * Math.sin(now / 200);
+  ctx.strokeStyle = 'rgb(255, 100, 100)';
+  ctx.lineWidth = 1.2 / zoom;
+  for (const n of visible) {
+    if (n.owner === 'neutral') continue;
+    if (n.units / n.capacity >= 0.35) continue;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.size + 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Pass 6 — faction rim + dark inner compound.
+  for (const n of visible) {
     ctx.fillStyle = COLOR[n.owner];
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
     ctx.fill();
-
-    // Dark inner compound
     ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
     ctx.fill();
+  }
 
-    // Inner "buildings": small dots around perimeter inside the dark area.
-    // Density scales with hub degree — bigger hubs look more substantial.
-    if (degree > 0) {
-      const buildings = Math.min(8, Math.max(3, degree + 2));
-      const innerR = n.size - 8;
-      const slowSpin = now / 6000;       // very slow rotation
-      for (let k = 0; k < buildings; k++) {
-        const a = slowSpin + (k / buildings) * Math.PI * 2;
-        const bx = n.x + Math.cos(a) * innerR;
-        const by = n.y + Math.sin(a) * innerR;
-        ctx.fillStyle = COLOR[n.owner];
-        ctx.globalAlpha = 0.55;
-        ctx.beginPath();
-        ctx.arc(bx, by, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    }
+  // Pass 7 — inner buildings + capture flash (in helper to fit line cap).
+  _drawNodeOverlays(ctx, visible, now);
 
-    if (n.flash > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${n.flash * 0.45})`;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Unit count label centered in compound. Coloured by owning faction so
-    // a packed strategic-zoom map reads as territory at a glance, not a sea
-    // of white numbers. Neutral nodes stay light-grey so the eye sorts them
-    // apart from owned territory. drawNodeLabelsOnTop re-draws this number
-    // on the top layer with the same colour rule.
+  // Pass 8 — labels, Lieutenant underline, engineer badge, build flash.
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const n of visible) {
+    // Unit count, faction-coloured (drawNodeLabelsOnTop repaints over sprites).
     ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     const unitsTxt = String(Math.floor(n.units));
     ctx.fillText(unitsTxt, n.x, n.y);
-    // Underline = "this base is auto-controlled (Lieutenant AI)" — the same
-    // colour as the label so it reads as a typographic mark, not a separate
-    // shape. Skip on the base layer when drawNodeLabelsOnTop will repaint
-    // (handled there too for the top-layer pass that beats sprites).
+    // Lieutenant underline (typographic mark, not a separate shape).
     if (n.owner === 'ally1') {
-      const w = ctx.measureText(unitsTxt).width;
-      const half = w / 2;
+      const half = ctx.measureText(unitsTxt).width / 2;
       const uy = n.y + worldFont * 0.45;
       ctx.strokeStyle = COLOR[n.owner];
       ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
@@ -175,14 +174,12 @@ export function drawNodes(ctx, zoom, now) {
       ctx.lineTo(n.x + half, uy);
       ctx.stroke();
     }
-
     if (n.engineers > 0) {
-      const ex = n.x - n.size - 4;
-      const ey = n.y + n.size + 4;
       ctx.fillStyle = '#fff';
       ctx.font = `bold ${10 / zoom}px sans-serif`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('🔧' + n.engineers, ex, ey);
+      ctx.fillText('🔧' + n.engineers, n.x - n.size - 4, n.y + n.size + 4);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     }
     if (n.flashBuild > 0) {
       ctx.strokeStyle = `rgba(255,220,140,${n.flashBuild})`;
@@ -192,6 +189,38 @@ export function drawNodes(ctx, zoom, now) {
       ctx.stroke();
     }
   }
+}
+
+// Inner-building dots (per-k size + alpha jitter so big hubs feel alive) +
+// capture flash. Split out to keep drawNodes within the function-size cap.
+function _drawNodeOverlays(ctx, visible, now) {
+  for (const n of visible) {
+    const degree = state.adj.get(n.id)?.size || 0;
+    if (degree > 0) {
+      const buildings = Math.min(8, Math.max(3, degree + 2));
+      const innerR = n.size - 8;
+      const slowSpin = now / 6000;
+      ctx.fillStyle = COLOR[n.owner];
+      for (let k = 0; k < buildings; k++) {
+        const a = slowSpin + (k / buildings) * Math.PI * 2;
+        const bx = n.x + Math.cos(a) * innerR;
+        const by = n.y + Math.sin(a) * innerR;
+        const dotR = 1.2 + (k % 3) * 0.4;
+        ctx.globalAlpha = 0.55 + 0.25 * Math.sin(now / 500 + k * 0.3);
+        ctx.beginPath();
+        ctx.arc(bx, by, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (n.flash > 0) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = `rgba(255,255,255,${n.flash * 0.45})`;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 // ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----

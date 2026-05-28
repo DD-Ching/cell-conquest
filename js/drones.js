@@ -15,7 +15,7 @@ import { state } from './state.js';
 import {
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE, DRONE_MAX_LIFETIME,
   DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
-  DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
+  DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE, AA_RADIUS,
 } from './config.js';
 import { dist } from './util.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch, getEdge } from './engineering.js';
@@ -54,6 +54,36 @@ function spawnDrone(originX, originY, owner, target) {
 //     can't cause the old u-turn churn.
 const DRONE_ENGAGE_UNITS  = 12;
 const DRONE_ABANDON_UNITS = 5;
+// Max drones we'll commit to one node — a fat production core (200-300 units)
+// is worth several; a small town only 1. Raised above the old flat 4 so the
+// swarm can actually suppress the enemy's development hubs, not just chip them.
+const NODE_DRONE_CAP = 8;
+
+/** How heavily a point is screened by LIVE enemy anti-air. Drones flying into
+ *  AA coverage get shot down, so a node still RINGED by AA is effectively
+ *  inaccessible — its value is divided by this until the AA is cleared. That
+ *  makes the swarm knock out the surrounding weapon screen FIRST, then pour
+ *  into the now-open core (the "轟掉防空, 再往深部打" sequence). Gridded, so it
+ *  only inspects turrets near the point — cheap even with a wall of AA. */
+function aaScreenDivisor(x, y, owner) {
+  const CELL = 250;
+  const range = Math.ceil(AA_RADIUS / CELL);
+  const cx0 = Math.floor(x / CELL), cy0 = Math.floor(y / CELL);
+  const R2 = AA_RADIUS * AA_RADIUS;
+  let guards = 0;
+  for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
+    for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+      const bucket = state.turretGrid.get(cx * 10000 + cy);
+      if (!bucket) continue;
+      for (const a of bucket) {
+        if (a.type !== 'antiair' || !a.active || isAlly(a.owner, owner)) continue;
+        const dx = a.x - x, dy = a.y - y;
+        if (dx * dx + dy * dy < R2) guards++;
+      }
+    }
+  }
+  return 1 + guards;          // each guarding AA roughly halves the node's pull
+}
 
 /** Does the drone's stored target still WARRANT a strike?
  *
@@ -121,10 +151,13 @@ function retargetDrone(drone) {
       if (n.units < DRONE_ENGAGE_UNITS) continue;        // bombed-flat — nothing to chip
       // Respect the value-aware inbound cap so a whole salvo that just peeled
       // off a dead node spreads across fresh targets instead of re-dogpiling one.
-      const cap = Math.min(4, Math.max(1, Math.ceil(n.units / 45)));
+      const cap = Math.min(NODE_DRONE_CAP, Math.max(1, Math.ceil(n.units / 45)));
       if ((state.inboundDronesByTarget.get('node:' + n.id) || 0) >= cap) continue;
       const dx = n.x - drone.x, dy = n.y - drone.y;
-      const score = Math.min(n.units, 55) / (1 + Math.sqrt(dx * dx + dy * dy) / 800);
+      // Same value model as the launch picker: fat core >> husk, screened-by-AA
+      // cores wait their turn.
+      const score = Math.min(n.units, 160)
+        / ((1 + Math.sqrt(dx * dx + dy * dy) / 800) * aaScreenDivisor(n.x, n.y, drone.owner));
       if (score > bestNodeScore) {
         bestNodeScore = score;
         best = { kind: 'node', id: n.id, x: n.x, y: n.y };
@@ -523,17 +556,23 @@ function pickDroneTargetsFor(t) {
     if (state.strippedOwners.has(en.owner)) continue;   // near-dead faction — ground troops' job
     if (en.units < DRONE_ENGAGE_UNITS) continue;         // bombed-flat — nothing meaningful to chip
     // Value-aware cap: ~1 drone per 45 units of garrison (each does 50 dmg), so
-    // a small town isn't overkilled and the rest of the wave flows onward.
-    const nodeCap = Math.min(TARGET_DRONE_CAP, Math.max(1, Math.ceil(en.units / 45)));
+    // a small town isn't overkilled while a fat core can draw a proper share.
+    const nodeCap = Math.min(NODE_DRONE_CAP, Math.max(1, Math.ceil(en.units / 45)));
     if ((inbound.get('node:' + en.id) || 0) >= nodeCap) continue;
     const dx = en.x - t.x, dy = en.y - t.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > 1700 * 1700) continue;
     const d = Math.sqrt(d2);
     const degree = state.adj.get(en.id).size;
-    const valueUnits = Math.min(en.units, 55);           // diminishing returns past ~55
-    let score = valueUnits * 0.11 * (1 + degree * 0.12); // production hubs worth more
-    score *= 1 / (1 + d / 800);                          // distance: mild taper only
+    // Value rises with garrison up to a HIGH ceiling so the enemy's stocked-up
+    // development CORE (200-300 units) far outweighs a chipped-down outpost —
+    // drones drive for the heart, not the husk. Production hubs (degree) count
+    // extra; distance is a mild taper; and a core still behind an AA screen is
+    // divided down so the weapon screen is knocked out FIRST.
+    const valueUnits = Math.min(en.units, 160);
+    let score = valueUnits * 0.11 * (1 + degree * 0.12);
+    score *= 1 / (1 + d / 800);
+    score /= aaScreenDivisor(en.x, en.y, t.owner);
     cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
   }
 
@@ -580,7 +619,7 @@ function resolveSalvoTarget(s, salvoOwner) {
 function nodeBudget(id) {
   const fn = state.nodes[id];
   if (!fn || fn.units < DRONE_ENGAGE_UNITS) return 0;
-  return Math.min(4, Math.ceil(fn.units / 45) + 1);
+  return Math.min(NODE_DRONE_CAP, Math.ceil(fn.units / 45) + 1);
 }
 
 /** Build a salvo plan: spread `n` drones across the best VALUE targets, each

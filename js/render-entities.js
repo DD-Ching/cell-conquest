@@ -14,6 +14,9 @@ import {
   drawTroopSprite, drawEngineerSprite, drawDroneSprite,
   drawAATurret, drawTankTurret, drawFactoryTurret, drawArtilleryTurret,
 } from './sprites.js';
+import {
+  drawNodeCompounds, drawRadarSweeps, drawNodeBuildings,
+} from './render-node-detail.js';
 
 const CELL = 250;                          // matches the spatial-grid cell size
 const _warnedOwners = new Set();           // dedupe console warnings per owner
@@ -137,20 +140,17 @@ export function drawNodes(ctx, zoom, now) {
   }
   ctx.globalAlpha = 1;
 
-  // Pass 6 — faction rim + dark inner compound.
-  for (const n of visible) {
-    ctx.fillStyle = COLOR[n.owner];
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, n.size - 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // Pass 6 — faction rim (with outer glow) + dark compound + inner shadow.
+  // Helper folds in the rim glow (one shadowBlur sub-pass) and the radial
+  // inner-shadow gradient that gives the compound depth (PR: fortified look).
+  drawNodeCompounds(ctx, visible, zoom);
 
-  // Pass 7 — inner buildings + capture flash (in helper to fit line cap).
-  _drawNodeOverlays(ctx, visible, now);
+  // Pass 6b — radar sweep for medium+ owned nodes, under the buildings so
+  // the structures paint on top of the faint sweep line.
+  drawRadarSweeps(ctx, visible, zoom, now);
+
+  // Pass 7 — central core + building ring + hub beacon + capture flash.
+  drawNodeBuildings(ctx, visible, zoom, now, state.adj);
 
   // Pass 8 — labels, Lieutenant underline, engineer badge, build flash.
   ctx.textAlign = 'center';
@@ -189,38 +189,6 @@ export function drawNodes(ctx, zoom, now) {
       ctx.stroke();
     }
   }
-}
-
-// Inner-building dots (per-k size + alpha jitter so big hubs feel alive) +
-// capture flash. Split out to keep drawNodes within the function-size cap.
-function _drawNodeOverlays(ctx, visible, now) {
-  for (const n of visible) {
-    const degree = state.adj.get(n.id)?.size || 0;
-    if (degree > 0) {
-      const buildings = Math.min(8, Math.max(3, degree + 2));
-      const innerR = n.size - 8;
-      const slowSpin = now / 6000;
-      ctx.fillStyle = COLOR[n.owner];
-      for (let k = 0; k < buildings; k++) {
-        const a = slowSpin + (k / buildings) * Math.PI * 2;
-        const bx = n.x + Math.cos(a) * innerR;
-        const by = n.y + Math.sin(a) * innerR;
-        const dotR = 1.2 + (k % 3) * 0.4;
-        ctx.globalAlpha = 0.55 + 0.25 * Math.sin(now / 500 + k * 0.3);
-        ctx.beginPath();
-        ctx.arc(bx, by, dotR, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    if (n.flash > 0) {
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = `rgba(255,255,255,${n.flash * 0.45})`;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  ctx.globalAlpha = 1;
 }
 
 // ---- Turrets (sprite + aim + progress arc + HP bar + stockpile badge) ----

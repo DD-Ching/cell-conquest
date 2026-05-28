@@ -33,22 +33,46 @@ const ASSET_FILES = [
 export function loadAssets() {
   // Probe assets/manifest.json first so we don't spam 9 PNG requests at a
   // user who hasn't dropped sprites in yet. Manifest is a JSON array of
-  // names matching ASSET_FILES; only listed names get an Image() created.
+  // names matching ASSET_FILES; only listed names get a sprite created.
   // No manifest, no assets — game falls back to programmatic primitives.
+  //
+  // Context-aware loader: in a Window we use Image() (synchronous-ish via
+  // event), in a Worker we use fetch + createImageBitmap (Workers have no
+  // Image global). drawImage accepts both Image and ImageBitmap so all
+  // downstream blit code stays identical.
   fetch('assets/manifest.json', { cache: 'no-cache' })
     .then(r => r.ok ? r.json() : null)
     .then(list => {
       if (!Array.isArray(list)) return;
       for (const name of list) {
         if (!ASSET_FILES.includes(name)) continue;
-        const img = new Image();
-        Asset[name] = { img, ready: false };
-        img.onload = () => { Asset[name].ready = true; };
-        img.onerror = () => { /* silent — fall back to primitive */ };
-        img.src = `assets/${name}.png`;
+        Asset[name] = { img: null, ready: false };
+        loadOne(name).then(img => {
+          if (img) { Asset[name].img = img; Asset[name].ready = true; }
+        });
       }
     })
     .catch(() => { /* no manifest, no assets — primitives only */ });
+}
+
+/** Window: new Image(); Worker: fetch + createImageBitmap.
+ *  Returns null on any failure so the caller skips ready=true and the
+ *  blit path falls back to programmatic primitives. */
+function loadOne(name) {
+  const url = `assets/${name}.png`;
+  if (typeof Image !== 'undefined') {
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload  = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+  // Worker context — no DOM, no Image.
+  return fetch(url, { cache: 'force-cache' })
+    .then(r => r.ok ? r.blob() : null)
+    .then(b => b ? createImageBitmap(b) : null)
+    .catch(() => null);
 }
 
 /** Blit a sprite, sized to fit in `size` world units. Caller has already

@@ -23,6 +23,7 @@ import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './com
 import { updateDrones, releasePlayerStockpile } from './drones.js';
 import { aiTick } from './ai.js';
 import * as aiBridge from './ai-worker-bridge.js';
+import * as renderBridge from './render-worker-bridge.js';
 import { toggleDelegationAt, ensureLieutenantRegistered } from './subordinate.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
@@ -36,13 +37,32 @@ import { loadWasm, toggleWasm } from './wasm-bridge.js';
 // DOM bootstrap & resize
 // =====================================================
 state.canvas  = document.getElementById('game');
-state.ctx     = state.canvas.getContext('2d');
 state.minimap = document.getElementById('minimap');
 state.mctx    = state.minimap.getContext('2d');
+// The world canvas's 2D context is created LAZILY (see initWorldCtx). If
+// the URL has ?renderWorker=1 we transfer the canvas to the render worker
+// BEFORE anything calls getContext('2d') on it (transferControlToOffscreen
+// errors out on canvases that already have a 2D context locked in).
+function initWorldCtx() {
+  if (state.ctx || state.renderInWorker) return;
+  state.ctx = state.canvas.getContext('2d');
+}
+const wantRenderWorker = new URLSearchParams(location.search).get('renderWorker') === '1';
 
 function resize() {
-  state.W = state.canvas.width  = innerWidth;
-  state.H = state.canvas.height = innerHeight;
+  state.W = innerWidth;
+  state.H = innerHeight;
+  // When the render worker owns the canvas (transferControlToOffscreen has
+  // moved drawing into the worker), setting canvas.width on the main side
+  // has no effect on the drawing buffer — the worker's OffscreenCanvas owns
+  // dimensions. Setting width also creates a 2D context implicitly, which
+  // would PREVENT transferControlToOffscreen later. So we skip it whenever
+  // worker render is in play (current OR pending).
+  if (!renderBridge.isEnabled() && !state.renderInWorker && !wantRenderWorker) {
+    state.canvas.width  = innerWidth;
+    state.canvas.height = innerHeight;
+  }
+  renderBridge.notifyResize(state.W, state.H);
   const MM_W = Math.min(240, Math.max(140, Math.floor(state.W * 0.16)));
   const MM_H = Math.floor(MM_W * (WORLD_H / WORLD_W));
   state.minimap.width = MM_W;
@@ -63,13 +83,17 @@ export function newGame() {
   rollFactions();
   ensureLieutenantRegistered();    // ally1 joins the lineup (zero bases until G-press)
   buildHUD();
-  // Start every overlay panel in the faded state — the map is what matters
-  // right after a (re)start. Mouse-over un-fades each panel individually.
+  // Initial pass with a "mouse far away" coordinate — under the inverted
+  // fade rule this leaves every panel at full opacity (readable). Panels
+  // start fading only once the cursor approaches them.
   updateHudFade(-9999, -9999);
   state.fleets = [];
   state.particles = [];
   state.selectedIds.clear();
   state.gameOver = false;
+  // Tell the render worker (if active) to reset its scorch buffer + dust
+  // before the first frame snapshot of the new game arrives.
+  renderBridge.notifyNewGame();
   document.getElementById('message').style.display = 'none';
   state.startTime = performance.now();
   state.elapsed = 0;
@@ -108,7 +132,12 @@ export function newGame() {
     }
     return best;
   }
+  // Skip 'ally1' — the Lieutenant is YOUR AI, not a separate faction.
+  // It starts with zero bases; the player grows it by pressing G to
+  // delegate. Auto-spawning a Lieutenant base would mean the player
+  // begins with two disjoint armies they didn't ask for.
   for (const owner of ['player', ...AIS]) {
+    if (owner === 'ally1') continue;
     const n = pickFar(owner, placed);
     if (n) placed.push(n);
   }
@@ -132,8 +161,18 @@ function checkVictory() {
   const owners = new Set(state.nodes.map(n => n.owner));
   for (const f of state.fleets) owners.add(f.owner);
   owners.delete('neutral');
-  if (!owners.has('player')) endGame(false, 'Your forces have been wiped out.');
-  else if (owners.size === 1) endGame(true, `Total domination in ${formatTime(state.elapsed)}.`);
+  // "Your side" = any owner allied with the player (player + Lieutenant
+  // are on the same side). Defeat only triggers when NO ally of yours
+  // owns a node or in-flight fleet — delegating every base to the
+  // Lieutenant must NOT end the game.
+  let yoursAlive = false;
+  let enemyAlive = false;
+  for (const o of owners) {
+    if (isAlly(o, 'player')) yoursAlive = true;
+    else                     enemyAlive = true;
+  }
+  if (!yoursAlive)      endGame(false, 'Your forces have been wiped out.');
+  else if (!enemyAlive) endGame(true,  `Total domination in ${formatTime(state.elapsed)}.`);
 }
 
 function endGame(win, sub) {
@@ -322,19 +361,30 @@ function loop() {
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
   updateSnow(realDt);
   updateHUD();
-  render();
+  // World canvas: either the worker renders it OR we do it locally on the
+  // main thread. The worker owns the canvas after transferControlToOffscreen
+  // so we must NOT call render() once it's enabled (the local main canvas
+  // is no longer drawable). HUD + minimap stay main-thread regardless.
+  if (renderBridge.isEnabled()) {
+    renderBridge.tickFrame();
+  } else {
+    render();
+  }
   renderMinimap();
   requestAnimationFrame(loop);
 }
 
 // =====================================================
-// HUD auto-fade — overlay panels dim to 0.3 opacity when the mouse is far,
-// jump back to full when the mouse approaches. Lets the map stay readable
-// while keeping the chrome one mouse-move away. CSS does the transition;
-// this function flips the `.hud-faded` class per panel based on proximity.
+// HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
+// gets near them so they don't block the world the player is reaching for.
+// Mouse far away = full opacity (read the HUD). Mouse over / near = fade.
+// The corners (top-left = title/HUD, top-right = timer/zoom/speed) are
+// where the cursor naturally hovers during play, so they need to clear out
+// of the way fastest. CSS .hud-faded handles the transition.
 // =====================================================
 const HUD_FADE_IDS = ['title-strip', 'hud', 'topright', 'help', 'nn-badge'];
-const HUD_TRIGGER_PAD = 60;       // px of "near enough" buffer around each panel
+const HUD_TRIGGER_PAD = 80;       // px buffer — start fading BEFORE the cursor
+                                  // actually touches the panel
 function updateHudFade(mx, my) {
   for (const id of HUD_FADE_IDS) {
     const el = document.getElementById(id);
@@ -342,8 +392,9 @@ function updateHudFade(mx, my) {
     const r = el.getBoundingClientRect();
     const near = mx >= r.left - HUD_TRIGGER_PAD && mx <= r.right + HUD_TRIGGER_PAD &&
                  my >= r.top  - HUD_TRIGGER_PAD && my <= r.bottom + HUD_TRIGGER_PAD;
-    if (near) el.classList.remove('hud-faded');
-    else      el.classList.add('hud-faded');
+    // Inverted: near = fade (get out of the way), far = full opacity (readable).
+    if (near) el.classList.add('hud-faded');
+    else      el.classList.remove('hud-faded');
   }
 }
 
@@ -645,6 +696,21 @@ function attachInput() {
         console.log('[ai-worker] enabled');
       }
     }
+    // Render Worker toggle: U moves the world canvas to an OffscreenCanvas
+    // owned by a worker. transferControlToOffscreen has to happen BEFORE
+    // anything calls getContext('2d') on the canvas, so the safe path is
+    // to set ?renderWorker=1 in the URL and reload — main.js's init checks
+    // the flag and skips the main-thread 2D-context creation before
+    // anything else can grab it.
+    if (k === 'u') {
+      const u = new URL(location.href);
+      if (u.searchParams.get('renderWorker') === '1') {
+        u.searchParams.delete('renderWorker');
+      } else {
+        u.searchParams.set('renderWorker', '1');
+      }
+      location.href = u.toString();
+    }
   });
 
   addEventListener('keyup', e => {
@@ -672,6 +738,12 @@ function attachInput() {
 // =====================================================
 // Boot
 // =====================================================
+// Render worker MUST be enabled before resize() (which would otherwise
+// touch canvas.width and before initWorldCtx() gets called by anything).
+// We do it first when the URL flag is set.
+if (wantRenderWorker) {
+  renderBridge.enable();
+}
 resize();
 attachInput();
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives

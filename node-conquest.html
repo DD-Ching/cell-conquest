@@ -33,13 +33,14 @@
   }
 
   /* ---- Title strip: "MARS FRONT" branding ---- */
-  /* ---- Auto-fade overlay management ----
-     Every overlay panel that isn't actively being interacted with fades to
-     0.3 opacity so the map under it stays readable. Mouse proximity (handled
-     in main.js) bumps individual panels back to 1.0. Tab toggles a global
-     `.hud-hidden` on <body> to wipe the chrome entirely for a clean view. */
-  #title-strip, #hud, #topright, #help, #nn-badge { transition: opacity 0.22s ease-out; }
-  .hud-faded { opacity: 0.28 !important; }
+  /* ---- Auto-fade overlay management (INVERTED behaviour) ----
+     Panels sit at full opacity by default so they're readable. When the
+     mouse gets near them they fade OUT — the player's cursor is usually
+     in the top-left / top-right where the panels live, so making panels
+     transparent on hover stops them from blocking the world below.
+     Tab toggles `.hud-hidden` on <body> to wipe the chrome entirely. */
+  #title-strip, #hud, #topright, #help, #nn-badge { transition: opacity 0.18s ease-out; }
+  .hud-faded { opacity: 0.12 !important; pointer-events: none; }
   body.hud-hidden #title-strip,
   body.hud-hidden #hud,
   body.hud-hidden #topright,
@@ -215,6 +216,7 @@
     <div><kbd>G</kbd> = hand the base under the cursor (or every selected base) to your Lieutenant 🤖 — an allied NPC that uses the full enemy AI brain. Press G on a Lieutenant base to take it back. Box-select first to delegate many at once.</div>
     <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>M</kbd> toggle minimap &middot; <kbd>?</kbd> toggle this help</div>
     <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
+    <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

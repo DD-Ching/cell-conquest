@@ -20,9 +20,20 @@ import { WORLD_W, WORLD_H } from './config.js';
 const TERRAIN_BAKE_SCALE = 0.2;   // 12000×9000 world → 2400×1800 offscreen ≈ 17 MB
 
 export function bakeTerrain() {
-  const c = document.createElement('canvas');
-  c.width  = Math.ceil(WORLD_W * TERRAIN_BAKE_SCALE);
-  c.height = Math.ceil(WORLD_H * TERRAIN_BAKE_SCALE);
+  // Context-aware canvas allocation: in a Window we use the DOM, in a
+  // Worker we use OffscreenCanvas (no `document`). Either is fine as a
+  // drawImage source, so all downstream code (drawTerrain) works as-is.
+  const W = Math.ceil(WORLD_W * TERRAIN_BAKE_SCALE);
+  const H = Math.ceil(WORLD_H * TERRAIN_BAKE_SCALE);
+  const hasDoc = typeof document !== 'undefined';
+  console.log('[bakeTerrain] hasDoc=', hasDoc, 'has OffscreenCanvas=', typeof OffscreenCanvas !== 'undefined');
+  let c;
+  if (hasDoc) {
+    c = document.createElement('canvas');
+    c.width = W; c.height = H;
+  } else {
+    c = new OffscreenCanvas(W, H);
+  }
   const bctx = c.getContext('2d');
   bctx.scale(TERRAIN_BAKE_SCALE, TERRAIN_BAKE_SCALE);
 

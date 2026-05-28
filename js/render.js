@@ -41,6 +41,11 @@ export { makeSnow, updateSnow, updateParticles, bakeTerrain };
 export { renderMinimap };
 
 export function render() {
+  // Lazy-init the 2D context. Main.js intentionally defers getContext('2d')
+  // so the Render Worker bridge can call transferControlToOffscreen first
+  // (transfer fails on a canvas that already has a 2D context). If we got
+  // here with no ctx, worker render is NOT in play and we own the canvas.
+  if (!state.ctx) state.ctx = state.canvas.getContext('2d');
   const ctx = state.ctx, W = state.W, H = state.H, zoom = state.zoom;
   const now = performance.now();
 

@@ -213,8 +213,17 @@ export function tryBuildTurret(ctx) {
     // ---- 1) AA WALL — keep stacking until we hit AA_TARGET ----
     // Sweep all 9 layout positions (defensive 0-4 + forward 5-8) so a
     // single blocked spot doesn't stall the wall thickening.
+    // "銅牆鐵壁": when bracing for drones, throw up a BURST of AA in ONE tick so
+    // the wall forms all at once — a lone AA built one-per-tick just gets picked
+    // off before the wall ever completes. Otherwise one per tick (normal pace).
     if (ownAAsNear < AA_TARGET) {
-      if (tryBuild('antiair', aaWallSpot, ownAAsNear, 9)) return true;
+      const burst = droneThreatened ? Math.min(4, AA_TARGET - ownAAsNear) : 1;
+      let built = 0;
+      for (let b = 0; b < burst; b++) {
+        if (tryBuild('antiair', aaWallSpot, ownAAsNear + b, 9)) built++;
+        else break;
+      }
+      if (built > 0) return true;
     }
     // ---- 2) Tanks — start as soon as we have at least 2 AAs ----
     if (ownAAsNear >= 2 && ownTanksNear < TANK_TARGET) {

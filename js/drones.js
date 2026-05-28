@@ -156,8 +156,13 @@ function retargetDrone(drone) {
       const dx = n.x - drone.x, dy = n.y - drone.y;
       // Same value model as the launch picker: fat core >> husk, screened-by-AA
       // cores wait their turn.
-      const score = Math.min(n.units, 160)
+      let score = Math.min(n.units, 160)
         / ((1 + Math.sqrt(dx * dx + dy * dy) / 800) * aaScreenDivisor(n.x, n.y, drone.owner));
+      // Frontier boost (same as the launch picker): lean onto the contested
+      // border so suppression sets up a ground capture.
+      for (const nbId of state.adj.get(n.id)) {
+        if (isAlly(state.nodes[nbId].owner, drone.owner)) { score *= 1.8; break; }
+      }
       if (score > bestNodeScore) {
         bestNodeScore = score;
         best = { kind: 'node', id: n.id, x: n.x, y: n.y };
@@ -594,6 +599,13 @@ function pickDroneTargetsFor(t) {
     let score = valueUnits * 0.11 * (1 + degree * 0.12);
     score *= 1 / (1 + d / 800);
     score /= aaScreenDivisor(en.x, en.y, t.owner);
+    // FRONTIER BOOST: an enemy node touching our own territory is the contested
+    // border. Suppressing it to the bone lets ground troops sweep in and CAPTURE
+    // (combined arms) — so when we're trading territory, lean drones onto the
+    // front we can actually take, not only the deep husk-vs-core value race.
+    for (const nbId of state.adj.get(en.id)) {
+      if (isAlly(state.nodes[nbId].owner, t.owner)) { score *= 1.8; break; }
+    }
     cands.push({ score, target: { kind: 'node', id: en.id, x: en.x, y: en.y } });
   }
 

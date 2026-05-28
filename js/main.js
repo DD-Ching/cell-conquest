@@ -132,7 +132,12 @@ export function newGame() {
     }
     return best;
   }
+  // Skip 'ally1' — the Lieutenant is YOUR AI, not a separate faction.
+  // It starts with zero bases; the player grows it by pressing G to
+  // delegate. Auto-spawning a Lieutenant base would mean the player
+  // begins with two disjoint armies they didn't ask for.
   for (const owner of ['player', ...AIS]) {
+    if (owner === 'ally1') continue;
     const n = pickFar(owner, placed);
     if (n) placed.push(n);
   }

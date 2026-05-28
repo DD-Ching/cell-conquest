@@ -43,25 +43,34 @@ function spawnDrone(originX, originY, owner, target) {
 }
 
 // ---- Target resolution ----
+// ENGAGE / DISENGAGE bands for node targets — this two-band hysteresis IS the
+// "damping" that stops drones flip-flopping while still refusing to waste the
+// whole swarm on an empty city:
+//   • A drone only LAUNCHES / RETARGETS at a node holding >= ENGAGE units
+//     (something worth chipping).
+//   • Once committed it stays until the node is bombed below ABANDON units —
+//     then it peels off to a fresh target instead of finishing its run into a
+//     husk. The gap (5..12) means a base oscillating around one threshold
+//     can't cause the old u-turn churn.
+const DRONE_ENGAGE_UNITS  = 12;
+const DRONE_ABANDON_UNITS = 5;
+
 /** Does the drone's stored target still WARRANT a strike?
  *
- *  IN-FLIGHT COMMITMENT: a launched suicide drone flies its run to the end.
- *  It only abandons a target that has flipped to its OWN side (no point
- *  bombing a base your faction just captured) or a turret that's been
- *  destroyed. It does NOT u-turn just because the target's unit count
- *  dipped or the faction got weak — re-evaluating those mid-flight made a
- *  whole salvo flip-flop as a dying base oscillated around a threshold
- *  (drones turning around again and again, never finishing). "Should I
- *  send drones at this weak faction at all" is decided ONCE at launch
- *  (pickDroneTargetsFor / the salvo picker skip stripped owners + honour
- *  the per-target inbound cap), not re-litigated every frame in transit. */
+ *  IN-FLIGHT COMMITMENT with a release valve: a launched drone flies its run,
+ *  but abandons a node that has flipped to its OWN side OR been bombed flat
+ *  (< ABANDON units — drones only chip units, so a near-empty node is a dead
+ *  end and a ground-troop job). Abandoning routes through retargetDrone, which
+ *  picks a VALUE target and honours a cooldown, so there's no per-frame
+ *  flip-flop — the swarm stops endlessly pounding zeroed-out front towns. */
 function droneTargetExists(drone) {
   if (drone.targetKind === 'turret') return state.turretById.has(drone.targetId);
   if (drone.targetKind === 'node') {
     if (drone.targetId >= state.nodes.length) return false;
     const n = state.nodes[drone.targetId];
-    if (isAlly(n.owner, drone.owner)) return false; // captured by own side — stand down
-    return true;                                    // otherwise commit to the run
+    if (isAlly(n.owner, drone.owner)) return false;     // captured by own side — stand down
+    if (n.units < DRONE_ABANDON_UNITS) return false;    // bombed flat — peel off, find real work
+    return true;                                        // otherwise commit to the run
   }
   if (drone.targetKind === 'fleet')  return state.fleetById.has(drone.targetId);
   return false;
@@ -109,7 +118,11 @@ function retargetDrone(drone) {
     for (const n of state.nodes) {
       if (isAlly(n.owner, drone.owner) || n.owner === 'neutral') continue;
       if (state.strippedOwners.has(n.owner)) continue;  // dying faction — ground troops' job
-      if (n.units < 12) continue;                        // bombed-flat — nothing to chip
+      if (n.units < DRONE_ENGAGE_UNITS) continue;        // bombed-flat — nothing to chip
+      // Respect the value-aware inbound cap so a whole salvo that just peeled
+      // off a dead node spreads across fresh targets instead of re-dogpiling one.
+      const cap = Math.min(4, Math.max(1, Math.ceil(n.units / 45)));
+      if ((state.inboundDronesByTarget.get('node:' + n.id) || 0) >= cap) continue;
       const dx = n.x - drone.x, dy = n.y - drone.y;
       const score = Math.min(n.units, 55) / (1 + Math.sqrt(dx * dx + dy * dy) / 800);
       if (score > bestNodeScore) {
@@ -508,7 +521,7 @@ function pickDroneTargetsFor(t) {
   for (const en of state.nodes) {
     if (isAlly(en.owner, t.owner) || en.owner === 'neutral') continue;
     if (state.strippedOwners.has(en.owner)) continue;   // near-dead faction — ground troops' job
-    if (en.units < 12) continue;                         // bombed-flat — nothing meaningful to chip
+    if (en.units < DRONE_ENGAGE_UNITS) continue;         // bombed-flat — nothing meaningful to chip
     // Value-aware cap: ~1 drone per 45 units of garrison (each does 50 dmg), so
     // a small town isn't overkilled and the rest of the wave flows onward.
     const nodeCap = Math.min(TARGET_DRONE_CAP, Math.max(1, Math.ceil(en.units / 45)));
@@ -551,47 +564,72 @@ function resolveSalvoTarget(s, salvoOwner) {
     }
   } else if (s.kind === 'node') {
     const n = state.nodes[s.id];
-    if (n && !isAlly(n.owner, salvoOwner) && !state.strippedOwners.has(n.owner)) {
+    // Reject a node that's already bombed flat — dumping the whole salvo onto a
+    // near-empty city is exactly the waste we're killing; let it re-pick value.
+    if (n && !isAlly(n.owner, salvoOwner) && !state.strippedOwners.has(n.owner)
+        && n.units >= DRONE_ENGAGE_UNITS) {
       return { kind: 'node', id: n.id, x: n.x, y: n.y };
     }
   }
   return null;
 }
 
-/** Generic stockpile flush for any owner. If a fixed salvo target was set
- *  (player clicked a turret/node during Hold-Fire, AI picked a focus point),
- *  every drone goes there. Otherwise drones diversify across the top auto-
- *  scored targets. Internal — both releasePlayerStockpile and
- *  releaseAIStockpile delegate here. */
+/** Per-target salvo budget so a small node isn't dogpiled — drones only chip
+ *  units, so a node needs ~1 round per 45 garrison (cap 4); a bombed-flat node
+ *  (< ENGAGE) gets 0 and is skipped entirely. */
+function nodeBudget(id) {
+  const fn = state.nodes[id];
+  if (!fn || fn.units < DRONE_ENGAGE_UNITS) return 0;
+  return Math.min(4, Math.ceil(fn.units / 45) + 1);
+}
+
+/** Build a salvo plan: spread `n` drones across the best VALUE targets, each
+ *  capped by its budget so nothing is overkilled. A fixed target (player click
+ *  / AI focus) goes first (a TURRET soaks more; a dead node is dropped). This
+ *  is the SAME evaluator launch + retarget use — one consistent system, so a
+ *  salvo never again dumps the whole stockpile onto one near-empty city. */
+function buildSalvoPlan(t, fixedTarget, n) {
+  const budgeted = [];
+  if (fixedTarget) {
+    const b = fixedTarget.kind === 'turret' ? 8 : nodeBudget(fixedTarget.id);
+    if (b > 0) budgeted.push({ target: fixedTarget, budget: b });
+  }
+  for (const c of pickDroneTargetsFor(t)) {
+    if (fixedTarget && c.target.kind === fixedTarget.kind && c.target.id === fixedTarget.id) continue;
+    const b = c.target.kind === 'turret' ? 4 : nodeBudget(c.target.id);
+    if (b > 0) budgeted.push({ target: c.target, budget: b });
+  }
+  const plan = [];
+  let progressed = true;
+  while (plan.length < n && progressed) {
+    progressed = false;
+    for (const e of budgeted) {
+      if (e.budget <= 0) continue;
+      plan.push(e.target); e.budget--; progressed = true;
+      if (plan.length >= n) break;
+    }
+  }
+  return plan;                      // length ≤ n; shortfall = drones with no worthwhile target
+}
+
+/** Generic stockpile flush for any owner. Distributes the stockpile across the
+ *  budgeted value plan; drones with no worthwhile target STAY stockpiled
+ *  (aggregate, don't vaporise onto a dead front). Internal — both
+ *  releasePlayerStockpile and releaseAIStockpile delegate here. */
 function releaseStockpileFor(owner, fixedTarget) {
   let launched = 0;
   for (const t of state.turrets) {
-    if (t.owner !== owner || t.type !== 'factory') continue;
-    if (!t.dronesReady) continue;
-
-    let pool;
-    if (fixedTarget) {
-      pool = [{ target: fixedTarget }];
-    } else {
-      const cands = pickDroneTargetsFor(t);
-      // No worthwhile target in range — HOLD the stockpile (don't vaporise it):
-      // the drones wait / aggregate until a real target appears rather than
-      // being flung at the bombed-flat outer ring for nothing.
-      if (cands.length === 0) continue;
-      // Spread a big salvo across more of the top VALUE targets (including deep
-      // ones) instead of overkilling the nearest handful.
-      pool = cands.slice(0, Math.min(8, cands.length));
-    }
-
-    for (let k = 0; k < t.dronesReady; k++) {
-      const pick = pool[k % pool.length];
+    if (t.owner !== owner || t.type !== 'factory' || !t.dronesReady) continue;
+    const n = t.dronesReady;
+    const plan = buildSalvoPlan(t, fixedTarget, n);
+    for (let k = 0; k < plan.length; k++) {
       const jx = (Math.random() - 0.5) * 14;
       const jy = (Math.random() - 0.5) * 14;
-      spawnDrone(t.x + jx, t.y + jy, t.owner, pick.target);
+      spawnDrone(t.x + jx, t.y + jy, t.owner, plan[k]);
       launched++;
     }
-    t.dronesReady = 0;
-    t.prodCooldown = DF_PRODUCTION_T;
+    t.dronesReady = n - plan.length;                 // keep the unspent remainder
+    if (t.dronesReady <= 0) { t.dronesReady = 0; t.prodCooldown = DF_PRODUCTION_T; }
   }
   return launched;
 }

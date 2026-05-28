@@ -203,7 +203,28 @@ function rebuildLoiterCenters() {
   for (const [o, turrets] of state.turretsByOwner) {
     let sx = 0, sy = 0, n = 0;
     for (const t of turrets) { if (t.type === 'factory') { sx += t.x; sy += t.y; n++; } }
-    if (n > 0) _loiterCenters.set(o, { cx: sx / n, cy: sy / n });
+    if (n === 0) continue;
+    const fx = sx / n, fy = sy / n;            // factory centroid (home)
+    // FORWARD STAGING ("聚合成圈圈"): idle / overkill drones don't fly home to
+    // die — they mass into a holding ring just OUTSIDE the nearest worthwhile
+    // enemy hub's AA umbrella, poised to strike the instant that hub regens
+    // back above the engage threshold. So a salvo's leftovers keep the enemy
+    // suppressed in waves instead of getting reaped at base (白累積).
+    let best = null, bestD2 = Infinity;
+    for (const en of state.nodes) {
+      if (en.owner === 'neutral' || isAlly(en.owner, o)) continue;
+      if (en.units < DRONE_ENGAGE_UNITS) continue;     // only stage toward a hub worth hitting
+      if (state.strippedOwners.has(en.owner)) continue; // dying faction — ground troops' job
+      const dx = en.x - fx, dy = en.y - fy, d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = en; }
+    }
+    if (!best) { _loiterCenters.set(o, { cx: fx, cy: fy }); continue; }
+    const d = Math.sqrt(bestD2) || 1;
+    const ux = (best.x - fx) / d, uy = (best.y - fy) / d;
+    // Stand off far enough that the WHOLE ring (radius LOITER_R) sits outside
+    // the hub's flak umbrella, so the swarm gathers safely before it strikes.
+    const standoff = Math.max(0, d - (AA_RADIUS * 1.3 + LOITER_R));
+    _loiterCenters.set(o, { cx: fx + ux * standoff, cy: fy + uy * standoff });
   }
 }
 function loiterDrone(drone, dt) {

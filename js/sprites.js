@@ -80,19 +80,46 @@ function _dropShadow(ctx, rx, ry, ox = 1, oy = 1, alpha = 0.3) {
   ctx.beginPath(); ctx.ellipse(ox, oy, rx, ry, 0, 0, TAU); ctx.fill();
 }
 
+/** Build a faction-recoloured copy of a sprite, ONCE per (sprite, tint).
+ *  We DON'T paint a flat translucent slab over the art (that washes a
+ *  detailed building into a featureless coloured blob). Instead we use the
+ *  'color' composite: it keeps the sprite's LUMINANCE (every highlight,
+ *  shadow and panel line survives) and only swaps in the faction hue +
+ *  saturation. A grey Kenney structure becomes a clean blue / crimson
+ *  building with all its 3-D shading intact. Cached on the asset object —
+ *  ~3 faction colours × N sprites, computed once, blitted forever. */
+function tintedCopy(asset, tint) {
+  if (!asset._tints) asset._tints = {};
+  let c = asset._tints[tint];
+  if (c) return c;
+  const img = asset.img;
+  const W = img.width, H = img.height;
+  c = (typeof document !== 'undefined')
+    ? Object.assign(document.createElement('canvas'), { width: W, height: H })
+    : new OffscreenCanvas(W, H);
+  const cx = c.getContext('2d');
+  cx.drawImage(img, 0, 0);
+  // 'color' = take H+S from the fill, keep L from the sprite → recolour
+  // without flattening the shading.
+  cx.globalCompositeOperation = 'color';
+  cx.fillStyle = tint;
+  cx.fillRect(0, 0, W, H);
+  // fillRect painted the whole box; clip the colour back to the sprite's
+  // own alpha so the transparent surround stays transparent.
+  cx.globalCompositeOperation = 'destination-in';
+  cx.drawImage(img, 0, 0);
+  cx.globalCompositeOperation = 'source-over';
+  asset._tints[tint] = c;
+  return c;
+}
+
 /** Blit a sprite, sized to fit in `size` world units. Caller has already
- *  translated and rotated. Tinted toward `tint` via source-atop so the
- *  color stays inside the sprite's alpha mask. */
+ *  translated and rotated. The sprite is recoloured to `tint` via the
+ *  cached luminance-preserving copy (see tintedCopy). */
 function blitSprite(ctx, asset, size, tint) {
   const img = asset.img;
   const w = size, h = size * (img.height / img.width);
-  ctx.drawImage(img, -w / 2, -h / 2, w, h);
-  ctx.globalCompositeOperation = 'source-atop';
-  ctx.globalAlpha = 0.55;
-  ctx.fillStyle = tint;
-  ctx.fillRect(-w / 2, -h / 2, w, h);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(tintedCopy(asset, tint), -w / 2, -h / 2, w, h);
 }
 
 // =====================================================

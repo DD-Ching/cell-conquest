@@ -127,26 +127,53 @@ function retargetOnCooldown(drone) {
   return state.elapsed - (drone._lastRetargetT || 0) < RETARGET_COOLDOWN_S;
 }
 
-// ---- Loiter ----
-// A drone awaiting a target (its objective was captured by its own side, or
-// the retarget scan is on cooldown / found nothing) used to FREEZE in place
-// (`continue` skipped its movement) — which read as drones eerily pausing in
-// mid-air, and made a cluster look like it was stuttering. Instead it now
-// flies a tight holding circle: it keeps cruising, just orbiting a fixed
-// point, so it reads as "loitering, awaiting orders" and peels off the moment
-// a real target is acquired. Orbiting (vs. coasting toward the stale target)
-// is also the SAFE choice — it never drifts onto a now-friendly node and
-// detonates, the hazard the old freeze was guarding against.
-const LOITER_R = 30;                       // orbit radius, world px
-function loiterDrone(drone, dt) {
-  if (drone._loiterCx === undefined) {     // anchor the circle on entry
-    drone._loiterCx = drone.x;
-    drone._loiterCy = drone.y;
-    drone._loiterA  = Math.atan2(drone.y - drone._loiterCy, drone.x - drone._loiterCx) || Math.random() * Math.PI * 2;
+// ---- Loiter — shared "holding ring" (a conga line in the sky) ----
+// A drone awaiting a target (its objective got captured by its own side, or
+// the retarget scan is on cooldown / found nothing) used to FREEZE in place,
+// which read as drones eerily pausing in mid-air. Instead, all of an owner's
+// idle drones gather into ONE shared ring orbiting a rally point (the centre
+// of that faction's drone factories) and circle it together — evenly spaced
+// by the golden angle so they form a rotating "dragon", each chasing the slot
+// ahead. A drone flies (at cruise speed) toward its rotating slot, so it eases
+// INTO the ring rather than teleporting, then rides the rotation. The instant
+// a real target appears it peels off. Orbiting (vs. coasting toward the stale
+// target) is also safe — it never drifts onto a now-friendly node + detonates.
+const LOITER_R = 90;                       // ring radius, world px (big, visible)
+const LOITER_ROT = 0.5;                    // ring angular velocity, rad/s
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));   // 2.39996… — even angular spread
+
+// owner -> {cx,cy} rally centre, rebuilt once per updateDrones() tick.
+let _loiterCenters = new Map();
+function rebuildLoiterCenters() {
+  _loiterCenters = new Map();
+  for (const [o, turrets] of state.turretsByOwner) {
+    let sx = 0, sy = 0, n = 0;
+    for (const t of turrets) { if (t.type === 'factory') { sx += t.x; sy += t.y; n++; } }
+    if (n > 0) _loiterCenters.set(o, { cx: sx / n, cy: sy / n });
   }
-  drone._loiterA += (DRONE_SPEED / LOITER_R) * dt;   // tangential ≈ cruise speed
-  drone.x = drone._loiterCx + Math.cos(drone._loiterA) * LOITER_R;
-  drone.y = drone._loiterCy + Math.sin(drone._loiterA) * LOITER_R;
+}
+function loiterDrone(drone, dt) {
+  const c = _loiterCenters.get(drone.owner);
+  if (!c) {                                 // no factory rally point — tiny solo orbit
+    if (drone._loiterCx === undefined) { drone._loiterCx = drone.x; drone._loiterCy = drone.y; drone._loiterA = Math.random() * Math.PI * 2; }
+    drone._loiterA += (DRONE_SPEED / 30) * dt;
+    drone.x = drone._loiterCx + Math.cos(drone._loiterA) * 30;
+    drone.y = drone._loiterCy + Math.sin(drone._loiterA) * 30;
+    return;
+  }
+  // Shared ring slot: a stable golden-angle offset per drone id + a common
+  // time rotation, so the whole formation turns as one and stays evenly spread
+  // however many join or leave.
+  const slot = state.elapsed * LOITER_ROT + drone._id * GOLDEN;
+  const tx = c.cx + Math.cos(slot) * LOITER_R;
+  const ty = c.cy + Math.sin(slot) * LOITER_R;
+  // Fly toward the (moving) slot at cruise speed → eases in, then rides the
+  // rotation around the ring.
+  const dx = tx - drone.x, dy = ty - drone.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const step = Math.min(d, DRONE_SPEED * dt);
+  drone.x += (dx / d) * step;
+  drone.y += (dy / d) * step;
 }
 
 // ---- Impact ----
@@ -207,6 +234,9 @@ export function updateDrones(dt) {
   const fleetById = state.fleetById;
   const CELL = 250;
   const huntRange = Math.ceil(Math.sqrt(DRONE_DETECT_R2) / CELL);
+  // Per-faction loiter rally centres (factory centroid) for the shared
+  // holding-ring formation — rebuilt once per tick, read by loiterDrone.
+  rebuildLoiterCenters();
 
   // ---- Batched wasm hunt scan (with JS fallback) ----
   // When wasm is loaded, gather all live drones + transit ground fleets

@@ -39,7 +39,7 @@ import {
   tryReinforceFrontline, tryOverflowDump,
 } from './ai-tactical.js';
 import { tryDroneSalvo } from './ai-strategic.js';
-import { relieveSaturation } from './ai-logistics.js';
+import { relieveSaturation, clearBlockedRoads } from './ai-logistics.js';
 
 /** Tick one AI. Returns the actions array (empty when nothing happened).
  *  In main-thread mode the actions array is harmlessly ignored — every
@@ -303,6 +303,12 @@ export function aiTick(owner, dt) {
   // big empire never sits idle-full yet can't spawn a fleet storm. The focused
   // tactical decision still fires below.
   relieveSaturation(ctx);
+
+  // ===== Road maintenance (always runs, not part of the one-action budget)
+  // ===== Dispatch engineers to clear wreck-clogged supply roads that
+  // tryBuildNet leaves untouched (interior + maxed-net edges). Capped per tick
+  // + de-duped against engineers already en route.
+  clearBlockedRoads(ctx);
 
   // ===== Phase dispatch — first true return is the action this tick =====
   // Order matches the old monolithic body's early-return sequence exactly.

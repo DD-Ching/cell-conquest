@@ -133,6 +133,11 @@ export function sliceEdgeData(edgeData, mode = 'render') {
   if (mode === 'ai') {
     return Array.from(edgeData.entries(), ([k, v]) => [k, {
       netLevel: v.netLevel, netCharges: v.netCharges, netOwner: v.netOwner,
+      // AI road-clearing (clearBlockedRoads) needs to know how clogged each
+      // edge is. Ship only the COUNT, not the wreck objects — the slim 'ai'
+      // snapshot stays cheap and the actual clear replays main-thread where
+      // the full wrecks array lives.
+      wreckCount: v.wrecks ? v.wrecks.length : 0,
     }]);
   }
   return Array.from(edgeData.entries());

@@ -76,17 +76,26 @@ export function tryBuildTurret(ctx) {
   const { owner, myNodes, saturationRatio, antiTurtle, fstats, isExposedToEnemyTank,
           placeTurretAt } = ctx;
 
-  // Build chance scales with saturation + per-faction strength.
-  const buildChance = (0.18 + saturationRatio * 0.40 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
+  // Build chance scales with saturation + per-faction strength. A saturated
+  // empire bleeds regen every second it sits at cap, so the more saturated we
+  // are the harder we lean into construction — each build also drains
+  // ENG_COST units off the top, a real sink rather than a full-node shuffle.
+  const buildChance = (0.18 + saturationRatio * 0.60 + (antiTurtle ? 0.15 : 0)) * fstats.buildChanceMul;
   if (Math.random() >= buildChance) return false;
   if (myNodes.length < 2) return false;
 
   // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam,
   // plus long-range artillery for AOE counter-pressure against enemy clusters.
-  const AA_TARGET        = antiTurtle ? 9 : 7;    // thick AA wall with forward push
-  const TANK_TARGET      = 2;                     // 2 tanks for siege + flank
-  const FACTORY_TARGET   = antiTurtle ? 8 : 5;    // more drone throughput
-  const ARTILLERY_TARGET = antiTurtle ? 3 : 2;    // more AOE counter-pressure
+  // SATURATION SURCHARGE: when the empire is sitting full (regen thrown away),
+  // raise the per-hub ceilings so there's ALWAYS something productive to build
+  // rather than idling at cap — above all FACTORIES, whose drones are the
+  // siege engine that cracks a saturated standoff. Bounded so we don't carpet
+  // the whole map in turrets.
+  const satBoost = saturationRatio > 0.6 ? 2 : saturationRatio > 0.35 ? 1 : 0;
+  const AA_TARGET        = (antiTurtle ? 9 : 7) + satBoost;                  // thick AA wall with forward push
+  const TANK_TARGET      = 2 + (satBoost > 0 ? 1 : 0);                       // 2-3 tanks for siege + flank
+  const FACTORY_TARGET   = (antiTurtle ? 8 : 5) + satBoost * 2;              // drone throughput = the stalemate-breaker
+  const ARTILLERY_TARGET = (antiTurtle ? 3 : 2) + (satBoost > 0 ? 1 : 0);    // AOE counter-pressure
   const buildMinUnits    = saturationRatio > 0.4 ? 14 : 22;
 
   const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);

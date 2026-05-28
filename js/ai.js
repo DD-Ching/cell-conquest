@@ -143,7 +143,12 @@ export function aiTick(owner, dt) {
   else if (myShare < 0.20) aggression *= 1.3;
   const fstats = factionStats[owner] || { aggressionMul: 1.0, buildChanceMul: 1.0 };
   aggression *= fstats.aggressionMul;
-  if (saturationRatio > 0.5) aggression *= 1.55;
+  // Saturation drive: units sitting at cap are regen thrown away. The deeper
+  // we're drowning in surplus, the harder we push attacks — spending units on
+  // an attack that chips the enemy beats wasting them against the cap. (The
+  // tank-wall hard-skip in tryCoordinatedAttack still prevents pure suicide.)
+  if (saturationRatio > 0.7) aggression *= 2.1;
+  else if (saturationRatio > 0.5) aggression *= 1.6;
   else if (saturationRatio > 0.3) aggression *= 1.25;
 
   // Anti-turtle: my growth stalled AND opponents are stacking turrets → wall up.

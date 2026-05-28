@@ -32,6 +32,7 @@ import {
 } from './render.js';
 import { loadAssets } from './sprites.js';
 import { loadWasm, toggleWasm } from './wasm-bridge.js';
+import { applyPreset } from './game-presets.js';
 
 // =====================================================
 // DOM bootstrap & resize
@@ -738,6 +739,14 @@ function attachInput() {
 // =====================================================
 // Boot
 // =====================================================
+// Preset MUST be applied first — resize() reads WORLD_W/WORLD_H for the
+// minimap aspect ratio, and every downstream module (world.js node
+// placement, camera clamp, scorch buffer alloc) imports those values too.
+// ESM live bindings carry the new values to importers automatically once
+// applyPreset mutates the `let` exports in config.js.
+const presetName = new URLSearchParams(location.search).get('preset');
+applyPreset(presetName);
+
 // Render worker MUST be enabled before resize() (which would otherwise
 // touch canvas.width and before initWorldCtx() gets called by anything).
 // We do it first when the URL flag is set.

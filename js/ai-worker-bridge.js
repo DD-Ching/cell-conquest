@@ -32,6 +32,9 @@ import { releaseAIStockpile } from './drones.js';
 import { AIS, factionStats } from './factions.js';
 import { NN_OWNERS } from './config.js';
 import { listAlliances } from './alliance.js';
+import {
+  sliceNodes, sliceTurrets, sliceFleets, sliceAdj, sliceEdgeData,
+} from './snapshot-utils.js';
 
 const SNAPSHOT_INTERVAL_SEC = 0.10;
 
@@ -45,45 +48,24 @@ let pendingResponse = false;    // simple back-pressure: don't dispatch a
                                 // actions are back. Prevents queue bloat
                                 // when the main thread is unloaded.
 
-/** Build the lightweight snapshot that the worker hydrates from. We only
- *  ship the fields aiTick reads (and the AI control state it mutates) —
- *  particles, terrain, dust, scorches, canvases, perf buffers, etc. are
- *  all skipped. ~5–20 KB depending on entity count. */
+/** Build the lightweight snapshot that the worker hydrates from. Pulls
+ *  per-entity field selection out to snapshot-utils.js so render-worker-
+ *  bridge can share the same slicing. We skip neutral nodes (~700 in the
+ *  opening) but keep AI-adjacent neutrals in full so tryCoordinatedAttack
+ *  still sees its capture targets — without those fields, dist(a, target)
+ *  goes NaN and the AI can't expand into neutral territory. */
 function buildSnapshot() {
   return {
     elapsed: state.elapsed,
-    // Nodes: aiTick reads owner, units, capacity, regenRate, size, kind,
-    // x/y, lastRegenT (catchUpAllNodes uses it). id is the array index.
-    nodes: state.nodes.map(n => ({
-      id: n.id, x: n.x, y: n.y, owner: n.owner,
-      units: n.units, capacity: n.capacity, regenRate: n.regenRate,
-      size: n.size, kind: n.kind, lastRegenT: n.lastRegenT,
-    })),
-    // Adjacency: ship as array of [id, neighborIds[]]. Sets aren't
-    // structuredClone-portable in all browser combos; arrays always are.
-    adj: Array.from(state.adj.entries(), ([id, set]) => [id, Array.from(set)]),
-    // Turrets: aiTick reads owner, type, x/y, hp/hpMax, active,
-    // pendingEngineer, dronesReady. Skip render-only fields.
-    turrets: state.turrets.map(t => ({
-      id: t.id, owner: t.owner, type: t.type,
-      x: t.x, y: t.y, hp: t.hp, hpMax: t.hpMax,
-      active: t.active, pendingEngineer: t.pendingEngineer,
-      dronesReady: t.dronesReady, prodCooldown: t.prodCooldown,
-    })),
-    // Fleets: aiTick reads owner, kind, units, targetKind, targetId,
-    // targetNodeId, path[], segIdx for the per-target bucketing.
-    fleets: state.fleets.map(f => ({
-      _id: f._id, owner: f.owner, kind: f.kind,
-      x: f.x, y: f.y, units: f.units,
-      targetKind: f.targetKind, targetId: f.targetId,
-      targetNodeId: f.targetNodeId,
-      path: f.path, segIdx: f.segIdx,
-      hp: f.hp, spawnT: f.spawnT,
-    })),
+    nodes: sliceNodes(state.nodes, {
+      includeNeutral: false,
+      includeNeutralIds: aiAdjacentNeutralIds(),
+    }),
+    adj: sliceAdj(state.adj),
+    turrets: sliceTurrets(state.turrets),
+    fleets: sliceFleets(state.fleets),
     roads: state.roads.map(r => ({ a: r.a, b: r.b })),
-    edgeData: Array.from(state.edgeData.entries(), ([k, v]) => [k, {
-      netLevel: v.netLevel, netCharges: v.netCharges, netOwner: v.netOwner,
-    }]),
+    edgeData: sliceEdgeData(state.edgeData, 'ai'),
     // AI control state (worker mutates these — bridge re-merges on return).
     aiHoldFire:    { ...state.aiHoldFire },
     aiSalvoT0:     { ...state.aiSalvoT0 },
@@ -99,6 +81,29 @@ function buildSnapshot() {
     factionStats: { ...factionStats },
     alliances: listAlliances(),
   };
+}
+
+/** Set of neutral node ids that are adjacent to a worker-ticked AI's
+ *  own node. The AI's Phase 2 (tryCoordinatedAttack) reads target.units,
+ *  target.regenRate, target.size, target.x, target.y on candidate
+ *  capture targets — most of which are neutral. Stripping all neutrals
+ *  to placeholders would silently kill that pathway, so we keep full
+ *  data for neutrals on the frontier. */
+function aiAdjacentNeutralIds() {
+  const out = new Set();
+  for (const n of state.nodes) {
+    if (n.owner === 'neutral') continue;
+    if (NN_OWNERS.has(n.owner)) continue;
+    if (n.owner === 'player') continue;     // worker only ticks AI owners
+    if (!AIS.includes(n.owner)) continue;
+    const nbrs = state.adj.get(n.id);
+    if (!nbrs) continue;
+    for (const nbId of nbrs) {
+      const nb = state.nodes[nbId];
+      if (nb && nb.owner === 'neutral') out.add(nbId);
+    }
+  }
+  return out;
 }
 
 /** Validate + apply a single action descriptor against the main-thread

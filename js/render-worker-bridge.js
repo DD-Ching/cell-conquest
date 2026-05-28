@@ -28,6 +28,9 @@
 // painful).
 // =====================================================
 import { state } from './state.js';
+import {
+  sliceNodes, sliceTurrets, sliceFleets, sliceAdj, sliceEdgeData,
+} from './snapshot-utils.js';
 
 let worker = null;
 let workerReady = false;
@@ -102,11 +105,11 @@ export function notifyNewGame() {
 
 /** Build the per-frame snapshot. Slim by design — only what render()
  *  actually reads. Skips heavy state (turretById caches, fleetById, etc.
- *  which render() doesn't query). */
+ *  which render() doesn't query). The per-entity slicing rules live in
+ *  snapshot-utils.js so this bridge + ai-worker-bridge share the same
+ *  field-picking logic. Render needs all neutrals (they're drawn) so we
+ *  pass includeNeutral: true (the default). */
 function buildSnapshot() {
-  // Snapshot fields are SHALLOW clones — structuredClone deep-clones for
-  // postMessage. Maps/Sets are converted to array form because some
-  // browsers' structuredClone of Map<num, Set<num>> is unreasonably slow.
   return {
     elapsed:   state.elapsed,
     paused:    state.paused,
@@ -117,12 +120,12 @@ function buildSnapshot() {
     W:         state.W,
     H:         state.H,
 
-    nodes:    state.nodes,           // structuredClone shallow-copies the objects
-    adj:      Array.from(state.adj.entries(), ([id, set]) => [id, Array.from(set)]),
-    turrets:  state.turrets,
-    fleets:   state.fleets,
+    nodes:    sliceNodes(state.nodes),
+    adj:      sliceAdj(state.adj),
+    turrets:  sliceTurrets(state.turrets),
+    fleets:   sliceFleets(state.fleets),
     roads:    state.roads,
-    edgeData: Array.from(state.edgeData.entries()),
+    edgeData: sliceEdgeData(state.edgeData, 'render'),
 
     particles: state.particles,
     dust:      state.dust,

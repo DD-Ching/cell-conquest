@@ -229,7 +229,7 @@ export function drawPlacementPreview(ctx, zoom, now) {
     if (state.placeMode.type === 'antiair') {
       drawAATurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now);
     } else if (state.placeMode.type === 'tank') {
-      drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0);
+      drawTankTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, 0, now);
     } else if (state.placeMode.type === 'factory') {
       drawFactoryTurret(ctx, wx, wy, state.placeMode.byOwner, true, zoom, now, false);
     } else if (state.placeMode.type === 'artillery') {

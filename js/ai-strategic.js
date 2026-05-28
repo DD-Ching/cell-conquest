@@ -22,7 +22,7 @@ import { FACTORY_MAX_STOCKPILE } from './config.js';
 /** Maintain the hold-fire / release state machine for `owner`. Returns true
  *  if the salvo fired this tick. */
 export function tryDroneSalvo(ctx) {
-  const { owner, myNodes, farBehind, releaseAIStockpile } = ctx;
+  const { owner, myNodes, farBehind, saturationRatio = 0, releaseAIStockpile } = ctx;
 
   // Pull from the owner-bucketed Map and filter by type/active inline instead
   // of scanning the entire turret array.
@@ -40,8 +40,15 @@ export function tryDroneSalvo(ctx) {
     const fullCount  = myFactories.filter(t => (t.dronesReady || 0) >= FACTORY_MAX_STOCKPILE).length;
     const aged       = state.elapsed - (state.aiSalvoT0[owner] || 0);
     const lostMass   = myFactories.length < 2 && stocked > 0;
-    // Release condition: enough mass to matter, aged-out, or lost factories.
-    if (fullCount >= 2 || stocked >= 10 || aged > 35 || lostMass) {
+    // Release thresholds scale with saturation: a stalemated / full empire
+    // AMASSES a bigger drone wall before unleashing it (the "戰線膠著就大量囤積"
+    // doctrine), while an empire still actively expanding fires sooner to keep
+    // pressure flowing. Tuned so deep stalemates build a genuine saturation
+    // hammer instead of dribbling small salvos.
+    const stockGate = saturationRatio > 0.5 ? 40 : saturationRatio > 0.3 ? 24 : 12;
+    const ageGate   = saturationRatio > 0.5 ? 55 : 35;
+    const fullGate  = saturationRatio > 0.5 ? 4  : 2;
+    if (fullCount >= fullGate || stocked >= stockGate || aged > ageGate || lostMass) {
       // First preference: aim at the strategic focus (the hub Phase 2 is
       // currently grinding into). Drone salvo + ground wave hit the same
       // point in the same beat → combined arms. Drop focus if stale/captured.

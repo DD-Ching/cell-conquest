@@ -263,12 +263,18 @@ function simulate(dt, combatDt = dt) {
     }
   }
 
-  // Stripped-owner tally: an owner is "stripped" (no longer worth a suicide
-  // drone strike) when they have ZERO active production turrets AND total
-  // units < 60. Those bases regen-and-die in the 10↔10 oscillation pattern —
-  // dumping drones in is wasted ordnance, ground troops will mop up. The
-  // suicide-drone judgment sites in drones.js consult this set.
-  state.strippedOwners.clear();
+  // Stripped-owner tally: an owner is "stripped" (not worth dumping a suicide
+  // salvo into) when they have ZERO active production turrets AND low total
+  // units — a crippled faction that regen-and-dies; ground troops mop it up.
+  // The drone SPAWN/SALVO pickers consult this set (in-flight drones commit
+  // and never re-check it — see droneTargetExists).
+  //
+  // HYSTERESIS: a single units<60 threshold made the flag CHATTER as a
+  // dying base regened across the line, which flip-flopped each new wave's
+  // target. Two-band sticky test instead: cross DOWN below STRIP_LO to
+  // become stripped, climb UP past STRIP_HI to recover. Between the bands
+  // the previous state holds, so a base oscillating around ~60 keeps a
+  // steady classification and the AI's attack focus stops thrashing.
   {
     const activeTurretsByOwner = new Map();
     for (const t of state.turrets) {
@@ -280,11 +286,17 @@ function simulate(dt, combatDt = dt) {
       if (n.owner === 'neutral') continue;
       unitsByOwner.set(n.owner, (unitsByOwner.get(n.owner) || 0) + n.units);
     }
+    const STRIP_LO = 45, STRIP_HI = 90;
+    const prev = state.strippedOwners;
+    const next = new Set();
     for (const [owner, units] of unitsByOwner) {
-      if ((activeTurretsByOwner.get(owner) || 0) === 0 && units < 60) {
-        state.strippedOwners.add(owner);
-      }
+      const noProduction = (activeTurretsByOwner.get(owner) || 0) === 0;
+      if (!noProduction) continue;                 // has a factory/turret → real threat
+      const wasStripped = prev.has(owner);
+      // sticky band: stay in prior state between LO and HI.
+      if (wasStripped ? units < STRIP_HI : units < STRIP_LO) next.add(owner);
     }
+    state.strippedOwners = next;
   }
 
   // Visual decays only. Unit regen is now LAZY — see world.catchUpRegen.

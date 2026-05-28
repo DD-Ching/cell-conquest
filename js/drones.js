@@ -44,21 +44,24 @@ function spawnDrone(originX, originY, owner, target) {
 
 // ---- Target resolution ----
 /** Does the drone's stored target still WARRANT a strike?
- *  A "gone" target is one that's: removed (turret destroyed, fleet wiped),
- *  no longer hostile (node captured by an ally of the drone),
- *  already worthless (node bombed down to ~0 units — another drone got it),
- *  or belongs to a STRIPPED faction (no active production, total units < 60 —
- *  the dying-and-regenerating black hole). For stripped owners, drones
- *  retarget to a real threat instead of burning on a 10-unit regen target. */
+ *
+ *  IN-FLIGHT COMMITMENT: a launched suicide drone flies its run to the end.
+ *  It only abandons a target that has flipped to its OWN side (no point
+ *  bombing a base your faction just captured) or a turret that's been
+ *  destroyed. It does NOT u-turn just because the target's unit count
+ *  dipped or the faction got weak — re-evaluating those mid-flight made a
+ *  whole salvo flip-flop as a dying base oscillated around a threshold
+ *  (drones turning around again and again, never finishing). "Should I
+ *  send drones at this weak faction at all" is decided ONCE at launch
+ *  (pickDroneTargetsFor / the salvo picker skip stripped owners + honour
+ *  the per-target inbound cap), not re-litigated every frame in transit. */
 function droneTargetExists(drone) {
   if (drone.targetKind === 'turret') return state.turretById.has(drone.targetId);
   if (drone.targetKind === 'node') {
     if (drone.targetId >= state.nodes.length) return false;
     const n = state.nodes[drone.targetId];
-    if (isAlly(n.owner, drone.owner)) return false; // own or allied — no longer hostile
-    if (n.units < 1) return false;                  // someone else cleaned it out
-    if (state.strippedOwners.has(n.owner)) return false; // dying faction, not worth a drone
-    return true;
+    if (isAlly(n.owner, drone.owner)) return false; // captured by own side — stand down
+    return true;                                    // otherwise commit to the run
   }
   if (drone.targetKind === 'fleet')  return state.fleetById.has(drone.targetId);
   return false;

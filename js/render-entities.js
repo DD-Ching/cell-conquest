@@ -47,19 +47,25 @@ export function drawNodes(ctx, zoom, now) {
   if (state._lod < 2) {
     // 6-screen-pixel floor so sub-pixel n.size at extreme zoom-out stays
     // visible AND clickable (nodeAt uses a zoom-aware pick tolerance).
+    // Owned nodes pop (full alpha + radius); neutrals recede (smaller +
+    // translucent) so the big map reads as coloured territory spreading over a
+    // muted neutral field, not 830 identical dots.
     const minR = 6 / zoom;
     for (const n of state.nodes) {
-      const r = Math.max(n.size, minR);
+      const owned = n.owner !== 'neutral';
+      const r = Math.max(n.size, minR) * (owned ? 1 : 0.82);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
+      ctx.globalAlpha = owned ? 1 : 0.62;
       ctx.fillStyle = COLOR[n.owner];
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = 'rgba(15, 8, 4, 0.7)';
+      ctx.fillStyle = 'rgba(15, 8, 4, 0.6)';
       ctx.beginPath();
       ctx.arc(n.x, n.y, Math.max(2, r - 4), 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
     return;
   }
 
@@ -428,8 +434,16 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
   const { vL, vT, vR, vB } = state._view;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // Big-map declutter: at strategic zoom hundreds of per-node numbers overlap
+  // into noise. Show a label only where it carries glance-value — selected,
+  // a major hub (size), or a meaningful owned garrison. Everything else stays a
+  // coloured dot until you zoom in. (Spec: numbers on hover / selection / high
+  // zoom only.) The 0.6 cutoff matches the LOD-1 dot-mode threshold.
+  const declutter = zoom < 0.6;
   for (const n of state.nodes) {
     if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+    if (declutter && !state.selectedIds.has(n.id) &&
+        n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
     catchUpRegen(n);                         // fresh units for the top-layer label
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;

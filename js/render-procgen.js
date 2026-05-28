@@ -49,8 +49,9 @@ export function drawProcgen(ctx) {
   for (const r of regions) {
     const col = REGION_TINT[r.type] || '#888888';
     const g = ctx.createRadialGradient(r.x, r.y, 0, r.x, r.y, r.radius);
-    g.addColorStop(0, rgba(col, 0.10));
-    g.addColorStop(1, rgba(col, 0));
+    g.addColorStop(0,   rgba(col, 0.18));
+    g.addColorStop(0.6, rgba(col, 0.10));   // flatter core so the zone reads, soft rim
+    g.addColorStop(1,   rgba(col, 0));
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);

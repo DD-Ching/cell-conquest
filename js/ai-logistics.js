@@ -25,7 +25,8 @@ import { isAlly } from './alliance.js';
 import { dist } from './util.js';
 import { FLEET_SPEED } from './config.js';
 
-const MAX_RELIEF_PER_TICK = 10;   // bound fleet spawn → no churn at 150+ nodes
+const MAX_RELIEF_PER_TICK = 30;   // bound fleet spawn, but high — a full city is
+                                  // wasted regen every second, so drain aggressively
 
 export function relieveSaturation(ctx) {
   const { owner, myNodes, attackerAvail, turretThreatTo, fleetsByTarget, sendFleet } = ctx;
@@ -82,7 +83,35 @@ export function relieveSaturation(ctx) {
       if (send >= 5) { sendFleet(my, capTarget, send); acted++; continue; }
     }
 
-    // 2) FEED — interior node with no affordable target: ship one hop forward.
+    // 2) FRONT PUSH — a full node touching the enemy must NEVER sit idle. EXPAND
+    // above bailed (its `need` is inflated by the enemy's tank-tax / regen), but
+    // that's exactly the case the player flagged: drones are holding this border
+    // hub suppressed, so beating its CURRENT garrison CAPTURES it. We deliberately
+    // ignore the tank-tax here (drones + the assault phase clear the screen) and
+    // only refuse a genuinely lethal tank zone — a wasted-full border base turns
+    // into forward progress. This is the ground half of the combined arms:
+    // drones suppress the edge, full bases pour through and take it.
+    let weakest = null, weakestU = Infinity;
+    for (const nbId of state.adj.get(my.id)) {
+      const tgt = state.nodes[nbId];
+      if (isAlly(tgt.owner, owner)) continue;
+      if (tgt.units < weakestU) { weakestU = tgt.units; weakest = tgt; }
+    }
+    if (weakest) {
+      const minTime = dist(my, weakest) / FLEET_SPEED;
+      let need = weakestU + 4;
+      if (weakest.owner !== 'neutral') need += weakest.regenRate * minTime;  // regen during travel
+      const inbound = fleetsByTarget.get(weakest.id);
+      if (inbound) for (const f of inbound) if (isAlly(f.owner, owner)) need -= f.units;
+      need = Math.max(0, need);
+      const lethalTank = turretThreatTo(weakest) > avail * 0.8;   // only cower from a meat-grinder
+      if (!lethalTank && avail >= need) {
+        const send = Math.min(Math.floor(avail), Math.ceil(need * 1.25 + 6));
+        if (send >= 5) { sendFleet(my, weakest, send); acted++; continue; }
+      }
+    }
+
+    // 3) FEED — interior node with no affordable target: ship one hop forward.
     const myD = distToFront.get(my.id);
     if (!myD) continue;                        // undefined (no front) or 0 (it IS the front)
     let best = null, bestD = myD;

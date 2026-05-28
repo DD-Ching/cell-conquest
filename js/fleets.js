@@ -360,7 +360,8 @@ function spawnCaptureParticles(node, owner) {
       x: node.x, y: node.y,
       vx: Math.cos(a) * s, vy: Math.sin(a) * s,
       life: 0.9, maxLife: 0.9,
-      color: COLOR[owner]
+      color: COLOR[owner],
+      kind: 'capture',
     });
   }
 }

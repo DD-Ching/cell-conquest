@@ -221,7 +221,7 @@ export function updateDrones(dt) {
         const a = Math.random() * Math.PI * 2;
         state.particles.push({
           x: f.x, y: f.y, vx: Math.cos(a) * 50, vy: Math.sin(a) * 50,
-          life: 0.3, maxLife: 0.3, color: '#aaa',
+          life: 0.3, maxLife: 0.3, color: '#aaa', kind: 'impact',
         });
       }
       spawnScorch(f.x, f.y, 'small');
@@ -294,7 +294,7 @@ export function updateDrones(dt) {
               const a = Math.random() * Math.PI * 2;
               state.particles.push({
                 x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
-                life: 0.4, maxLife: 0.4, color: '#888',
+                life: 0.4, maxLife: 0.4, color: '#888', kind: 'impact',
               });
             }
             state.fleets.splice(i, 1); continue;
@@ -312,7 +312,7 @@ export function updateDrones(dt) {
             const a = Math.random() * Math.PI * 2;
             state.particles.push({
               x: f.x, y: f.y, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 - 15,
-              life: 0.4, maxLife: 0.4, color: '#888',
+              life: 0.4, maxLife: 0.4, color: '#888', kind: 'impact',
             });
           }
           state.fleets.splice(i, 1); continue;
@@ -344,15 +344,16 @@ export function updateDrones(dt) {
               const sp = 50 + Math.random() * 60;
               state.particles.push({
                 x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-                life: 0.4, maxLife: 0.4, color: '#ff8a3a',
+                life: 0.4, maxLife: 0.4, color: '#ff8a3a', kind: 'explosion',
               });
             }
           } else {
+            // Net intercept — light blue net spark, just a hit feel
             for (let k = 0; k < 5; k++) {
               const a = Math.random() * Math.PI * 2;
               state.particles.push({
                 x: f.x, y: f.y, vx: Math.cos(a) * 30, vy: Math.sin(a) * 30,
-                life: 0.3, maxLife: 0.3, color: '#a4d8ff',
+                life: 0.3, maxLife: 0.3, color: '#a4d8ff', kind: 'impact',
               });
             }
           }
@@ -366,7 +367,7 @@ export function updateDrones(dt) {
           const sp = 60 + Math.random() * 60;
           state.particles.push({
             x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-            life: 0.45, maxLife: 0.45, color: '#ff8a3a',
+            life: 0.45, maxLife: 0.45, color: '#ff8a3a', kind: 'explosion',
           });
         }
       } else {
@@ -374,7 +375,7 @@ export function updateDrones(dt) {
           const a = Math.random() * Math.PI * 2;
           state.particles.push({
             x: f.x, y: f.y, vx: Math.cos(a) * 25, vy: Math.sin(a) * 25 - 10,
-            life: 0.35, maxLife: 0.35, color: '#888',
+            life: 0.35, maxLife: 0.35, color: '#888', kind: 'impact',
           });
         }
       }

@@ -355,11 +355,13 @@ function loop() {
   }
 
   if (!state.gameOver && !state.paused) {
-    // Cap sub-steps so 20× timescale doesn't blow the per-frame sim budget.
-    // Above 10 substeps, each step gets a larger dt but movement granularity
-    // is still well under DETOUR_LOOKAHEAD / DRONE_DETECT_R (a fleet moves
-    // ≤ 9 px per sub-step even at speed 20×, so wreck detour + drone hunt
-    // still work). Combat damage is dt-scaled so DPS outcome unchanged.
+    // Cap sub-steps so high timescales don't blow the per-frame sim budget.
+    // The cap is 10, so 20×/30×/40× all run the SAME 10 sub-steps — a faster
+    // gear just gives each step a larger dt (coarser integration), not more
+    // work. Granularity stays safe: a fleet moves ≤ ~19 px per sub-step even
+    // at 40× (FLEET_SPEED 95 × realDt 0.05 × 40/10), well under DRONE_DETECT_R
+    // (110) and the detour look-ahead, so wreck detour + drone hunt still
+    // resolve. Combat damage is dt-scaled so DPS outcome is unchanged.
     const subSteps = Math.max(1, Math.min(10, Math.ceil(state.timeScale)));
     const subDt = gameDt / subSteps;
     // Combat decimation at high time-scale: damage passes run every Nth
@@ -689,6 +691,8 @@ function attachInput() {
     if (e.key === '3') state.timeScale = SPEEDS[2];
     if (e.key === '4') state.timeScale = SPEEDS[3];
     if (e.key === '5') state.timeScale = SPEEDS[4];
+    if (e.key === '6') state.timeScale = SPEEDS[5];   // 30× fast-forward
+    if (e.key === '7') state.timeScale = SPEEDS[6];   // 40× fast-forward
     if (e.key === ']') {
       const i = SPEEDS.indexOf(state.timeScale);
       state.timeScale = SPEEDS[Math.min(SPEEDS.length - 1, (i < 0 ? 0 : i + 1))];

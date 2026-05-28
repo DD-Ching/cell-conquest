@@ -20,8 +20,22 @@ import { state } from './state.js';
 import { dist } from './util.js';
 import { isAlly } from './alliance.js';
 import { ekey } from './engineering.js';
-import { AA_RADIUS, NET_LEVEL_MAX } from './config.js';
+import { AA_RADIUS, NET_LEVEL_MAX, TANK_RADIUS } from './config.js';
 // Side effects (placeTurretAt, placeNetOnEdge) come through ctx — see ai-effects.js.
+
+// Cheap spatial scan over the uniform 250-px grid (same layout main.js
+// simulate() builds and combat.js forNear walks). The per-hub doctrine read
+// uses it to count nearby enemy ground fleets / turrets without an O(N) sweep.
+const GRID_CELL = 250;
+function forNearGrid(grid, x, y, R, fn) {
+  const range = Math.ceil(R / GRID_CELL);
+  const cx0 = Math.floor(x / GRID_CELL), cy0 = Math.floor(y / GRID_CELL);
+  for (let cx = cx0 - range; cx <= cx0 + range; cx++)
+    for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+      const bucket = grid.get(cx * 10000 + cy);
+      if (bucket) for (const t of bucket) fn(t);
+    }
+}
 
 // ---- Position layout helpers (build-phase-internal) ----
 // Spread AAs across the front arc to form a WALL (not a circle). Drones
@@ -84,19 +98,15 @@ export function tryBuildTurret(ctx) {
   if (Math.random() >= buildChance) return false;
   if (myNodes.length < 2) return false;
 
-  // Targets per hub — the player's winning playbook is: AA wall → tanks → factory spam,
-  // plus long-range artillery for AOE counter-pressure against enemy clusters.
-  // SATURATION SURCHARGE: when the empire is sitting full (regen thrown away),
-  // raise the per-hub ceilings so there's ALWAYS something productive to build
-  // rather than idling at cap — above all FACTORIES, whose drones are the
-  // siege engine that cracks a saturated standoff. Bounded so we don't carpet
-  // the whole map in turrets.
+  // SATURATION SURCHARGE: when the empire sits full (regen thrown away), raise
+  // whichever per-hub ceiling the local doctrine calls for so there's ALWAYS
+  // something productive to build rather than idling at cap. `satBoost` is the
+  // amplifier — the actual per-hub targets are chosen INSIDE the loop from the
+  // local threat read (see the DOCTRINE block). We deliberately do NOT stamp a
+  // full set of every turret type at every hub: a quiet rear hub builds drones,
+  // a contested hub builds tanks, etc. ("一物克一物").
   const satBoost = saturationRatio > 0.6 ? 2 : saturationRatio > 0.35 ? 1 : 0;
-  const AA_TARGET        = (antiTurtle ? 9 : 7) + satBoost;                  // thick AA wall with forward push
-  const TANK_TARGET      = 2 + (satBoost > 0 ? 1 : 0);                       // 2-3 tanks for siege + flank
-  const FACTORY_TARGET   = (antiTurtle ? 8 : 5) + satBoost * 2;              // drone throughput = the stalemate-breaker
-  const ARTILLERY_TARGET = (antiTurtle ? 3 : 2) + (satBoost > 0 ? 1 : 0);    // AOE counter-pressure
-  const buildMinUnits    = saturationRatio > 0.4 ? 14 : 22;
+  const buildMinUnits = saturationRatio > 0.4 ? 14 : 22;
 
   const byHub = [...myNodes].sort((a, b) => state.adj.get(b.id).size - state.adj.get(a.id).size);
 
@@ -114,6 +124,55 @@ export function tryBuildTurret(ctx) {
     const ddx = toward.x - n.x, ddy = toward.y - n.y;
     const dlen = Math.hypot(ddx, ddy) || 1;
     const dirX = ddx / dlen, dirY = ddy / dlen;
+
+    // ---- PER-HUB DOCTRINE (一物克一物) ----
+    // Read the LOCAL threat and build the counter, not a full catalogue at
+    // every hub. Two cheap grid scans: enemy ground fleets right on the hub
+    // (incoming assault), and enemy turrets a step ahead toward the front
+    // (their fortified line). The four signals map to the four arms:
+    //   • enemy node FAR        → factories: drones are the only arm that
+    //                             crosses the gap to a distant enemy.
+    //   • ground contact        → tanks: contest the line and buy time while
+    //                             the rest of the empire masses up ("搶時間").
+    //   • dense enemy buildup    → artillery: shell the cluster of buildings
+    //                             flat once we've stockpiled ("囤積後轟建築").
+    //   • enemy factories near   → AA wall + nets: brace for the drone swarm
+    //                             ("怕無人機就大量囤積防空/防護網").
+    // satBoost (saturation / stalemate) amplifies whichever counter is called
+    // for — a deadlocked front mass-stockpiles the right unit.
+    let groundThreat = 0;
+    forNearGrid(state.groundFleetGrid, n.x, n.y, TANK_RADIUS, f => {
+      if (f.owner !== owner && f.owner !== 'neutral' && !isAlly(f.owner, owner)) groundThreat++;
+    });
+    let enemyTurretsNear = 0, enemyFactoriesNear = 0;
+    const probeX = n.x + dirX * 280, probeY = n.y + dirY * 280;
+    forNearGrid(state.turretGrid, probeX, probeY, 360, t => {
+      if (t.owner === owner || t.owner === 'neutral' || isAlly(t.owner, owner)) return;
+      enemyTurretsNear++;
+      if (t.type === 'factory') enemyFactoriesNear++;
+    });
+
+    const FAR = towardDist > 1500, NEAR = towardDist < 800;
+    const groundContact   = NEAR || groundThreat > 0;
+    const enemyBuiltUp    = enemyTurretsNear >= 4;
+    const droneThreatened = enemyFactoriesNear > 0;
+
+    // Lean baseline — a quiet hub does NOT get the whole catalogue.
+    let AA_TARGET = 3, TANK_TARGET = 1, FACTORY_TARGET = 2, ARTILLERY_TARGET = 0;
+    if (FAR) {                       // 遠方 → 無人機
+      FACTORY_TARGET   = Math.max(FACTORY_TARGET, (antiTurtle ? 7 : 5) + satBoost * 2);
+      AA_TARGET        = Math.max(AA_TARGET, 4 + satBoost);          // enough to cover the factories
+    }
+    if (groundContact) {             // 互相交戰 → 坦克
+      TANK_TARGET      = Math.max(TANK_TARGET, 3 + (satBoost > 0 ? 1 : 0));
+      AA_TARGET        = Math.max(AA_TARGET, 5 + satBoost);
+    }
+    if (enemyBuiltUp) {              // 囤積後 → 大砲轟掉建築
+      ARTILLERY_TARGET = Math.max(ARTILLERY_TARGET, (antiTurtle ? 4 : 3) + (satBoost > 0 ? 1 : 0));
+    }
+    if (droneThreatened) {           // 怕無人機 → 防空牆 + 防護網
+      AA_TARGET        = Math.max(AA_TARGET, (antiTurtle ? 10 : 8) + satBoost * 2);
+    }
 
     // Survey friendly infrastructure NEAR this hub. Single pass over my own
     // turrets (via turretsByOwner) instead of 5 separate .filter() calls;
@@ -176,7 +235,15 @@ export function tryBuildTurret(ctx) {
 /** Upgrade a drone-net on a front-line edge. Returns true if a net was started. */
 export function tryBuildNet(ctx) {
   const { owner, saturationRatio, isExposedToEnemyTank, placeNetOnEdge } = ctx;
-  if (Math.random() >= 0.10 + saturationRatio * 0.20) return false;
+  // "怕無人機就大量囤積防護網" — nets are the dedicated drone counter, so the
+  // more drone factories the enemy fields the harder we lay them. One pass over
+  // the typed factory bucket (cheap — far smaller than all turrets).
+  let enemyFactories = 0;
+  for (const t of (state.turretsByType.get('factory') || [])) {
+    if (t.active && t.owner !== owner && t.owner !== 'neutral' && !isAlly(t.owner, owner)) enemyFactories++;
+  }
+  const droneThreat = Math.min(0.30, enemyFactories * 0.02);
+  if (Math.random() >= 0.10 + saturationRatio * 0.20 + droneThreat) return false;
 
   let cand = null, bestScore = -1;
   for (const r of state.roads) {

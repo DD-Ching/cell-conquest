@@ -45,7 +45,12 @@ export const ZOOM_MIN = 0.1;            // allows whole-world overview (1920×10
 export const ZOOM_MAX = 2.2;
 
 // ---- Time / speed presets ----
-export const SPEEDS = [1, 2, 5, 10, 20];
+// 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME
+// per-frame sim budget as 20× — the sub-step loop in main.js is capped at 10
+// steps, so a higher timeScale just advances more game-time per sub-step
+// (coarser integration) rather than running more sub-steps. Keys 1-5 hit the
+// first five; 6→30×, 7→40×; [ ] step through all of them.
+export const SPEEDS = [1, 2, 5, 10, 20, 30, 40];
 
 // ---- Battle Engineering ----
 // Engineer (physical unit on map)

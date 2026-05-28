@@ -29,6 +29,7 @@ import {
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
 import { sfxExplosion } from './audio.js';
+import { isAlly } from './alliance.js';
 
 export { ENG_SPEED } from './config.js';
 
@@ -115,10 +116,15 @@ export function placeTurretAt(x, y, type, byOwner) {
   // off-road final leg) AND the nearest own node with enough units to pay
   // ENG_COST (source — where the engineer fleet is dispatched from). They
   // can be the same node but often aren't on contested fronts.
+  // Source/anchor can be ANY allied node, not just byOwner's own — the player
+  // and the Lieutenant (ally1) share one army, so a player-placed building
+  // draws its engineer from the nearest ALLIED base (incl. the underlined
+  // Lieutenant nodes) rather than insisting on a far-off purely-player node.
+  // (For AI owners this is a no-op: they have no allies, so isAlly == own.)
   let source = null, srcD2 = Infinity;
   let anchor = null, anchorD2 = Infinity;
   for (const n of state.nodes) {
-    if (n.owner !== byOwner) continue;
+    if (!isAlly(n.owner, byOwner)) continue;
     const dx = n.x - x, dy = n.y - y;
     const d2 = dx * dx + dy * dy;
     if (d2 < anchorD2) { anchorD2 = d2; anchor = n; }
@@ -162,9 +168,10 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
   const edge = getEdge(roadA, roadB);
   if (!edge) return false;
   catchUpAllNodes();                         // fresh units count for source test
+  // Allied sourcing (see placeTurretAt): player + Lieutenant share construction.
   let source = null, srcD = Infinity;
   for (const n of state.nodes) {
-    if (n.owner !== byOwner) continue;
+    if (!isAlly(n.owner, byOwner)) continue;
     if (n.units < ENG_COST + 5) continue;
     const d = Math.hypot(n.x - state.nodes[roadA].x, n.y - state.nodes[roadA].y) +
               Math.hypot(n.x - state.nodes[roadB].x, n.y - state.nodes[roadB].y);
@@ -173,11 +180,11 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
   if (!source) return false;
   const aN = state.nodes[roadA], bN = state.nodes[roadB];
   let anchor = null;
-  if (aN.owner === byOwner && bN.owner === byOwner) {
+  if (isAlly(aN.owner, byOwner) && isAlly(bN.owner, byOwner)) {
     anchor = (Math.hypot(source.x - aN.x, source.y - aN.y) <
               Math.hypot(source.x - bN.x, source.y - bN.y)) ? aN : bN;
-  } else if (aN.owner === byOwner) anchor = aN;
-  else if (bN.owner === byOwner) anchor = bN;
+  } else if (isAlly(aN.owner, byOwner)) anchor = aN;
+  else if (isAlly(bN.owner, byOwner)) anchor = bN;
   if (!anchor) return false;
   const path = (source.id === anchor.id) ? [source.id] : findPath(source.id, anchor.id, byOwner);
   if (!path || path.length < 1) return false;

@@ -39,6 +39,7 @@ import {
   tryReinforceFrontline, tryOverflowDump,
 } from './ai-tactical.js';
 import { tryDroneSalvo } from './ai-strategic.js';
+import { flowSupplyToFront } from './ai-logistics.js';
 
 /** Tick one AI. Returns the actions array (empty when nothing happened).
  *  In main-thread mode the actions array is harmlessly ignored — every
@@ -295,6 +296,13 @@ export function aiTick(owner, dt) {
     releaseAIStockpile: effects.releaseAIStockpile,
     actions,
   };
+
+  // ===== Continuous logistics (always runs, not part of the one-action
+  // budget) ===== Drain idle-full INTERIOR nodes toward the front so their
+  // otherwise-wasted regen reaches a perimeter node that can spend it
+  // (attack / expand / build). A city at cap is lost production every second —
+  // near-zero tolerance for that. The tactical decision still fires below.
+  flowSupplyToFront(ctx);
 
   // ===== Phase dispatch — first true return is the action this tick =====
   // Order matches the old monolithic body's early-return sequence exactly.

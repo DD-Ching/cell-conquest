@@ -4,18 +4,33 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mars Front</title>
+<!-- Mars Tactical Command typefaces: Orbitron = display/branding (title strip,
+     victory modal, pause banner); Space Mono = tabular HUD readouts. Both fall
+     back to system-ui / ui-monospace if the CDN is unreachable. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   :root {
-    --bg-panel: rgba(24, 12, 6, 0.78);
+    /* Panel bg darkened a touch + border accent strengthened so the glass
+       chrome separates cleanly from the rusty world behind it. */
+    --bg-panel: rgba(18, 9, 4, 0.82);
     --bg-panel-strong: rgba(30, 16, 8, 0.92);
-    --border-warm: rgba(200, 140, 80, 0.35);
+    --border-warm: rgba(210, 150, 88, 0.45);
     --border-warm-strong: rgba(230, 170, 100, 0.6);
     --text-base: #e6d4b6;
     --text-dim: #b09780;
     --text-faint: #7a6855;
     --accent: #ffb343;
     --accent-soft: rgba(255, 179, 67, 0.18);
+    /* Cool status-OK accent for the tactical-terminal look (corner ticks etc).
+       Sits alongside the warm Mars palette without replacing it. */
+    --accent-cool: #4dd0e1;
+    --bracket: rgba(255, 190, 120, 0.55);
+    /* Typeface stacks — graceful fallback if the Google Fonts CDN is blocked. */
+    --font-display: 'Orbitron', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   body { margin: 0; background: #0d0703; color: var(--text-base); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; letter-spacing: 0.01em; }
   canvas { display: block; cursor: crosshair; }
@@ -31,6 +46,62 @@
       0 1px 0 rgba(255, 200, 140, 0.06) inset,
       0 8px 24px rgba(0, 0, 0, 0.5);
   }
+
+  /* ---- Mars Tactical Command chrome: corner brackets + scanlines ----
+     Layered purely through ::before / ::after on each glass panel so they
+     ride the panel's own opacity transition (the `.hud-faded` fade dims the
+     whole element, pseudo-elements included — nothing to wire per-element).
+     ::before = subtle CRT scanline wash. ::after = four L-shaped corner
+     ticks drawn as a single element with one background-gradient per corner
+     (military readout, not neon). Both are pointer-events:none and live
+     behind / over content without blocking the canvas.
+
+     Panels opt in by carrying the `.tac` class (added alongside their id).
+     #message is intentionally excluded — its modal owns its own styling. */
+  .tac { position: fixed; }
+  .tac::before, .tac::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+  }
+  /* Scanline wash — extremely low-contrast horizontal lines. */
+  .tac::before {
+    background: repeating-linear-gradient(0deg, rgba(255, 200, 140, 0.02) 0, transparent 2px);
+    z-index: 0;
+    mix-blend-mode: screen;
+  }
+  /* Four corner ticks. Each gradient paints a 1.5px line; pairs share a
+     corner to form the L. 12px arm length via background-size. */
+  .tac::after {
+    --b: var(--bracket);
+    --arm: 12px;
+    --th: 1.5px;
+    background-image:
+      /* top-left */
+      linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+      /* top-right */
+      linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+      /* bottom-left */
+      linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+      /* bottom-right */
+      linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b));
+    background-repeat: no-repeat;
+    background-size:
+      var(--arm) var(--th), var(--th) var(--arm),   /* TL: horiz, vert */
+      var(--arm) var(--th), var(--th) var(--arm),   /* TR */
+      var(--arm) var(--th), var(--th) var(--arm),   /* BL */
+      var(--arm) var(--th), var(--th) var(--arm);   /* BR */
+    background-position:
+      top left, top left,
+      top right, top right,
+      bottom left, bottom left,
+      bottom right, bottom right;
+    z-index: 2;
+  }
+  /* Keep real panel content above the scanline/bracket layers. */
+  .tac > * { position: relative; z-index: 1; }
 
   /* ---- Title strip: "MARS FRONT" branding ---- */
   /* ---- Auto-fade overlay management (INVERTED behaviour) ----
@@ -55,22 +126,24 @@
      time is frozen. Pulses gently. CSS-only animation. */
   #pause-banner {
     position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
-    padding: 6px 18px;
+    padding: 7px 22px;
     background: rgba(15, 8, 4, 0.85);
     border: 1px solid rgba(220, 200, 160, 0.45);
     border-radius: 6px;
-    font: bold 12px ui-monospace, monospace;
-    letter-spacing: 0.18em; color: #ffe080;
+    font-family: var(--font-display); font-weight: 700; font-size: 11px;
+    letter-spacing: 0.24em; color: #ffe080;
     text-transform: uppercase;
     pointer-events: none;
     display: none;
     box-shadow: 0 0 32px rgba(255, 200, 90, 0.18);
     animation: pause-pulse 1.6s ease-in-out infinite;
   }
+  /* Banner brackets read brighter than the panel ticks for emphasis. */
+  #pause-banner.tac::after { --b: rgba(255, 224, 128, 0.7); --arm: 10px; }
   body.paused #pause-banner { display: block; }
   @keyframes pause-pulse { 0%,100% { opacity: 0.78; } 50% { opacity: 1; } }
   #title-strip { position: fixed; top: 12px; left: 12px; padding: 10px 16px 8px; pointer-events: none; }
-  #title-strip .title { font-size: 18px; font-weight: 700; letter-spacing: 0.22em; color: var(--text-base); text-shadow: 0 0 12px rgba(255, 130, 50, 0.25); }
+  #title-strip .title { font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: 0.18em; color: var(--text-base); text-shadow: 0 0 12px rgba(255, 130, 50, 0.25); }
   #title-strip .title .accent { color: var(--accent); margin-left: 4px; }
   #title-strip .sub { font-size: 10.5px; letter-spacing: 0.18em; color: var(--text-faint); text-transform: uppercase; margin-top: 3px; }
 
@@ -95,7 +168,7 @@
   #hud .faction-row { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 6px; padding: 3px 0; font-size: 14px; }
   #hud .faction-row .swatch { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
   #hud .faction-row .name { font-weight: 600; }
-  #hud .faction-row .stats { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
+  #hud .faction-row .stats { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
   #hud .faction-row .stats .u, #hud .faction-row .stats .n { color: var(--text-base); }
   #hud .faction-row .stats .lbl { color: var(--text-dim); font-size: 10px; font-weight: 500; margin-left: 1px; margin-right: 4px; }
   #hud .strength-row { grid-column: 2 / 4; height: 5px; margin-top: 2px; margin-bottom: 2px; background: rgba(80, 50, 30, 0.4); border-radius: 2px; overflow: hidden; position: relative; }
@@ -110,7 +183,8 @@
     background: var(--bg-panel);
     border: 1px solid var(--border-warm);
     border-radius: 8px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
     backdrop-filter: blur(10px) saturate(1.05);
     -webkit-backdrop-filter: blur(10px) saturate(1.05);
     box-shadow: 0 1px 0 rgba(255, 200, 140, 0.06) inset, 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -118,7 +192,7 @@
     line-height: 1.3;
     text-align: right;
   }
-  #topright #timer { font-size: 20px; font-weight: 600; letter-spacing: 0.05em; color: var(--text-base); }
+  #topright #timer { font-size: 20px; font-weight: 700; letter-spacing: 0.04em; color: var(--text-base); }
   #topright .row { font-size: 20px; }
   #topright .sub { color: var(--text-dim); font-size: 11px; letter-spacing: 0.06em; margin-top: 2px; }
   #topright .glyph { display: inline-block; margin-right: 5px; opacity: 0.75; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
@@ -180,7 +254,7 @@
     from { opacity: 0; transform: translate(-50%, -52%) scale(0.94); }
     to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
-  #message h1 { margin: 0 0 10px; font-size: 36px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
+  #message h1 { margin: 0 0 10px; font-family: var(--font-display); font-size: 34px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; }
   #message p#msg-sub { margin: 0 0 22px; color: var(--text-dim); font-size: 14px; letter-spacing: 0.02em; }
   #message.victory #msg-sub { color: #ffd066; }
   #message.defeat  #msg-sub { color: #ff8a96; }
@@ -232,16 +306,16 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="title-strip">
+<div id="title-strip" class="tac">
   <div class="title">MARS<span class="accent">FRONT</span></div>
   <div class="sub">Crimson Sector · Tactical Command</div>
 </div>
 <div id="nn-badge" class="loading">NPC model loading…</div>
-<div id="hud"></div>
-<div id="topright"><div class="row"><span class="glyph" data-glyph="timer"></span><span id="timer">00:00</span></div><div class="sub"><span class="glyph" data-glyph="speed"></span><span id="speed">Speed 1×</span></div><div class="sub"><span class="glyph" data-glyph="zoom"></span><span id="zoom">100%</span></div><div class="sub"><span class="glyph" data-glyph="perf"></span><span id="perf">— fps · — ms</span></div></div>
+<div id="hud" class="tac"></div>
+<div id="topright" class="tac"><div class="row"><span class="glyph" data-glyph="timer"></span><span id="timer">00:00</span></div><div class="sub"><span class="glyph" data-glyph="speed"></span><span id="speed">Speed 1×</span></div><div class="sub"><span class="glyph" data-glyph="zoom"></span><span id="zoom">100%</span></div><div class="sub"><span class="glyph" data-glyph="perf"></span><span id="perf">— fps · — ms</span></div></div>
 <canvas id="minimap"></canvas>
-<div id="pause-banner">⏸ Paused — Space to resume</div>
-<div id="help">
+<div id="pause-banner" class="tac">⏸ Paused — Space to resume</div>
+<div id="help" class="tac">
   <div class="help-short">Press <kbd>?</kbd> for controls &middot; <kbd>Space</kbd> pause &middot; <kbd>Tab</kbd> hide HUD &middot; <kbd>M</kbd> toggle minimap</div>
   <div class="help-full">
     <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>

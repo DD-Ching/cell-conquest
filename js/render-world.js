@@ -327,6 +327,82 @@ export function drawHoldFireBanner(ctx, W, now) {
   ctx.fillText(text, cx, cy + 8);
 }
 
+// ---- "Where am I?" home indicators (edge arrows toward your bases) ----
+// Orientation aid for when you get lost. Shows ONLY when NONE of your bases is
+// currently on screen (you've panned / zoomed off your own territory); the
+// instant one is visible it disappears, so there's no permanent clutter. Edge
+// arrows pulse at the screen border pointing back toward your nearest bases.
+// Screen-space: call AFTER the world transform is restored. Works in the render
+// worker too (reads node owner/x/y + camera from the snapshot, no alliance
+// lookup — your side is just 'player' + the lieutenant 'ally1').
+export function drawHomeIndicators(ctx, W, H, now) {
+  const { vL, vT, vR, vB } = state._view;
+  const mine = [];
+  for (const n of state.nodes) {
+    if (n.owner !== 'player' && n.owner !== 'ally1') continue;
+    if (n.x >= vL && n.x <= vR && n.y >= vT && n.y <= vB) return;   // a base is on screen → no aid needed
+    mine.push(n);
+  }
+  if (mine.length === 0) return;                                    // you hold nothing → nothing to point at
+
+  const z = state.zoom;
+  const cx = W / 2, cy = H / 2;
+  const camWX = state.cameraX + W / (2 * z);
+  const camWY = state.cameraY + H / (2 * z);
+  mine.sort((a, b) =>
+    ((a.x - camWX) ** 2 + (a.y - camWY) ** 2) - ((b.x - camWX) ** 2 + (b.y - camWY) ** 2));
+
+  const margin = 56;
+  const hw = W / 2 - margin, hh = H / 2 - margin;
+  const placed = [];                  // angles already drawn — dedupe near-parallel arrows
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  let shown = 0;
+  for (const n of mine) {
+    if (shown >= 3) break;
+    const sx = (n.x - state.cameraX) * z;
+    const sy = (n.y - state.cameraY) * z;
+    const ang = Math.atan2(sy - cy, sx - cx);
+    if (placed.some(a => Math.abs(((ang - a + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.28)) continue;
+    placed.push(ang);
+    shown++;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const t = Math.min(
+      Math.abs(ca) > 1e-3 ? hw / Math.abs(ca) : Infinity,
+      Math.abs(sa) > 1e-3 ? hh / Math.abs(sa) : Infinity);
+    const ix = cx + ca * t, iy = cy + sa * t;
+    const color = COLOR[n.owner] || '#5cb3ff';
+    const pulse = 0.55 + 0.45 * Math.sin(now / 200 + shown);
+
+    // soft pulsing glow disc behind the arrow
+    ctx.globalAlpha = 0.20 * pulse;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(ix, iy, 20, 0, Math.PI * 2); ctx.fill();
+
+    // arrowhead, rotated toward the base
+    ctx.save();
+    ctx.translate(ix, iy);
+    ctx.rotate(ang);
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.moveTo(15, 0); ctx.lineTo(-7, -9); ctx.lineTo(-2, 0); ctx.lineTo(-7, 9);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // distance hint on the nearest arrow only (kept minimal — "別亂")
+    if (shown === 1) {
+      const distM = Math.round(Math.hypot(n.x - camWX, n.y - camWY));
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.fillText('⌂ ' + distM, cx + ca * (t - 30), cy + sa * (t - 30));
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 // ---- Drag preview (selection / send-arrow / box-select) ----
 // Kept here (not in render-entities) because it operates on the road graph
 // (findPath) and is conceptually a UI overlay, not an entity.

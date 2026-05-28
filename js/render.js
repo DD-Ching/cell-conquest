@@ -31,7 +31,7 @@ import {
   drawRoads, drawWreckPiles, drawNets, drawShells,
   drawFleetTrails, drawRangeRings,
   drawPlacementPreview, drawSalvoMarker, drawHoldFireBanner,
-  drawDragPreview, renderMinimap,
+  drawDragPreview, renderMinimap, drawHomeIndicators,
 } from './render-world.js';
 import {
   drawNodes, drawTurrets, drawTroopFleets, drawDroneFleets,
@@ -112,4 +112,7 @@ export function render() {
   // except the HUD, so it must sit after the world restore + before the banner.
   drawVignette(ctx, W, H);
   drawHoldFireBanner(ctx, W, now);
+  // Orientation aid — edge arrows to your bases, but ONLY when none is on
+  // screen (you've lost track of your territory). Auto-hides otherwise.
+  drawHomeIndicators(ctx, W, H, now);
 }

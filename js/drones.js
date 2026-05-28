@@ -71,10 +71,13 @@ function retargetDrone(drone) {
   // we find a turret in a non-empty cell, then verify it's the closest within
   // that cell. For big maps this beats scanning every turret.
   // (Simpler implementation: just check progressively larger windows.)
+  // range=6 covers a 13×13 cell window ≈ 1625 px each side — well past
+  // DRONE_DETECT_R. Anything farther falls through to the state.nodes scan
+  // below, which is the correct path for "no nearby turrets".
   const CELL = 250;
   const cx0 = Math.floor(drone.x / CELL);
   const cy0 = Math.floor(drone.y / CELL);
-  for (let range = 0; range <= 12 && best === null; range++) {
+  for (let range = 0; range <= 6 && best === null; range++) {
     for (let cx = cx0 - range; cx <= cx0 + range; cx++) {
       for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
         // Only check the ring at distance `range` (skip already-checked inner cells)
@@ -108,7 +111,17 @@ function retargetDrone(drone) {
   drone.targetKind = best.kind;
   drone.targetId   = best.id;
   drone.tx = best.x; drone.ty = best.y;
+  drone._lastRetargetT = state.elapsed;
   return true;
+}
+
+// Cooldown (seconds) between drone retargets. A drone that just picked a new
+// target shouldn't burn a full grid sweep on the very next tick — by the time
+// 0.5s has elapsed either the target's gone (re-evaluate) or it's still fine
+// (no scan needed). Pure perf, no gameplay change.
+const RETARGET_COOLDOWN_S = 0.5;
+function retargetOnCooldown(drone) {
+  return state.elapsed - (drone._lastRetargetT || 0) < RETARGET_COOLDOWN_S;
 }
 
 // ---- Impact ----
@@ -268,6 +281,12 @@ export function updateDrones(dt) {
         if (huntFleet) {
           f.targetId = huntFleet._id;
           f.tx = huntFleet.x; f.ty = huntFleet.y;
+        } else if (retargetOnCooldown(f)) {
+          // Skip both the scan AND this tick's movement/arrival. Coasting on
+          // stale tx/ty risks the drone arriving at a now-friendly node before
+          // the next retarget — droneHit doesn't check ownership. Pausing for
+          // one tick is the safe behavior-preserving choice.
+          continue;
         } else {
           f.targetKind = 'turret';
           if (!retargetDrone(f)) {
@@ -284,7 +303,11 @@ export function updateDrones(dt) {
       }
     } else {
       if (!droneTargetExists(f)) {
-        if (!retargetDrone(f)) {
+        if (retargetOnCooldown(f)) {
+          // Same throttle / same safety: pause one tick instead of coasting
+          // toward a stale (possibly now-friendly) target. See note above.
+          continue;
+        } else if (!retargetDrone(f)) {
           for (let k = 0; k < 4; k++) {
             const a = Math.random() * Math.PI * 2;
             state.particles.push({

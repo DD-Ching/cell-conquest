@@ -82,10 +82,15 @@ export function drawWreckPiles(ctx, zoom) {
 // ---- Drone nets (faction-agnostic edge fences with charge readout) ----
 export function drawNets(ctx, zoom) {
   const NET_COLOR = '#e8d6a8';
+  const { vL, vT, vR, vB } = state._view;
   for (const r of state.roads) {
+    const a = state.nodes[r.a], b = state.nodes[r.b];
+    // Segment-AABB cull BEFORE getEdge — off-screen roads skip the ekey lookup
+    // (and its string alloc) entirely. Same cull drawRoads/drawWreckPiles use.
+    if (Math.max(a.x, b.x) < vL || Math.min(a.x, b.x) > vR ||
+        Math.max(a.y, b.y) < vT || Math.min(a.y, b.y) > vB) continue;
     const e = getEdge(r.a, r.b);
     if (!e || e.netLevel <= 0) continue;
-    const a = state.nodes[r.a], b = state.nodes[r.b];
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     if (len < 1) continue;
@@ -179,10 +184,13 @@ export function drawFleetTrails(ctx, zoom) {
 // ---- Range rings around active AA / tank / artillery turrets ----
 export function drawRangeRings(ctx, zoom) {
   if (state._lod < 2) return;            // dashed rings invisible when tiny
+  const { vL, vT, vR, vB } = state._view;
   for (const t of state.turrets) {
     if (!t.active) continue;
     const r = TURRET_RANGES[t.type];
     if (!r) continue;
+    // Circle-AABB cull — skip rings whose entire radius is off-screen.
+    if (t.x + r < vL || t.x - r > vR || t.y + r < vT || t.y - r > vB) continue;
     const alpha = t.type === 'tank' ? '50' : '30';
     ctx.strokeStyle = COLOR[t.owner] + alpha;
     ctx.lineWidth = 1 / zoom;
@@ -415,11 +423,26 @@ export function drawDragPreview(ctx, zoom) {
       ? [...state.selectedIds].map(id => state.nodes[id]).filter(nd => nd && nd.owner === 'player')
       : [drag.originNode];
 
+    // Per-source findPath is full-graph Dijkstra and ran EVERY frame while
+    // dragging (×N sources for a multi-base drag). Cache it for as long as the
+    // cursor hovers one release node — recompute only when the hovered node
+    // changes. The executed send re-pathfinds fresh on release, so a briefly
+    // stale preview (e.g. if ownership flips mid-hover) is cosmetic-only.
+    const relId = releaseNode ? releaseNode.id : -1;
+    if (!drag._pathCache || drag._pathCacheRel !== relId) {
+      drag._pathCache = new Map();
+      drag._pathCacheRel = relId;
+    }
+
     for (const src of sources) {
       if (!src) continue;
       if (releaseNode && src.id === releaseNode.id) continue;
       if (releaseNode) {
-        const path = findPath(src.id, releaseNode.id, src.owner);
+        let path = drag._pathCache.get(src.id);
+        if (path === undefined) {
+          path = findPath(src.id, releaseNode.id, src.owner);
+          drag._pathCache.set(src.id, path);
+        }
         if (path && path.length > 1) {
           const isAttack = releaseNode.owner !== src.owner;
           const lineColor = isAttack ? 'rgba(255,120,140,1)' : 'rgba(120,200,255,1)';

@@ -1,15 +1,21 @@
 // =====================================================
-// AI logistics — bounded anti-saturation + road-clearing passes. Both run
-// once per aiTick (NOT part of the one-action-per-tick decision budget),
-// because keeping supply flowing is maintenance that must happen reliably no
-// matter what the tactical phase decides this tick.
+// AI logistics — anti-saturation + road-clearing passes. Both run once per
+// aiTick (NOT part of the one-action-per-tick decision budget), because keeping
+// supply flowing is maintenance that must happen reliably no matter what the
+// tactical phase decides this tick.
+//
+// NO per-tick action caps. These passes used to bound how many nodes/roads they
+// acted on per tick "for perf", but that silently throttled a large empire's
+// economy + supply — a performance bound changing the GAME RESULT, which we
+// don't allow. Both now act on EVERY qualifying node/road each tick; the work
+// stays cheap because relief sends are 1-hop (trivial pathfind) and clogged
+// roads are few + self-limited by engineer affordability.
 //
 // relieveSaturation — a city sitting at capacity is wasted production every
 // second: regen caps at 1.0× capacity (see world.catchUpRegen), so a full node
 // throws away its ENTIRE regen rate until something drains it. The player's
 // rule: almost ZERO tolerance for an idle-full city. For each FULL node
-// (fullest first, capped per tick so it can't spawn a fleet storm at 150-node
-// scale) we take the single most productive action:
+// (fullest first) we take the single most productive action:
 //   1. EXPAND — if it borders an enemy/neutral it can afford alone, capture it.
 //      This is what pours a saturated empire into the empty neutral field and
 //      rolls the frontier toward the enemy (the one-action coordinated assault
@@ -22,14 +28,12 @@
 // every fleet onto a slow off-centre detour. The build phase's tryBuildNet
 // only touches FRONT edges below max net level, so it leaves INTERIOR supply
 // roads (a former front the empire pushed past) and maxed-net edges to silt
-// up. This pass closes that gap: dispatch an engineer to the worst-clogged
-// allied-anchored roads (placeNetOnEdge → engineerArrivedAtNetEdge clears
-// wrecks FIRST), capped per tick and de-duped against engineers already
-// en route.
+// up. This pass closes that gap: dispatch an engineer to EVERY worst-clogged
+// allied-anchored road (placeNetOnEdge → engineerArrivedAtNetEdge clears
+// wrecks FIRST), de-duped against engineers already en route.
 //
 // Both use ctx effects (sendFleet / placeNetOnEdge) so they replay in Worker
-// mode, and both are CAPPED per tick — the previous unbounded relief version
-// was a perf regression at scale.
+// mode.
 // =====================================================
 import { state } from './state.js';
 import { isAlly } from './alliance.js';
@@ -37,8 +41,11 @@ import { dist } from './util.js';
 import { FLEET_SPEED, ENG_COST } from './config.js';
 import { ekey } from './engineering.js';
 
-const MAX_RELIEF_PER_TICK = 30;   // bound fleet spawn, but high — a full city is
-                                  // wasted regen every second, so drain aggressively
+// No per-tick action cap. A saturated node throws away its entire regen every
+// second, so EVERY full node acts this tick — leaving a real one idle would be
+// a perf bound silently changing the game's economy, which we don't allow.
+// (Was MAX_RELIEF_PER_TICK=30.) Cheap to uncap: relief sends are all 1-hop to
+// an ADJACENT node, so each sendFleet's pathfind is trivial even at full scale.
 
 export function relieveSaturation(ctx) {
   const { owner, myNodes, attackerAvail, turretThreatTo, fleetsByTarget, sendFleet } = ctx;
@@ -68,9 +75,7 @@ export function relieveSaturation(ctx) {
     }
   }
 
-  let acted = 0;
   for (const my of full) {
-    if (acted >= MAX_RELIEF_PER_TICK) break;
     const avail = attackerAvail(my);
     if (avail < 6) continue;
 
@@ -92,7 +97,7 @@ export function relieveSaturation(ctx) {
     }
     if (capTarget) {
       const send = Math.min(Math.floor(avail), Math.ceil(capNeed * 1.3 + 6));
-      if (send >= 5) { sendFleet(my, capTarget, send); acted++; continue; }
+      if (send >= 5) { sendFleet(my, capTarget, send); continue; }
     }
 
     // 2) FRONT PUSH — a full node touching the enemy must NEVER sit idle. EXPAND
@@ -119,7 +124,7 @@ export function relieveSaturation(ctx) {
       const lethalTank = turretThreatTo(weakest) > avail * 0.8;   // only cower from a meat-grinder
       if (!lethalTank && avail >= need) {
         const send = Math.min(Math.floor(avail), Math.ceil(need * 1.25 + 6));
-        if (send >= 5) { sendFleet(my, weakest, send); acted++; continue; }
+        if (send >= 5) { sendFleet(my, weakest, send); continue; }
       }
     }
 
@@ -135,12 +140,11 @@ export function relieveSaturation(ctx) {
     }
     if (best) {
       const send = Math.floor(my.units - my.capacity * 0.6);
-      if (send >= 5) { sendFleet(my, best, send); acted++; }
+      if (send >= 5) { sendFleet(my, best, send); }
     }
   }
 }
 
-const MAX_CLEAR_PER_TICK   = 2;   // bound engineer dispatch — each costs ENG_COST
 const ROAD_BLOCK_THRESHOLD = 3;   // a road earns an engineer only once it's
                                   // genuinely clogged (one engineer removes
                                   // NET_ENG_WRECK_CLEAR=2 piles on arrival, so a
@@ -197,10 +201,13 @@ export function clearBlockedRoads(ctx) {
   if (!cands) return;
   cands.sort((p, q) => q.wc - p.wc);
 
-  let acted = 0, attempts = 0;
+  // No per-tick dispatch cap — clear EVERY clogged allied road this tick.
+  // placeNetOnEdge self-limits by affordability (it needs a source with units
+  // ≥ ENG_COST+5 and bails otherwise), so a poor empire still won't over-spend
+  // while a rich one restores its whole supply net at once. (Was capped at
+  // MAX_CLEAR_PER_TICK=2 — a perf bound that left roads silted for extra ticks;
+  // removed so perf never gates the game state.)
   for (const c of cands) {
-    if (acted >= MAX_CLEAR_PER_TICK || attempts >= MAX_CLEAR_PER_TICK + 3) break;
-    attempts++;
-    if (placeNetOnEdge(c.a, c.b, owner)) acted++;
+    placeNetOnEdge(c.a, c.b, owner);
   }
 }

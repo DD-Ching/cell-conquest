@@ -1,32 +1,34 @@
 // =====================================================
 // Procedural map generation — geography-first orchestrator (?procgen=1).
 //
-// The legacy world.js scatters nodes uniformly at random, then meshes them.
-// This generator instead builds the map in LAYERS so it reads like a believable
-// theatre instead of a random graph:
+// "Grow a world, not a graph." The natural geography is generated FIRST
+// (worldgen-terrain.js: a seeded world theme + elevation/moisture noise fields
+// → sea, ridges, rivers, resource belts), and everything after OBEYS it:
 //
-//   1. Regions  — 8–15 spread-out region centres (best-candidate sampling),
-//                 each with a TYPE (core / industrial / frontier / wasteland /
-//                 resource / open) that sets radius, node density, node size,
-//                 strategic value and danger.
-//   2. Nodes    — placed by OBEYING the regions: each region scatters its quota
-//                 of nodes in a centre-weighted disc (denser cores, sparse
-//                 wastes), plus a thin global "open plains" scatter between
-//                 regions. Spacing is respected globally so nothing overlaps.
-//   3. Roads    — worldgen-roads.js: dense intra-region mesh + sparse
-//                 inter-region highway backbone + connectivity stitch.
+//   0. Theme + geography  — worldgen-terrain.generateGeography / resource belts
+//   1. Regions  — centres placed on BUILDABLE land (off sea + peaks), typed by
+//                 the terrain/resource under them (mineral→mining, energy→
+//                 industrial, rare→research, basin→city, ridge→military, …).
+//   2. Nodes    — scattered only where the ground is buildable, clustered in
+//                 their region; node TYPE is driven by the resource belt /
+//                 terrain beneath it (mine on a mineral belt, factory on energy,
+//                 research_lab on rare, …).
+//   3. Roads    — worldgen-roads.js: intra-region mesh + inter-region highway
+//                 backbone + connectivity stitch; rivers + mountain ridges are
+//                 barriers, so crossings funnel through a few bridges/passes.
+//   4. Summary  — a validation summary (state.worldSummary), logged at gen time.
 //
-// Output is the SAME shape legacy gen produces — state.nodes (positional ids),
-// state.roads, state.adj — so render / AI / pathfinding need no changes. Extra
-// per-node metadata (regionId, nodeType) and state.regions ride along for the
-// region tint + future nodeType visuals; existing code ignores them.
+// Output is the SAME shape legacy gen produces — state.nodes / roads / adj — so
+// render / AI / pathfinding need no changes. Extra metadata (regionId, nodeType,
+// value/danger/…) + state.regions / barriers / worldTheme / resourceBelts /
+// geoGrid ride along for the renderer + later layers.
 //
-// Deterministic: a seeded PRNG (mulberry32) drives EVERY random choice, so the
-// same ?seed= reproduces the same world (Risk/Stellaris-style shareable maps).
+// Deterministic: one seeded mulberry32 drives EVERY choice → ?seed= reproduces
+// the world; ?theme= forces a world theme.
 //
-// TODO(procgen milestone): terrain blockers + bridge/pass chokepoints,
-// region-aware faction placement, nodeType-driven node shapes. Hooks are left
-// (region.value/danger, node.nodeType) so those layers can read this metadata.
+// TODO(milestone 2): history events, geography-following faction borders +
+// conflict-zone markers, per-pixel satellite shading, port/refinery/radar/
+// airfield node types + icons.
 // =====================================================
 import { state } from './state.js';
 import { dist, pointToSegment } from './util.js';
@@ -36,26 +38,27 @@ import {
 } from './config.js';
 import { generateRoads, applyBarrierChokepoints } from './worldgen-roads.js';
 import { makeRegionName } from './tactical-theme.js';
+import { pickWorldTheme, generateGeography, generateResourceBelts } from './worldgen-terrain.js';
 
 const NODE_MARGIN = 100;
 const BASE_GAP    = 50;            // matches world.js rim spacing
 const OPEN_SHARE  = 0.15;          // fraction of nodes scattered between regions
-const BARRIER_CORRIDOR = 240;      // keep nodes this far off a river/canyon so the
-                                   // barrier sits in an empty gap → few, clean crossings
-                                   // (otherwise clusters straddle it and need many bridges)
+const BARRIER_CORRIDOR = 220;      // keep nodes this far off a river/ridge so the
+                                   // barrier sits in a gap → few, clean crossings
 
-// Region archetypes — `w` is the weighted-pick weight. radiusMul scales the
-// region disc; density + sizeMul shape how many / how big its nodes are;
-// value/danger are strategic metadata for later layers (faction placement).
-const REGION_TYPES = [
-  { type: 'city',           w: 2, radiusMul: 0.90, density: 1.35, sizeMul: 1.15, value: 3, danger: 1 },
-  { type: 'industrial_zone',w: 2, radiusMul: 1.00, density: 1.10, sizeMul: 1.05, value: 2, danger: 1 },
-  { type: 'mining_zone',    w: 2, radiusMul: 0.85, density: 0.95, sizeMul: 1.00, value: 3, danger: 2 },
-  { type: 'military_base',  w: 1, radiusMul: 0.80, density: 0.70, sizeMul: 1.20, value: 3, danger: 2 },
-  { type: 'frontier',       w: 2, radiusMul: 1.15, density: 0.70, sizeMul: 0.90, value: 1, danger: 2 },
-  { type: 'wasteland',      w: 2, radiusMul: 1.30, density: 0.50, sizeMul: 0.85, value: 1, danger: 3 },
-  { type: 'research_site',  w: 1, radiusMul: 0.75, density: 0.60, sizeMul: 1.10, value: 3, danger: 2 },
-];
+// Per-type region stats (radius/density/size + strategic metadata). The TYPE
+// itself is now chosen by geography (regionTypeFor); this table only supplies
+// the numbers once a type is known. `wfb` weights the plain-terrain fallback.
+const REGION_STATS = {
+  city:            { radiusMul: 0.90, density: 1.35, sizeMul: 1.15, value: 3, danger: 1, wfb: 2 },
+  industrial_zone: { radiusMul: 1.00, density: 1.10, sizeMul: 1.05, value: 2, danger: 1, wfb: 2 },
+  mining_zone:     { radiusMul: 0.85, density: 0.95, sizeMul: 1.00, value: 3, danger: 2, wfb: 1 },
+  military_base:   { radiusMul: 0.80, density: 0.70, sizeMul: 1.20, value: 3, danger: 2, wfb: 1 },
+  frontier:        { radiusMul: 1.15, density: 0.70, sizeMul: 0.90, value: 1, danger: 2, wfb: 2 },
+  wasteland:       { radiusMul: 1.30, density: 0.50, sizeMul: 0.85, value: 1, danger: 3, wfb: 2 },
+  research_site:   { radiusMul: 0.75, density: 0.60, sizeMul: 1.10, value: 3, danger: 2, wfb: 1 },
+};
+const FALLBACK_TYPES = Object.keys(REGION_STATS);
 
 /** mulberry32 — small fast seeded PRNG returning floats in [0,1). */
 function mulberry32(seed) {
@@ -68,11 +71,11 @@ function mulberry32(seed) {
   };
 }
 
-function weightedPick(arr, rng) {
-  let total = 0; for (const a of arr) total += a.w;
+function weightedFallbackType(rng) {
+  let total = 0; for (const k of FALLBACK_TYPES) total += REGION_STATS[k].wfb;
   let r = rng() * total;
-  for (const a of arr) { if ((r -= a.w) <= 0) return a; }
-  return arr[arr.length - 1];
+  for (const k of FALLBACK_TYPES) { if ((r -= REGION_STATS[k].wfb) <= 0) return k; }
+  return FALLBACK_TYPES[FALLBACK_TYPES.length - 1];
 }
 
 function targetNodeCount() {
@@ -91,58 +94,98 @@ function nodeSize(rng, sizeMul) {
   return s * sizeMul;
 }
 
-/** Coarse nodeType label from region type + size (metadata for later visuals). */
-function nodeType(size, region) {
-  if (!region) return size >= 44 ? 'town' : 'outpost';
-  switch (region.type) {
-    case 'mining_zone':     return 'mine';
-    case 'industrial_zone': return 'factory';
-    case 'military_base':   return size >= 44 ? 'fortress' : 'outpost';
-    case 'research_site':   return 'research_lab';
-    case 'city':            return size >= 52 ? 'city' : (size >= 38 ? 'town' : 'outpost');
-    default:                return size >= 44 ? 'town' : 'outpost';
+/** Min distance from (x,y) to any barrier polyline (rivers + ridges). */
+function distToBarriers(x, y) {
+  let best = Infinity;
+  for (const bar of state.barriers) {
+    const p = bar.points;
+    for (let i = 0; i < p.length - 1; i++) {
+      const d = pointToSegment(x, y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y);
+      if (d < best) best = d;
+    }
   }
+  return best;
 }
 
-/** Layer 1 — region centres, spread out via best-candidate sampling and edge
- *  avoidance, each tagged with an archetype. */
-function generateRegions(rng) {
+/** Choose a region archetype from the geography under (x,y). */
+function regionTypeFor(rng, x, y, geo, res) {
+  const r = res.resourceAt(x, y);
+  if (r === 'mineral') return 'mining_zone';
+  if (r === 'energy')  return 'industrial_zone';
+  if (r === 'rare')    return 'research_site';
+  if (distToBarriers(x, y) < BARRIER_CORRIDOR * 2.2) return 'military_base';  // chokepoint country
+  const t = geo.terrainAt(x, y);
+  if (t === 'basin' || t === 'fertile') return 'city';
+  if (t === 'wasteland') return rng() < 0.5 ? 'wasteland' : 'frontier';
+  return weightedFallbackType(rng);
+}
+
+/** nodeType from the resource/terrain beneath it, then region fallback. Kept
+ *  within the rendered icon set (mine/factory/research_lab/fortress/city/town/
+ *  outpost/bridge); spec extras (port/refinery/radar/…) wait for milestone 2. */
+function nodeTypeFor(size, region, geo, res, x, y) {
+  const r = res.resourceAt(x, y);
+  if (r === 'mineral') return 'mine';
+  if (r === 'rare')    return 'research_lab';
+  if (r === 'energy')  return 'factory';
+  if (region) {
+    switch (region.type) {
+      case 'mining_zone':     return 'mine';
+      case 'industrial_zone': return 'factory';
+      case 'military_base':   return size >= 44 ? 'fortress' : 'outpost';
+      case 'research_site':   return 'research_lab';
+      case 'city':            return size >= 52 ? 'city' : (size >= 38 ? 'town' : 'outpost');
+    }
+  }
+  return size >= 44 ? 'town' : 'outpost';
+}
+
+/** Layer 1 — region centres on buildable land, typed by geography. */
+function generateRegions(rng, geo, res) {
   const count = PROCGEN_REGIONS_MIN +
     Math.floor(rng() * (PROCGEN_REGIONS_MAX - PROCGEN_REGIONS_MIN + 1));
   const baseR = Math.sqrt((WORLD_W * WORLD_H) / count) * 0.6;
   const regions = [];
   const usedNames = new Set();
   for (let i = 0; i < count; i++) {
-    let best = null, bestScore = -1;
-    for (let k = 0; k < 14; k++) {                 // 14 candidates, keep the most isolated
+    let best = null, bestScore = -Infinity;
+    for (let k = 0; k < 20; k++) {                 // candidates: isolated + buildable
       const x = NODE_MARGIN + rng() * (WORLD_W - 2 * NODE_MARGIN);
       const y = NODE_MARGIN + rng() * (WORLD_H - 2 * NODE_MARGIN);
-      let score = Math.min(x, y, WORLD_W - x, WORLD_H - y) * 0.5;   // bias off the map edges
+      if (!geo.buildableAt(x, y)) continue;         // never centre a region in sea / on a peak
+      let score = Math.min(x, y, WORLD_W - x, WORLD_H - y) * 0.5;   // off the edges
       for (const r of regions) { const d = dist({ x, y }, r); if (d < score) score = d; }
+      // mild pull toward habitable ground (basins/fertile read as "settled")
+      const t = geo.terrainAt(x, y);
+      if (t === 'basin' || t === 'fertile') score *= 1.15;
       if (score > bestScore) { bestScore = score; best = { x, y }; }
     }
-    const t = weightedPick(REGION_TYPES, rng);
+    if (!best) {                                    // fallback: any in-bounds point
+      best = { x: NODE_MARGIN + rng() * (WORLD_W - 2 * NODE_MARGIN), y: NODE_MARGIN + rng() * (WORLD_H - 2 * NODE_MARGIN) };
+    }
+    const type = regionTypeFor(rng, best.x, best.y, geo, res);
+    const st = REGION_STATS[type];
     regions.push({
-      id: i, x: best.x, y: best.y, type: t.type,
-      radius: baseR * t.radiusMul, density: t.density, sizeMul: t.sizeMul,
-      value: t.value, danger: t.danger, quota: 0,
-      name: makeRegionName(rng, usedNames),       // "Ash Basin" etc. — map flavour
+      id: i, x: best.x, y: best.y, type,
+      radius: baseR * st.radiusMul, density: st.density, sizeMul: st.sizeMul,
+      value: st.value, danger: st.danger, quota: 0,
+      name: makeRegionName(rng, usedNames),
     });
   }
   return regions;
 }
 
-function makeNode(x, y, size, regionId, region, rng) {
-  const nt = nodeType(size, region);
+function makeNode(x, y, size, regionId, region, geo, res, rng) {
+  const nt = nodeTypeFor(size, region, geo, res, x, y);
   return {
     id: state.nodes.length, x, y, size, owner: 'neutral',
     units: Math.floor(size * 0.85 + rng() * size * 0.55),
     capacity: Math.floor(size * 3.6),
     regenRate: size / 30,
     pulse: 0, flash: 0, lastRegenT: 0,
-    // procgen metadata (harmless extra fields; gameplay still reads units/cap/
-    // regen above — these are hooks for later balance/visual layers).
     regionId, nodeType: nt,
+    terrainType: geo.terrainAt(x, y),
+    resourceType: res.resourceAt(x, y),
     value:      region ? region.value : 1,
     danger:     region ? region.danger : 1,
     defense:    nt === 'fortress' ? 2 : 1,
@@ -151,76 +194,70 @@ function makeNode(x, y, size, regionId, region, rng) {
   };
 }
 
-/** Distance from (x,y) to the nearest barrier polyline is under `margin`? */
-function nearBarrier(x, y, margin) {
-  for (const bar of state.barriers) {
-    const p = bar.points;
-    for (let i = 0; i < p.length - 1; i++) {
-      if (pointToSegment(x, y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y) < margin) return true;
-    }
-  }
-  return false;
-}
-
-/** True if (x,y) is in-bounds, off the barrier corridor, and clears every
- *  already-placed node's rim. */
-function spaceFree(x, y, size) {
+/** In-bounds, on buildable ground, off the barrier corridor, clear of rims. */
+function spaceFree(x, y, size, geo) {
   if (x < NODE_MARGIN || x > WORLD_W - NODE_MARGIN ||
       y < NODE_MARGIN || y > WORLD_H - NODE_MARGIN) return false;
-  if (nearBarrier(x, y, BARRIER_CORRIDOR)) return false;
+  if (!geo.buildableAt(x, y)) return false;          // sea / peak → no settlement
+  if (distToBarriers(x, y) < BARRIER_CORRIDOR) return false;
   for (const n of state.nodes) {
     if (dist({ x, y }, n) < BASE_GAP + n.size + size) return false;
   }
   return true;
 }
 
-/** Layer 2 — nodes obeying the regions, plus a thin inter-region scatter. */
-function generateNodes(rng, regions) {
+/** Layer 2 — nodes obeying regions + terrain, plus a thin inter-region scatter. */
+function generateNodes(rng, regions, geo, res) {
   state.nodes = [];
   const N = targetNodeCount();
 
-  // Quota per region ∝ density × area, normalised to the region share of N.
   let wSum = 0;
   for (const r of regions) { r._w = r.density * r.radius * r.radius; wSum += r._w; }
   const regionTotal = Math.round(N * (1 - OPEN_SHARE));
   for (const r of regions) r.quota = Math.max(3, Math.round(regionTotal * (r._w / wSum)));
 
-  // Region scatter — centre-weighted disc (denser toward the centre).
   for (const r of regions) {
     let made = 0, tries = 0;
-    const cap = r.quota * 60;
+    const cap = r.quota * 80;
     while (made < r.quota && tries < cap) {
       tries++;
       const ang = rng() * Math.PI * 2;
-      const rad = r.radius * Math.pow(rng(), 0.65);   // exponent < 1 packs the core
+      const rad = r.radius * Math.pow(rng(), 0.65);   // pack the core
       const x = r.x + Math.cos(ang) * rad;
       const y = r.y + Math.sin(ang) * rad;
       const size = nodeSize(rng, r.sizeMul);
-      if (!spaceFree(x, y, size)) continue;
-      state.nodes.push(makeNode(x, y, size, r.id, r, rng));
+      if (!spaceFree(x, y, size, geo)) continue;
+      state.nodes.push(makeNode(x, y, size, r.id, r, geo, res, rng));
       made++;
     }
   }
 
-  // Open plains — sparse global scatter between regions (regionId -1).
+  // Open plains — sparse global scatter; biased toward rivers/resources so the
+  // "wilderness" still has logic (settlements cling to water + ore).
   const openTarget = N - state.nodes.length;
   let made = 0, tries = 0;
-  const cap = Math.max(2000, openTarget * 80);
+  const cap = Math.max(3000, openTarget * 120);
   while (made < openTarget && tries < cap) {
     tries++;
     const x = NODE_MARGIN + rng() * (WORLD_W - 2 * NODE_MARGIN);
     const y = NODE_MARGIN + rng() * (WORLD_H - 2 * NODE_MARGIN);
     const size = nodeSize(rng, 0.9);
-    if (!spaceFree(x, y, size)) continue;
-    state.nodes.push(makeNode(x, y, size, -1, null, rng));
+    if (!spaceFree(x, y, size, geo)) continue;
+    // light habitability bias: near a river or resource is always accepted;
+    // bare wasteland is accepted only sometimes, so the open field thins out
+    // away from anything worth settling.
+    const nearWater = distToBarriers(x, y) < BARRIER_CORRIDOR * 2.5;
+    const onResource = !!res.resourceAt(x, y);
+    if (!nearWater && !onResource && rng() < 0.4) continue;
+    state.nodes.push(makeNode(x, y, size, -1, null, geo, res, rng));
     made++;
   }
 }
 
-/** Quality gate — every node reachable from node 0, and we hit a sane count. */
+/** Quality gate — every node reachable from node 0, sane count. */
 function validateMap() {
   const { nodes, adj } = state;
-  if (nodes.length < targetNodeCount() * 0.6) return false;
+  if (nodes.length < targetNodeCount() * 0.5) return false;
   const seen = new Set([0]); const q = [0];
   while (q.length) {
     const id = q.shift();
@@ -229,66 +266,77 @@ function validateMap() {
   return seen.size === nodes.length;
 }
 
-/** Layer 0 — macro terrain blockers. 1–2 wavy polylines (river / canyon) that
- *  span the map. Edges crossing one are later culled down to a few "pass" nodes
- *  (worldgen-roads.applyBarrierChokepoints), forging strategic bottlenecks.
- *  Abstract data only for now — render-territory/world draws them faintly.
- *  TODO(procgen): mountain ranges as area polygons, biome fills. */
-function generateTerrain(rng) {
-  const barriers = [];
-  const count = 1 + (rng() < 0.5 ? 1 : 0);     // 1 or 2
-  const SEGS = 5;
-  for (let b = 0; b < count; b++) {
-    const horizontal = rng() < 0.5;
-    const pts = [];
-    if (horizontal) {
-      const y0 = WORLD_H * (0.3 + rng() * 0.4);
-      for (let i = 0; i <= SEGS; i++) {
-        const y = y0 + (rng() - 0.5) * WORLD_H * 0.18;
-        pts.push({ x: (WORLD_W / SEGS) * i, y: Math.max(0, Math.min(WORLD_H, y)) });
-      }
-    } else {
-      const x0 = WORLD_W * (0.3 + rng() * 0.4);
-      for (let i = 0; i <= SEGS; i++) {
-        const x = x0 + (rng() - 0.5) * WORLD_W * 0.18;
-        pts.push({ x: Math.max(0, Math.min(WORLD_W, x)), y: (WORLD_H / SEGS) * i });
-      }
-    }
-    barriers.push({ kind: rng() < 0.5 ? 'river' : 'canyon', points: pts });
-  }
-  return barriers;
+/** Build + log the validation/summary object (spec §12). */
+function buildSummary() {
+  const kinds = { local: 0, highway: 0, bridge: 0 };
+  for (const r of state.roads) kinds[r.kind] = (kinds[r.kind] || 0) + 1;
+  const belts = { mineral: 0, energy: 0, rare: 0 };
+  for (const b of state.resourceBelts) belts[b.kind] = (belts[b.kind] || 0) + 1;
+  const types = {};
+  for (const n of state.nodes) types[n.nodeType] = (types[n.nodeType] || 0) + 1;
+  // connectivity
+  const seen = new Set([0]); const q = [0];
+  while (q.length) { const id = q.shift(); for (const nb of state.adj.get(id)) if (!seen.has(nb)) { seen.add(nb); q.push(nb); } }
+  const summary = {
+    theme: state.worldTheme.name, seed: state.worldSeed,
+    regions: state.regions.length, nodes: state.nodes.length,
+    roads: kinds, chokepoints: kinds.bridge,
+    rivers: state.barriers.filter(b => b.kind === 'river').length,
+    ridges: state.barriers.filter(b => b.kind === 'mountain').length,
+    resourceBelts: belts, nodeTypes: types,
+    connected: seen.size === state.nodes.length ? 'all' : `${seen.size}/${state.nodes.length}`,
+  };
+  state.worldSummary = summary;
+  console.log('[worldgen] %s (seed %d): %d regions, %d nodes, ' +
+    'roads L%d/H%d/B%d, %d chokepoints, belts m%d/e%d/r%d, %s connected',
+    summary.theme, summary.seed, summary.regions, summary.nodes,
+    kinds.local, kinds.highway, kinds.bridge, summary.chokepoints,
+    belts.mineral, belts.energy, belts.rare, summary.connected);
+  return summary;
 }
 
-/** Generate a full world into state (nodes / roads / adj / regions / barriers).
- *  Retries a few reseeds if validation fails; the connectivity stitch +
- *  barrier surgery keep failures rare. */
-export function generateWorld(seed) {
+/** Generate a full world into state. Retries a few reseeds if validation
+ *  fails; the connectivity stitch + barrier surgery keep failures rare.
+ *  `themeKey` (from ?theme=) optionally forces the world theme. */
+export function generateWorld(seed, themeKey) {
   const base = (seed >>> 0) || 1;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     const rng = mulberry32((base + attempt * 0x9E3779B9) >>> 0);
-    const regions = generateRegions(rng);
-    state.regions = regions;     // generateRoads reads state.regions for the highway MST — set FIRST
-    state.barriers = generateTerrain(rng);
-    generateNodes(rng, regions);
+
+    // 0 — theme + natural geography + resources (the world, before settlement)
+    const theme = pickWorldTheme(rng, themeKey);
+    const geo = generateGeography(rng, theme);
+    const res = generateResourceBelts(rng, theme, geo);
+    state.worldTheme    = theme;
+    state.resourceBelts = res.belts;
+    state.geoGrid = { GW: geo.GW, GH: geo.GH, seaLevel: geo.seaLevel, ridgeLevel: geo.ridgeLevel, elev: Array.from(geo.elev) };
+    // Rivers + mountain ridges become the chokepoint barriers.
+    state.barriers = [...geo.rivers, ...geo.ridges];
+
+    // 1-3 — regions → nodes → roads, all obeying the geography
+    const regions = generateRegions(rng, geo, res);
+    state.regions = regions;     // generateRoads reads state.regions for the highway MST
+    generateNodes(rng, regions, geo, res);
     generateRoads(rng);
     applyBarrierChokepoints();   // cull cross-barrier edges down to a few passes
-    if (validateMap()) { state.worldSeed = base; return; }
+
+    if (validateMap()) { state.worldSeed = base; buildSummary(); return; }
   }
-  state.worldSeed = base;   // accept the last attempt (stitched → connected anyway)
+  state.worldSeed = base;        // accept the last attempt (stitched → connected anyway)
+  buildSummary();
 }
 
 /** Region-aware faction starts: one capital per DISTINCT region, each with
  *  viable expansion (degree ≥ 2), spread out via farthest-point sampling seeded
- *  by region strategic value. Returns up to `k` node ids; the caller fills any
+ *  by region strategic value. Returns up to `k` node ids; caller fills any
  *  shortfall with its own fallback. Only meaningful after generateWorld. */
 export function pickRegionStarts(k) {
   const { nodes, adj, regions } = state;
   if (!regions.length) return [];
-  // Best capital per region — highest-degree neutral node (tie → larger).
   const capPerRegion = new Map();
   for (const n of nodes) {
     if (n.owner !== 'neutral' || n.regionId < 0) continue;
-    if (adj.get(n.id).size < 2) continue;          // needs ≥2 expansion routes
+    if (adj.get(n.id).size < 2) continue;
     const cur = capPerRegion.get(n.regionId);
     if (!cur || adj.get(n.id).size > adj.get(cur.id).size ||
         (adj.get(n.id).size === adj.get(cur.id).size && n.size > cur.size)) {
@@ -299,8 +347,6 @@ export function pickRegionStarts(k) {
   const cands = [...capPerRegion.values()]
     .sort((a, b) => regById.get(b.regionId).value - regById.get(a.regionId).value);
   if (!cands.length) return [];
-  // Greedy farthest-point: seed with the highest-value region's capital, then
-  // add whichever candidate maximises min-distance to those already chosen.
   const chosen = [cands[0]];
   const pool = cands.slice(1);
   while (chosen.length < k && pool.length) {

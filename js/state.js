@@ -59,9 +59,14 @@ export const state = {
   placeMode: null,           // {type:'antiair'|'factory'|'tank'|'net', byOwner:'player'}; 'net' targets a road segment (not world point)
   roads: [],
   regions: [],               // procgen: [{id,x,y,type,radius,value,danger}] — empty in legacy gen
-  barriers: [],              // procgen: [{kind:'river'|'canyon',points:[{x,y}]}] — terrain that forces chokepoints
+  barriers: [],              // procgen: [{kind:'river'|'mountain'|'canyon',points:[{x,y}]}] — terrain that forces chokepoints
+  worldTheme: null,          // procgen v2: {key,name,pal,nameStyle,...densities} — the world's climate/setting
+  resourceBelts: [],         // procgen v2: [{kind:'mineral'|'energy'|'rare',x,y,r}] — drive node types
+  geoGrid: null,             // procgen v2: {GW,GH,seaLevel,ridgeLevel,elev:[...]} — coarse elevation for render shading
+  worldSummary: null,        // procgen v2: validation/summary object (logged at gen time)
   worldSeed: 0,              // procgen deterministic seed (0 = legacy random gen)
-  procgen: false,            // opt-in geography-first generator (?procgen=1)
+  worldThemeKey: null,       // procgen v2: forced world theme from ?world=<key> (null = seeded pick)
+  procgen: false,            // geography-first generator (default ON; ?procgen=0 → legacy)
   adj: new Map(),
   edgeData: new Map(),       // ekey(a,b) -> { wrecks, netLevel, netCharges, netOwner }
                              //   wrecks: [{x,y,hp,hpMax,rot}] — physical piles on

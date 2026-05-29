@@ -126,7 +126,7 @@ export function newGame() {
     // scatter+mesh; outputs the same state.nodes/roads/adj shape. An unpinned
     // seed re-rolls each new game (fresh map on R); ?seed=N pins it (replayable).
     if (!state.seedPinned) state.worldSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
-    generateWorld(state.worldSeed);
+    generateWorld(state.worldSeed, state.worldThemeKey);
   } else {
     placeNodes();
     buildRoads();
@@ -819,6 +819,10 @@ state.procgen = _mapParams.get('procgen') !== '0';
 const _seedParam = _mapParams.get('seed');
 state.seedPinned = _seedParam != null;
 if (state.seedPinned) state.worldSeed = parseInt(_seedParam, 10) >>> 0;
+// ?world=<theme> forces a world climate/setting (red_desert, dried_ocean,
+// fractured_mountain, crater_belt, ruined_megacity, polar_corridor,
+// river_civilization, war_scar). Distinct from the faction ?theme= palette.
+state.worldThemeKey = _mapParams.get('world') || null;
 
 // Render worker MUST be enabled before resize() (which would otherwise
 // touch canvas.width and before initWorldCtx() gets called by anything).

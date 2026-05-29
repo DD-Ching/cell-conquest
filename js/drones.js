@@ -347,17 +347,14 @@ export function updateDrones(dt) {
     huntDrones = [];
     huntGrounds = [];
     for (const f of state.fleets) {
-      if (f.kind === 'drone' && f.hp > 0) huntDrones.push(f);
+      // Stamp each drone's slot in huntDrones[] as we pack it, so the per-drone
+      // loop below can index wasmHuntIdx directly — no per-tick id→slot Map.
+      if (f.kind === 'drone' && f.hp > 0) { f._huntSlot = huntDrones.length; huntDrones.push(f); }
       else if (f.kind !== 'drone' && !f._dead && f.path && f.segIdx < f.path.length - 1) huntGrounds.push(f);
     }
     if (huntDrones.length && huntGrounds.length) {
       wasmHuntIdx = wasmDroneHuntTargets(huntDrones, huntGrounds, DRONE_DETECT_R2);
     }
-  }
-  // droneIdxById gives O(1) lookup from a drone fleet to its slot in huntDrones[].
-  const droneIdxById = new Map();
-  if (huntDrones) {
-    for (let i = 0; i < huntDrones.length; i++) droneIdxById.set(huntDrones[i]._id, i);
   }
 
   for (let i = state.fleets.length - 1; i >= 0; i--) {
@@ -384,16 +381,15 @@ export function updateDrones(dt) {
     // otherwise fall back to the JS grid sweep that was the hot path before.
     let huntFleet = null, huntD2 = DRONE_DETECT_R2;
     if (wasmHuntIdx !== null) {
-      const dIdx = droneIdxById.get(f._id);
-      if (dIdx !== undefined) {
-        const gIdx = wasmHuntIdx[dIdx];
-        if (gIdx >= 0) {
-          const g = huntGrounds[gIdx];
-          if (g && !g._dead) {
-            const dx = g.x - f.x, dy = g.y - f.y;
-            huntD2 = dx * dx + dy * dy;
-            huntFleet = g;
-          }
+      // _huntSlot was stamped during the pack loop above; every drone reaching
+      // here (hp>0, not yet spliced) is in huntDrones, so the index is valid.
+      const gIdx = wasmHuntIdx[f._huntSlot];
+      if (gIdx >= 0) {
+        const g = huntGrounds[gIdx];
+        if (g && !g._dead) {
+          const dx = g.x - f.x, dy = g.y - f.y;
+          huntD2 = dx * dx + dy * dy;
+          huntFleet = g;
         }
       }
     } else {

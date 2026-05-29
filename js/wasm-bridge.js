@@ -64,33 +64,49 @@ export function ownerKey(o) {
   return v;
 }
 
+// ---- Reusable packing buffers ----------------------------------------------
+// The 3 wasm packers below run once per sub-step (up to ~20×/frame at high
+// time-scale) over hundreds of entities. Allocating fresh Float32Array/Uint8Array
+// on every call was a major GC source. Instead we keep grow-only scratch buffers
+// keyed by a slot name and hand wasm-bindgen a subarray(0,n) view — the copy into
+// wasm linear memory is unavoidable, but the JS-side allocation churn is gone.
+// Values packed and results returned are byte-identical to the old fresh-array path.
+const _f32 = new Map();
+const _u8 = new Map();
+function bufF32(slot, n) {
+  let a = _f32.get(slot);
+  if (!a || a.length < n) { a = new Float32Array(n); _f32.set(slot, a); }
+  return a;
+}
+function bufU8(slot, n) {
+  let a = _u8.get(slot);
+  if (!a || a.length < n) { a = new Uint8Array(n); _u8.set(slot, a); }
+  return a;
+}
+// Exact-length handle for the wasm call: the whole buffer when it's already the
+// right size (steady state → zero allocation), else a cheap subarray view.
+const view = (a, n) => (a.length === n ? a : a.subarray(0, n));
+
 /** Batch drone hunt-target lookup. For each drone, returns the index into
  *  `grounds` of the nearest enemy ground fleet within detectR (or -1).
  *  Returns null when wasm isn't ready; caller should fall back to JS. */
 export function wasmDroneHuntTargets(drones, grounds, detectR2) {
   if (!wasm) return null;
-  if (drones.length === 0 || grounds.length === 0) {
-    return new Int32Array(drones.length).fill(-1);
-  }
+  const nd = drones.length, ng = grounds.length;
+  if (nd === 0 || ng === 0) return new Int32Array(nd).fill(-1);
   // Pack drone arrays
-  const dx = new Float32Array(drones.length);
-  const dy = new Float32Array(drones.length);
-  const downer = new Uint8Array(drones.length);
-  for (let i = 0; i < drones.length; i++) {
-    dx[i] = drones[i].x;
-    dy[i] = drones[i].y;
-    downer[i] = ownerKey(drones[i].owner);
+  const dx = bufF32('hdx', nd), dy = bufF32('hdy', nd), downer = bufU8('hdo', nd);
+  for (let i = 0; i < nd; i++) {
+    dx[i] = drones[i].x; dy[i] = drones[i].y; downer[i] = ownerKey(drones[i].owner);
   }
   // Pack ground arrays
-  const gx = new Float32Array(grounds.length);
-  const gy = new Float32Array(grounds.length);
-  const gowner = new Uint8Array(grounds.length);
-  for (let i = 0; i < grounds.length; i++) {
-    gx[i] = grounds[i].x;
-    gy[i] = grounds[i].y;
-    gowner[i] = ownerKey(grounds[i].owner);
+  const gx = bufF32('hgx', ng), gy = bufF32('hgy', ng), gowner = bufU8('hgo', ng);
+  for (let i = 0; i < ng; i++) {
+    gx[i] = grounds[i].x; gy[i] = grounds[i].y; gowner[i] = ownerKey(grounds[i].owner);
   }
-  return wasm.drone_hunt_targets(dx, dy, downer, gx, gy, gowner, detectR2);
+  return wasm.drone_hunt_targets(
+    view(dx, nd), view(dy, nd), view(downer, nd),
+    view(gx, ng), view(gy, ng), view(gowner, ng), detectR2);
 }
 
 /** Apply per-tick tank fleet damage. Returns new units values aligned with
@@ -100,27 +116,21 @@ export function wasmDroneHuntTargets(drones, grounds, detectR2) {
 export function wasmTankDamageFleets(tankTurrets, groundFleets, tankRadiusSq, tankDpsPerTick) {
   if (!wasm) return null;
   if (tankTurrets.length === 0 || groundFleets.length === 0) return null;
-  const tx = new Float32Array(tankTurrets.length);
-  const ty = new Float32Array(tankTurrets.length);
-  const to = new Uint8Array(tankTurrets.length);
-  for (let i = 0; i < tankTurrets.length; i++) {
-    tx[i] = tankTurrets[i].x;
-    ty[i] = tankTurrets[i].y;
-    to[i] = ownerKey(tankTurrets[i].owner);
+  const nt = tankTurrets.length, nf = groundFleets.length;
+  const tx = bufF32('ttx', nt), ty = bufF32('tty', nt), to = bufU8('tto', nt);
+  for (let i = 0; i < nt; i++) {
+    tx[i] = tankTurrets[i].x; ty[i] = tankTurrets[i].y; to[i] = ownerKey(tankTurrets[i].owner);
   }
-  const fx = new Float32Array(groundFleets.length);
-  const fy = new Float32Array(groundFleets.length);
-  const fo = new Uint8Array(groundFleets.length);
-  const fu = new Float32Array(groundFleets.length);
-  const fd = new Uint8Array(groundFleets.length);
-  for (let i = 0; i < groundFleets.length; i++) {
-    fx[i] = groundFleets[i].x;
-    fy[i] = groundFleets[i].y;
-    fo[i] = ownerKey(groundFleets[i].owner);
-    fu[i] = groundFleets[i].units;
-    fd[i] = groundFleets[i]._dead ? 1 : 0;
+  const fx = bufF32('tfx', nf), fy = bufF32('tfy', nf), fo = bufU8('tfo', nf);
+  const fu = bufF32('tfu', nf), fd = bufU8('tfd', nf);
+  for (let i = 0; i < nf; i++) {
+    fx[i] = groundFleets[i].x; fy[i] = groundFleets[i].y; fo[i] = ownerKey(groundFleets[i].owner);
+    fu[i] = groundFleets[i].units; fd[i] = groundFleets[i]._dead ? 1 : 0;
   }
-  return wasm.tank_damage_fleets(tx, ty, to, fx, fy, fo, fu, fd, tankRadiusSq, tankDpsPerTick);
+  return wasm.tank_damage_fleets(
+    view(tx, nt), view(ty, nt), view(to, nt),
+    view(fx, nf), view(fy, nf), view(fo, nf), view(fu, nf), view(fd, nf),
+    tankRadiusSq, tankDpsPerTick);
 }
 
 /** Apply AA saturation damage across all drones for one sim tick. Returns a
@@ -131,24 +141,18 @@ export function wasmAaApplyDamage(aaTurrets, drones, aaRadiusSq, aaDps, dt) {
   if (!wasm) return null;
   if (aaTurrets.length === 0 || drones.length === 0) return null;
   // Pack AAs (only active ones — caller pre-filters)
-  const ax = new Float32Array(aaTurrets.length);
-  const ay = new Float32Array(aaTurrets.length);
-  const ao = new Uint8Array(aaTurrets.length);
-  for (let i = 0; i < aaTurrets.length; i++) {
-    ax[i] = aaTurrets[i].x;
-    ay[i] = aaTurrets[i].y;
-    ao[i] = ownerKey(aaTurrets[i].owner);
+  const na = aaTurrets.length, nd = drones.length;
+  const ax = bufF32('aax', na), ay = bufF32('aay', na), ao = bufU8('aao', na);
+  for (let i = 0; i < na; i++) {
+    ax[i] = aaTurrets[i].x; ay[i] = aaTurrets[i].y; ao[i] = ownerKey(aaTurrets[i].owner);
   }
   // Pack drones
-  const dx = new Float32Array(drones.length);
-  const dy = new Float32Array(drones.length);
-  const do_ = new Uint8Array(drones.length);
-  const dhp = new Float32Array(drones.length);
-  for (let i = 0; i < drones.length; i++) {
-    dx[i] = drones[i].x;
-    dy[i] = drones[i].y;
-    do_[i] = ownerKey(drones[i].owner);
-    dhp[i] = drones[i].hp;
+  const dx = bufF32('adx', nd), dy = bufF32('ady', nd), do_ = bufU8('ado', nd), dhp = bufF32('adhp', nd);
+  for (let i = 0; i < nd; i++) {
+    dx[i] = drones[i].x; dy[i] = drones[i].y; do_[i] = ownerKey(drones[i].owner); dhp[i] = drones[i].hp;
   }
-  return wasm.aa_apply_damage(ax, ay, ao, dx, dy, do_, dhp, aaRadiusSq, aaDps, dt);
+  return wasm.aa_apply_damage(
+    view(ax, na), view(ay, na), view(ao, na),
+    view(dx, nd), view(dy, nd), view(do_, nd), view(dhp, nd),
+    aaRadiusSq, aaDps, dt);
 }

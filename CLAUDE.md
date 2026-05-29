@@ -89,9 +89,17 @@ git checkout dev          # work always happens on dev
 Run the game (no build step, plain ES modules):
 
 ```bash
-python3 -m http.server 8765
+python3 serve.py            # no-cache dev server on :8765 (recommended)
 # browse http://localhost:8765/node-conquest.html
 ```
+
+Use `serve.py`, NOT `python3 -m http.server`. The stdlib server sends no
+`Cache-Control`, so Chrome heuristically caches ES modules and serves STALE
+`.js` after an edit — surfacing as bogus errors like *"module './x.js' does not
+provide an export named 'foo'"* (a fresh file importing from a cached old one).
+`serve.py` sends `Cache-Control: no-store`, so a plain reload always gets fresh
+modules — no Cmd+Shift+R needed. (If you already have a stale tab open, one hard
+refresh clears it; after that, normal reloads stay fresh.)
 
 Optional flags / hotkeys (see node-conquest.html help panel for the full
 list):

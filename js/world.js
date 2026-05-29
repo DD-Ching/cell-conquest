@@ -200,25 +200,63 @@ export function adjustHubSizes() {
 export function findPath(fromId, toId, traveler) {
   const { nodes, adj } = state;
   if (fromId === toId) return [fromId];
-  const distMap = new Map(nodes.map(n => [n.id, Infinity]));
+  // Binary min-heap Dijkstra. Was a sort-the-whole-queue-every-iteration loop
+  // (O(V²·logV)) plus an O(N) distMap pre-fill per call — fine for one fleet,
+  // but a perf hole when the uncapped clearBlockedRoads pathfinds to many
+  // clogged roads in one tick. The heap is O(E·logV); distMap is now lazy
+  // (missing ⇒ Infinity), dropping the per-call O(N) prefill. Tie-break is by
+  // insertion order (`seq`), reproducing the old stable-sort pop order EXACTLY,
+  // so chosen paths are identical — pure speedup, no gameplay change.
+  const distMap = new Map();
   const prev = new Map();
-  distMap.set(fromId, 0);
-  const queue = [{ id: fromId, d: 0 }];
   const visited = new Set();
-  while (queue.length) {
-    queue.sort((a, b) => a.d - b.d);
-    const { id } = queue.shift();
+  distMap.set(fromId, 0);
+
+  const heap = [];
+  let seq = 0;
+  const less = (a, b) => a.d < b.d || (a.d === b.d && a.seq < b.seq);
+  const hpush = (id, d) => {
+    heap.push({ id, d, seq: seq++ });
+    let i = heap.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (!less(heap[i], heap[p])) break;
+      const t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p;
+    }
+  };
+  const hpop = () => {
+    const top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      const n = heap.length;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = 2 * i + 2;
+        let s = i;
+        if (l < n && less(heap[l], heap[s])) s = l;
+        if (r < n && less(heap[r], heap[s])) s = r;
+        if (s === i) break;
+        const t = heap[s]; heap[s] = heap[i]; heap[i] = t; i = s;
+      }
+    }
+    return top;
+  };
+
+  hpush(fromId, 0);
+  while (heap.length) {
+    const { id } = hpop();
     if (id === toId) break;
-    if (visited.has(id)) continue;
+    if (visited.has(id)) continue;       // stale duplicate — already finalised
     visited.add(id);
+    const dId = distMap.get(id);
     for (const nb of adj.get(id)) {
       if (nb !== toId && !isAlly(nodes[nb].owner, traveler)) continue;
-      const w = dist(nodes[id], nodes[nb]);
-      const nd = distMap.get(id) + w;
-      if (nd < distMap.get(nb)) {
+      const nd = dId + dist(nodes[id], nodes[nb]);
+      const cur = distMap.get(nb);
+      if (cur === undefined || nd < cur) {
         distMap.set(nb, nd);
         prev.set(nb, id);
-        queue.push({ id: nb, d: nd });
+        hpush(nb, nd);
       }
     }
   }

@@ -17,7 +17,7 @@ import {
   DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
   DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE, AA_RADIUS,
 } from './config.js';
-import { dist } from './util.js';
+import { dist, inboundKey } from './util.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch, getEdge } from './engineering.js';
 
 // Pre-squared distances — comparisons use dx²+dy² < r² to avoid sqrt in the
@@ -152,7 +152,7 @@ function retargetDrone(drone) {
       // Respect the value-aware inbound cap so a whole salvo that just peeled
       // off a dead node spreads across fresh targets instead of re-dogpiling one.
       const cap = Math.min(NODE_DRONE_CAP, Math.max(1, Math.ceil(n.units / 45)));
-      if ((state.inboundDronesByTarget.get('node:' + n.id) || 0) >= cap) continue;
+      if ((state.inboundDronesByTarget.get(inboundKey('node', n.id)) || 0) >= cap) continue;
       const dx = n.x - drone.x, dy = n.y - drone.y;
       // Same value model as the launch picker: fat core >> husk, screened-by-AA
       // cores wait their turn.
@@ -423,7 +423,7 @@ export function updateDrones(dt) {
       // need = impacts to drop units below the 0.5 kill threshold (exact, so we
       // don't send a spare drone at near-multiples of the damage).
       const need = Math.max(1, Math.ceil((huntFleet.units - 0.5) / DRONE_HUNT_DMG));
-      const inb = (state.inboundDronesByTarget.get('fleet:' + huntFleet._id) || 0)
+      const inb = (state.inboundDronesByTarget.get(inboundKey('fleet', huntFleet._id)) || 0)
                 + (pledged.get(huntFleet._id) || 0);
       if (inb >= need) huntFleet = null;
     }
@@ -590,7 +590,7 @@ function pickDroneTargetsFor(t) {
       for (const et of bucket) {
         if (isAlly(et.owner, t.owner)) continue;
         if (et.pendingEngineer) continue;     // dirt placeholder, not a real target
-        if ((inbound.get('turret:' + et.id) || 0) >= TARGET_DRONE_CAP) continue;
+        if ((inbound.get(inboundKey('turret', et.id)) || 0) >= TARGET_DRONE_CAP) continue;
         const dx = et.x - t.x, dy = et.y - t.y;
         const d2 = dx * dx + dy * dy;
         if (d2 > 1500 * 1500) continue;
@@ -621,7 +621,7 @@ function pickDroneTargetsFor(t) {
     // Value-aware cap: ~1 drone per 45 units of garrison (each does 50 dmg), so
     // a small town isn't overkilled while a fat core can draw a proper share.
     const nodeCap = Math.min(NODE_DRONE_CAP, Math.max(1, Math.ceil(en.units / 45)));
-    if ((inbound.get('node:' + en.id) || 0) >= nodeCap) continue;
+    if ((inbound.get(inboundKey('node', en.id)) || 0) >= nodeCap) continue;
     const dx = en.x - t.x, dy = en.y - t.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > 1700 * 1700) continue;

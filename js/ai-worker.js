@@ -24,6 +24,7 @@
 // import is safe. We also skip NN owners (their tick stays main-thread).
 // =====================================================
 import { state } from './state.js';
+import { inboundKey } from './util.js';
 import { aiTick } from './ai.js';
 import { resetAlliances, setAlly } from './alliance.js';
 import { factionStats, AIS } from './factions.js';
@@ -108,7 +109,7 @@ function rebuildCaches() {
       bucket.push(f);
       state.droneCountByOwner.set(f.owner, (state.droneCountByOwner.get(f.owner) || 0) + 1);
       if (f.targetKind && f.targetId !== undefined) {
-        const tKey = f.targetKind + ':' + f.targetId;
+        const tKey = inboundKey(f.targetKind, f.targetId);
         state.inboundDronesByTarget.set(tKey, (state.inboundDronesByTarget.get(tKey) || 0) + 1);
       }
     } else {

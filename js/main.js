@@ -8,7 +8,7 @@ import {
   NET_PICK_R,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
-import { dist, formatTime, pointInPolygon } from './util.js';
+import { dist, formatTime, pointInPolygon, inboundKey } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import {
   placeNodes, placeTerrain, buildRoads, adjustHubSizes, findPath, nodeAt, roadAt, turretAt,
@@ -268,7 +268,7 @@ function simulate(dt, combatDt = dt) {
       state.droneCountByOwner.set(f.owner, (state.droneCountByOwner.get(f.owner) || 0) + 1);
       // Inbound-per-target tally so the target picker can avoid overkill.
       if (f.targetKind && f.targetId !== undefined) {
-        const tKey = f.targetKind + ':' + f.targetId;
+        const tKey = inboundKey(f.targetKind, f.targetId);
         state.inboundDronesByTarget.set(tKey, (state.inboundDronesByTarget.get(tKey) || 0) + 1);
       }
     } else {

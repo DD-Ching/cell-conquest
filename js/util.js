@@ -47,3 +47,13 @@ export function formatTime(s) {
   const ss = Math.floor(s % 60);
   return `${m.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
 }
+
+// Numeric key for state.inboundDronesByTarget — replaces the per-lookup string
+// concat ('node:'+id etc.) that ran in the hottest drone loops (per drone per
+// sub-step). (kind,id) → a unique number: id*4 + code keeps the three separate
+// id-spaces distinct (a fleet, a node, and a turret can each hold id 5), and an
+// unknown kind lands in its own slot rather than poisoning the map with NaN.
+const _INBOUND_CODE = { fleet: 0, node: 1, turret: 2 };
+export function inboundKey(kind, id) {
+  return id * 4 + (_INBOUND_CODE[kind] ?? 3);
+}

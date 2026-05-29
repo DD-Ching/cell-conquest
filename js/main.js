@@ -796,11 +796,12 @@ function attachInput() {
 const presetName = new URLSearchParams(location.search).get('preset');
 applyPreset(presetName);
 
-// Procedural map generation (opt-in). ?procgen=1 swaps in the geography-first
-// generator; ?seed=N pins a deterministic, replayable map (otherwise each new
-// game rolls a fresh seed). Default OFF → legacy world.js scatter+mesh.
+// Procedural map generation — now the DEFAULT (geography-first generator + the
+// tactical command-map art). ?procgen=0 falls back to the legacy world.js
+// scatter+mesh. ?seed=N pins a deterministic, replayable map (otherwise each new
+// game rolls a fresh seed).
 const _mapParams = new URLSearchParams(location.search);
-state.procgen = _mapParams.get('procgen') === '1';
+state.procgen = _mapParams.get('procgen') !== '0';
 const _seedParam = _mapParams.get('seed');
 state.seedPinned = _seedParam != null;
 if (state.seedPinned) state.worldSeed = parseInt(_seedParam, 10) >>> 0;

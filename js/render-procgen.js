@@ -1,80 +1,145 @@
 // =====================================================
-// Procgen terrain visuals — region tint + barrier (river/canyon) shapes.
+// Procgen tactical-map art — dark command-map ground layer + region labels.
 //
 // Only active when the geography-first generator ran (state.regions non-empty);
-// legacy maps draw nothing. Sits low in the world layers (just above the
-// faction turf wash, below the hex grid / roads / units) so it communicates the
-// map's macro structure without covering gameplay:
+// legacy maps draw nothing. Renders the macro "sci-fi reconnaissance map" look
+// BENEATH the faction turf wash / grid / roads / units:
 //
-//   • Region tint  — a soft, type-coloured radial wash at each region centre so
-//                    a city / mining / wasteland zone reads as a distinct place.
-//   • Barriers     — rivers/canyons drawn as wide terrain channels. Roads draw
-//                    LATER (on top), so the few bridge crossings visibly span
-//                    the channel while the empty corridor reads as a bottleneck.
+//   • A static, BAKED offscreen (rebuilt only when the world changes) carries
+//     everything that never moves: a dark command-map wash, muted per-region
+//     terrain tint, faint topographic contour rings, seeded crater landmarks,
+//     and the river/canyon channels. One drawImage per frame — cheap even at
+//     40× late game (the spec's "cache static layers").
+//   • Per frame we add only the region NAME labels (≤15 fillText), sized in
+//     screen space and faded out as you zoom in so they read as atmospheric
+//     sector names at the strategic overview.
 //
-// Cheap: ≤15 region gradients + 1–2 short polylines per frame, all culled-free
-// (tiny counts). Worker-safe — render.js calls this in both contexts; the
-// render snapshot ships state.regions + state.barriers.
+// Worker-safe: render.js calls this in both contexts; the render snapshot ships
+// state.regions / barriers / worldSeed, and the buffer uses OffscreenCanvas off
+// the main thread.
 //
-// TODO(procgen): biome area fills (wasteland/desert polygons), region boundary
-// outlines, mountain ranges as hatched polygons.
+// TODO(art pass 2): nodeType tactical icons, animated supply-route dashes,
+// holographic scanline overlay, mountain-ridge silhouettes.
 // =====================================================
 import { state } from './state.js';
+import { WORLD_W, WORLD_H } from './config.js';
+import { REGION_TINT, rgba } from './tactical-theme.js';
 
-// Neutral terrain hues per region archetype (NOT faction colours — these read
-// as ground, the faction turf wash sits beneath and owns the saturated colour).
-const REGION_TINT = {
-  city:            '#6f86b0',
-  industrial_zone: '#b07a3c',
-  mining_zone:     '#c79a3c',
-  military_base:   '#b05a52',
-  frontier:        '#9c8a63',
-  wasteland:       '#6b5048',
-  research_site:   '#3fa0a0',
-};
+const TEX_MAX = 1400;                  // baked map long side (px) — fixed, world-size independent
+let buf = null, bufW = 0, bufH = 0, scale = 1, bakedSig = null;
 
-function rgba(hex, a) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
+function makeCanvas(w, h) {
+  if (typeof document !== 'undefined') {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h; return c;
+  }
+  return new OffscreenCanvas(w, h);
 }
 
-/** Bottom-ish layer: region tint + terrain barriers. Call in WORLD space. */
-export function drawProcgen(ctx) {
-  const regions = state.regions;
-  if (!regions || !regions.length) return;     // legacy gen → nothing to draw
+// Small seeded PRNG so the decorative craters are deterministic per world.
+function mulberry32(a) {
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-  // Region tint — soft radial wash per region.
-  for (const r of regions) {
-    const col = REGION_TINT[r.type] || '#888888';
-    const g = ctx.createRadialGradient(r.x, r.y, 0, r.x, r.y, r.radius);
-    g.addColorStop(0,   rgba(col, 0.18));
-    g.addColorStop(0.6, rgba(col, 0.10));   // flatter core so the zone reads, soft rim
+function sig() {
+  return `${state.worldSeed}|${state.regions.length}|${WORLD_W}x${WORLD_H}`;
+}
+
+/** Bake the static tactical-map ground into the offscreen buffer (world coords
+ *  via a scale transform, so all sizes below are in WORLD px). */
+function bakeTacticalMap() {
+  scale = TEX_MAX / Math.max(WORLD_W, WORLD_H);
+  bufW = Math.max(1, Math.round(WORLD_W * scale));
+  bufH = Math.max(1, Math.round(WORLD_H * scale));
+  buf = makeCanvas(bufW, bufH);
+  const c = buf.getContext('2d');
+  c.clearRect(0, 0, bufW, bufH);
+  c.save();
+  c.scale(scale, scale);
+
+  // 1) Command-map wash — a cool dark veil over the rust terrain for the
+  //    serious "satellite recon" mood.
+  c.fillStyle = 'rgba(10, 8, 14, 0.30)';
+  c.fillRect(0, 0, WORLD_W, WORLD_H);
+
+  // 2) Region zones — muted tint + faint topographic contour rings so each
+  //    region reads as a controlled sector with elevation, not a flat patch.
+  for (const r of state.regions) {
+    const col = REGION_TINT[r.type] || '#6a6a78';
+    const g = c.createRadialGradient(r.x, r.y, 0, r.x, r.y, r.radius);
+    g.addColorStop(0,   rgba(col, 0.16));
+    g.addColorStop(0.55, rgba(col, 0.07));
     g.addColorStop(1,   rgba(col, 0));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
-    ctx.fill();
+    c.fillStyle = g;
+    c.beginPath(); c.arc(r.x, r.y, r.radius, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = rgba(col, 0.10);
+    c.lineWidth = 2.5;                        // world px (ctx is scaled to world coords)
+    for (let k = 1; k <= 3; k++) {
+      c.beginPath(); c.arc(r.x, r.y, r.radius * (0.32 + 0.22 * k), 0, Math.PI * 2); c.stroke();
+    }
   }
 
-  // Barriers — rivers/canyons as wide terrain channels.
+  // 3) Crater landmarks — seeded, scattered. Dark bowl + faint warm rim.
+  const rng = mulberry32(((state.worldSeed || 1) ^ 0x9e3779b9) >>> 0);
+  const craters = Math.round((WORLD_W * WORLD_H) / 9e6);
+  for (let i = 0; i < craters; i++) {
+    const x = rng() * WORLD_W, y = rng() * WORLD_H, rr = 120 + rng() * 280;
+    c.fillStyle = 'rgba(8, 5, 4, 0.30)';
+    c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(190, 135, 90, 0.10)';
+    c.lineWidth = 3;
+    c.beginPath(); c.arc(x, y, rr * 0.95, 0, Math.PI * 2); c.stroke();
+  }
+
+  // 4) Barriers — rivers/canyons as wide terrain channels (now baked).
   for (const bar of state.barriers) {
     const p = bar.points;
     if (!p || p.length < 2) continue;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(p[0].x, p[0].y);
-    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath();
+    c.moveTo(p[0].x, p[0].y);
+    for (let i = 1; i < p.length; i++) c.lineTo(p[i].x, p[i].y);
     const river = bar.kind === 'river';
-    ctx.strokeStyle = river ? 'rgba(38, 66, 104, 0.45)' : 'rgba(28, 17, 11, 0.55)';
-    ctx.lineWidth = 92;
-    ctx.stroke();
-    ctx.strokeStyle = river ? 'rgba(70, 120, 170, 0.55)' : 'rgba(14, 9, 7, 0.70)';
-    ctx.lineWidth = 46;
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-    ctx.lineJoin = 'miter';
+    c.strokeStyle = river ? 'rgba(34, 60, 96, 0.50)' : 'rgba(24, 15, 10, 0.60)';
+    c.lineWidth = 100; c.stroke();
+    c.strokeStyle = river ? 'rgba(66, 116, 166, 0.55)' : 'rgba(12, 8, 6, 0.75)';
+    c.lineWidth = 44; c.stroke();
+    c.lineCap = 'butt'; c.lineJoin = 'miter';
   }
+
+  c.restore();
+  bakedSig = sig();
+}
+
+/** Bottom-layer tactical ground + sector-name labels. Call in WORLD space. */
+export function drawProcgen(ctx, zoom) {
+  if (!state.regions || !state.regions.length) return;   // legacy gen → nothing
+  if (bakedSig !== sig() || !buf) bakeTacticalMap();
+  ctx.drawImage(buf, 0, 0, WORLD_W, WORLD_H);
+
+  // Sector names — faint, tracked, uppercase; fade out as you zoom in so they
+  // stay an overview flourish, not clutter when fighting up close.
+  const a = Math.max(0, Math.min(0.42, (0.55 - zoom) / 0.5));
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = (4 / zoom) + 'px';
+  for (const r of state.regions) {
+    if (!r.name) continue;
+    const f = 26 / zoom;
+    ctx.font = `600 ${f}px -apple-system, system-ui, sans-serif`;
+    const txt = r.name.toUpperCase();
+    ctx.lineWidth = 4 / zoom;
+    ctx.strokeStyle = `rgba(0, 0, 0, ${a * 0.85})`;
+    ctx.strokeText(txt, r.x, r.y);
+    ctx.fillStyle = `rgba(216, 208, 192, ${a})`;
+    ctx.fillText(txt, r.x, r.y);
+  }
+  ctx.restore();
 }

@@ -32,6 +32,7 @@
 import { state } from './state.js';
 import { COLOR } from './factions.js';
 import { dist } from './util.js';
+import { darken } from './tactical-theme.js';
 import {
   WORLD_W, WORLD_H, TERRITORY_TEX_MAX, TERRITORY_MAX_ALPHA,
   TERRITORY_FADE_START, TERRITORY_FADE_FULL,
@@ -89,36 +90,46 @@ function bake() {
   }
   const medLen = nLen ? sumLen / nLen : 400;
 
-  // Connectors first (under the discs).
-  bufCtx.lineWidth = Math.max(1, medLen * TERRITORY_EDGE_W_MUL * scale);
-  for (const [id, nbrs] of state.adj) {
-    const a = state.nodes[id];
-    if (!a || a.owner === 'neutral') continue;
-    const col = COLOR[a.owner];
-    if (!col) continue;
-    for (const nb of nbrs) {
-      if (nb <= id) continue;
-      const b = state.nodes[nb];
-      if (!b || b.owner !== a.owner) continue;
-      bufCtx.strokeStyle = col;
-      bufCtx.beginPath();
-      bufCtx.moveTo(a.x * scale, a.y * scale);
-      bufCtx.lineTo(b.x * scale, b.y * scale);
-      bufCtx.stroke();
-    }
-  }
+  // Per-owner SECTOR pass: draw a bright, slightly-larger border, then overpaint
+  // a darker, smaller fill. Within a faction the fills cover internal seams,
+  // leaving colour only on the OUTER frontline → a controlled sector with a
+  // glowing border (the upscale softens it into a frontline) instead of a soft
+  // uniform blob.
+  const edgeW  = Math.max(2, medLen * TERRITORY_EDGE_W_MUL * scale);
+  const border = Math.max(2, edgeW * 0.22);
+  const owners = new Set();
+  for (const n of state.nodes) if (n && n.owner !== 'neutral' && COLOR[n.owner]) owners.add(n.owner);
 
-  // Discs at each owned node.
-  for (const n of state.nodes) {
-    if (!n || n.owner === 'neutral') continue;
-    const col = COLOR[n.owner];
-    if (!col) continue;
-    bufCtx.fillStyle = col;
-    bufCtx.beginPath();
-    bufCtx.arc(n.x * scale, n.y * scale,
-               Math.max(1, (medLen * TERRITORY_NODE_R_MUL + n.size) * scale),
-               0, Math.PI * 2);
-    bufCtx.fill();
+  for (const owner of owners) {
+    const col = COLOR[owner];
+    const dk  = darken(col, 0.55);
+    for (let pass = 0; pass < 2; pass++) {
+      const isBorder = pass === 0;
+      bufCtx.strokeStyle = bufCtx.fillStyle = isBorder ? col : dk;
+      bufCtx.lineWidth = isBorder ? edgeW + border * 2 : edgeW;
+      for (const [id, nbrs] of state.adj) {           // connectors
+        const a = state.nodes[id];
+        if (!a || a.owner !== owner) continue;
+        for (const nb of nbrs) {
+          if (nb <= id) continue;
+          const b = state.nodes[nb];
+          if (!b || b.owner !== owner) continue;
+          bufCtx.beginPath();
+          bufCtx.moveTo(a.x * scale, a.y * scale);
+          bufCtx.lineTo(b.x * scale, b.y * scale);
+          bufCtx.stroke();
+        }
+      }
+      const grow = isBorder ? border : 0;             // discs
+      for (const n of state.nodes) {
+        if (!n || n.owner !== owner) continue;
+        bufCtx.beginPath();
+        bufCtx.arc(n.x * scale, n.y * scale,
+                   Math.max(1, (medLen * TERRITORY_NODE_R_MUL + n.size) * scale + grow),
+                   0, Math.PI * 2);
+        bufCtx.fill();
+      }
+    }
   }
 }
 

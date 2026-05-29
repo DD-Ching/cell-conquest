@@ -35,6 +35,7 @@ import {
   PROCGEN_REGIONS_MIN, PROCGEN_REGIONS_MAX,
 } from './config.js';
 import { generateRoads, applyBarrierChokepoints } from './worldgen-roads.js';
+import { makeRegionName } from './tactical-theme.js';
 
 const NODE_MARGIN = 100;
 const BASE_GAP    = 50;            // matches world.js rim spacing
@@ -110,6 +111,7 @@ function generateRegions(rng) {
     Math.floor(rng() * (PROCGEN_REGIONS_MAX - PROCGEN_REGIONS_MIN + 1));
   const baseR = Math.sqrt((WORLD_W * WORLD_H) / count) * 0.6;
   const regions = [];
+  const usedNames = new Set();
   for (let i = 0; i < count; i++) {
     let best = null, bestScore = -1;
     for (let k = 0; k < 14; k++) {                 // 14 candidates, keep the most isolated
@@ -124,6 +126,7 @@ function generateRegions(rng) {
       id: i, x: best.x, y: best.y, type: t.type,
       radius: baseR * t.radiusMul, density: t.density, sizeMul: t.sizeMul,
       value: t.value, danger: t.danger, quota: 0,
+      name: makeRegionName(rng, usedNames),       // "Ash Basin" etc. — map flavour
     });
   }
   return regions;

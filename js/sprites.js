@@ -160,17 +160,25 @@ export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = n
     ctx.lineWidth = 3.5 * widthMul;
     ctx.stroke();
   }
-  // Road-class accent (procgen): a warm median dash marks inter-region highways;
-  // a cool steel deck marks bridges/passes so chokepoints read at a glance.
+  // Road-class accent (procgen). Highways read as glowing arteries (wide soft
+  // amber underlay + bright dashed core); bridges/passes as bright steel spans —
+  // so the supply hierarchy + chokepoints pop. Locals keep the base look. Cheap:
+  // only the ~30 highway/bridge roads take the extra strokes (no shadowBlur).
   if (kind === 'highway') {
-    ctx.strokeStyle = 'rgba(255, 208, 120, 0.5)';
-    ctx.lineWidth = 1.6 * widthMul;
-    ctx.setLineDash([14, 10]);
+    ctx.strokeStyle = 'rgba(255, 188, 92, 0.16)';     // soft glow halo
+    ctx.lineWidth = 6.5 * widthMul;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 216, 132, 0.72)';    // bright dashed core
+    ctx.lineWidth = 1.8 * widthMul;
+    ctx.setLineDash([16, 11]);
     ctx.stroke();
     ctx.setLineDash([]);
   } else if (kind === 'bridge') {
-    ctx.strokeStyle = 'rgba(150, 170, 200, 0.85)';
-    ctx.lineWidth = 3 * widthMul;
+    ctx.strokeStyle = 'rgba(150, 178, 214, 0.55)';    // steel glow
+    ctx.lineWidth = 5 * widthMul;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(220, 236, 255, 0.85)';    // bright deck
+    ctx.lineWidth = 1.6 * widthMul;
     ctx.stroke();
   }
   ctx.lineCap = 'butt';

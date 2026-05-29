@@ -73,6 +73,7 @@ function hydrate(snap) {
   state.edgeData  = new Map(snap.edgeData);
   state.regions   = snap.regions  || [];   // procgen region tint
   state.barriers  = snap.barriers || [];   // procgen river/canyon shapes
+  state.worldSeed = snap.worldSeed || 0;   // procgen bake-cache key
 
   state.particles = snap.particles;
   state.dust      = snap.dust;

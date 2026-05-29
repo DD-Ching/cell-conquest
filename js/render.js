@@ -85,8 +85,8 @@ export function render() {
   ctx.translate(-state.cameraX, -state.cameraY);
 
   drawTerrain(ctx, zoom);
-  drawTerritory(ctx);                  // faction turf wash — bottom-most, below grid/units
-  drawProcgen(ctx);                    // procgen region tint + river/canyon barriers (below grid/roads)
+  drawProcgen(ctx, zoom);              // procgen tactical ground: dark wash + region zones + craters + barriers + sector labels
+  drawTerritory(ctx);                  // faction turf wash on top of the dark field
   drawHexGrid(ctx, zoom);              // faint tactical-map watermark over terrain
   drawScorches(ctx, zoom, now);
   drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in

@@ -325,6 +325,13 @@ export function updateDrones(dt) {
   // holding-ring formation — rebuilt once per tick, read by loiterDrone.
   rebuildLoiterCenters();
 
+  // Anti-overkill bookkeeping. `inboundDronesByTarget` (built in simulate) is a
+  // tick-TOP snapshot of how many drones are already committed to each target.
+  // `pledged` accumulates commitments made DURING this tick's drone loop, so a
+  // burst of idle drones near one convoy can't ALL dive it in the same tick
+  // before the snapshot would catch up. Effective inbound = snapshot + pledged.
+  const pledged = new Map();   // fleetId -> drones that committed this tick
+
   // ---- Batched wasm hunt scan (with JS fallback) ----
   // When wasm is loaded, gather all live drones + transit ground fleets
   // once and ship them to Rust in a single call. Rust returns an Int32
@@ -406,6 +413,24 @@ export function updateDrones(dt) {
       }
     }
 
+    // Anti-overkill: don't pile onto a ground fleet that already has enough
+    // drones inbound to destroy it. `need` = impacts to drop it (DRONE_HUNT_DMG
+    // each); `inb` = drones committed in prior ticks (snapshot) + this tick
+    // (pledged). A drone ALREADY locked on this fleet is exempt — it's one of
+    // the needed attackers, not an extra. Saturated → drop the hunt pick so the
+    // drone keeps its current job / loiters and finds other work instead of
+    // wasting itself on a corpse-in-progress. (Node targets are already capped
+    // in retargetDrone; this brings ground-fleet hunting to parity.)
+    if (huntFleet && huntFleet._id !== f.targetId) {
+      // need = impacts to drop units below the 0.5 kill threshold (exact, so we
+      // don't send a spare drone at near-multiples of the damage).
+      const need = Math.max(1, Math.ceil((huntFleet.units - 0.5) / DRONE_HUNT_DMG));
+      const inb = (state.inboundDronesByTarget.get('fleet:' + huntFleet._id) || 0)
+                + (pledged.get(huntFleet._id) || 0);
+      if (inb >= need) huntFleet = null;
+    }
+    const _prevKind = f.targetKind, _prevTid = f.targetId;
+
     // Target maintenance
     if (f.targetKind === 'fleet') {
       const locked = fleetById.get(f.targetId);
@@ -461,6 +486,13 @@ export function updateDrones(dt) {
           f.tx = huntFleet.x; f.ty = huntFleet.y;
         }
       }
+    }
+
+    // Record a fresh fleet commitment so later drones THIS tick see it (closes
+    // the same-tick stampede the snapshot count alone can't catch). Only counts
+    // a NEW lock — a drone that was already on this fleet is in the snapshot.
+    if (f.targetKind === 'fleet' && (_prevKind !== 'fleet' || _prevTid !== f.targetId)) {
+      pledged.set(f.targetId, (pledged.get(f.targetId) || 0) + 1);
     }
 
     // Reaching here means the drone has a live target and resumes its run —

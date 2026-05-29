@@ -1,0 +1,231 @@
+// =====================================================
+// Turret sprites — AA / tank / artillery / drone-factory, plus their idle
+// animations. Split out of sprites.js (which kept the asset loader and the
+// road/troop/drone/engineer primitives) once that file crossed the 500-line
+// cap.
+//
+// Same contract as the rest of sprites.js: these draw functions depend only
+// on (ctx, x, y, owner, active, zoom, ...) — never on game state — and the
+// faction tint comes in via the owner color. The PNG-asset overlay path is
+// shared with sprites.js through the `Asset` registry and `blitSprite`
+// helper imported below: `Asset` is the SAME live object loadAssets() mutates
+// (its turret_* slots flip ready=true asynchronously), and blitSprite blits
+// the cached luminance-preserving tint. No assets → programmatic primitives.
+//
+// Re-exported from sprites.js, so importers keep importing from './sprites.js'.
+// =====================================================
+import { COLOR } from './factions.js';
+import { Asset, blitSprite } from './sprites.js';
+
+const TAU = Math.PI * 2;
+
+// =====================================================
+// Turret: anti-air — radar dish + rotating antenna
+// =====================================================
+export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
+  const c = active ? COLOR[owner] : '#7a6a55';
+
+  if (Asset.turret_aa?.ready) {
+    ctx.save();
+    ctx.translate(x, y);
+    blitSprite(ctx, Asset.turret_aa, 51, c);
+    ctx.restore();
+    return;
+  }
+
+  // Base
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 24,    0, TAU); ctx.fill();
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(x, y, 20.25, 0, TAU); ctx.fill();
+  // Idle brown glow ring when inactive — signals "powering up / dormant"
+  if (!active) {
+    ctx.strokeStyle = 'rgba(120, 80, 45, 0.35)';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.beginPath(); ctx.arc(x, y, 16, 0, TAU); ctx.stroke();
+  }
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 10.5,  0, TAU); ctx.fill();
+  // Rotating dish + antenna + sweep line (sweep lags dish by ~30°)
+  const rot = active ? (time / 700) % TAU : 0;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.fillStyle = c;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.arc(0, 0, 16.5, -0.6, 0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#ffd066';
+  ctx.lineWidth = 2 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(19.5, 0);
+  ctx.stroke();
+  // Sweep line — lagging radial pulse, brighter when active
+  ctx.rotate(-0.524);
+  ctx.strokeStyle = active ? 'rgba(255, 240, 200, 0.30)' : 'rgba(180, 150, 110, 0.12)';
+  ctx.lineWidth = 1.2 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(16.5, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// =====================================================
+// Turret: tank — chassis + turret + cannon
+// `aimAngle === 0` is the caller's "no live target" sentinel (initial
+// state / placement preview). In that case we add a gentle ±3° idle
+// sway so the barrel doesn't look frozen.
+// =====================================================
+export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, time = 0) {
+  const c = active ? COLOR[owner] : '#7a6a55';
+
+  if (Asset.turret_tank?.ready) {
+    ctx.save();
+    ctx.translate(x, y);
+    blitSprite(ctx, Asset.turret_tank, 57, c);
+    ctx.restore();
+    return;
+  }
+
+  // Idle sway only when no target — locked-on barrel must point at enemy.
+  // Compute locally so we don't mutate caller args (rendering side-effect).
+  const drawAngle = (aimAngle === 0)
+    ? 0.05 * Math.sin(time / 1300)
+    : aimAngle;
+
+  // Chassis (square base with tread highlights)
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(x - 24,   y - 19.5, 48, 39);
+  ctx.fillStyle = c;
+  ctx.fillRect(x - 22.5, y - 18,   45, 36);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(x - 24,   y - 19.5, 48, 6);
+  ctx.fillRect(x - 24,   y + 13.5, 48, 6);
+  // Turret + cannon
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(drawAngle);
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(0, 0, 13.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(0, 0, 10.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(6, -3.45, 28.5, 6.9);
+  ctx.fillStyle = c;
+  ctx.fillRect(6, -1.5,  27,   3);
+  ctx.restore();
+}
+
+// =====================================================
+// Turret: artillery — long barrel cannon on wheeled carriage
+// =====================================================
+export function drawArtilleryTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, fireFlash = 0) {
+  const c = active ? COLOR[owner] : '#7a6a55';
+
+  if (Asset.turret_artillery?.ready) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(aimAngle);
+    blitSprite(ctx, Asset.turret_artillery, 66, c);
+    ctx.restore();
+    return;
+  }
+
+  // Wheeled carriage trails (left + right wheels)
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(x - 28.5, y - 19.5, 7.5, 40.5);
+  ctx.fillRect(x + 21,   y - 19.5, 7.5, 40.5);
+  // Carriage body — tilt ~2° when aim is steep to suggest elevation
+  const sinAim = Math.sin(aimAngle);
+  const steep = Math.abs(sinAim) > 0.7;
+  if (steep) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sinAim > 0 ? 0.035 : -0.035);
+    ctx.translate(-x, -y);
+  }
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 24,    0, TAU); ctx.fill();
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(x, y, 20.25, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#1a1206';
+  ctx.beginPath(); ctx.arc(x, y, 8.25, 0, TAU); ctx.fill();
+  if (steep) ctx.restore();
+  // Long barrel (rotates to aim)
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(aimAngle);
+  // Recoil flash kick — barrel slides back briefly after firing
+  const recoil = fireFlash > 0 ? -fireFlash * 7.5 : 0;
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(recoil,        -6,    52.5, 12);
+  ctx.fillStyle = c;
+  ctx.fillRect(recoil + 1.5,  -3.75, 49.5, 7.5);
+  // Muzzle brake
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(recoil + 48, -8.25, 7.5, 16.5);
+  // Muzzle flash
+  if (fireFlash > 0.15) {
+    ctx.fillStyle = `rgba(255, 230, 130, ${fireFlash})`;
+    ctx.beginPath();
+    ctx.arc(recoil + 60, 0, 8.25 * fireFlash, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// =====================================================
+// Turret: drone factory — hangar with door
+// =====================================================
+export function drawFactoryTurret(ctx, x, y, owner, active, zoom, time, producing = false) {
+  const c = active ? COLOR[owner] : '#7a6a55';
+
+  if (Asset.turret_factory?.ready) {
+    ctx.save();
+    ctx.translate(x, y);
+    blitSprite(ctx, Asset.turret_factory, 57, c);
+    ctx.restore();
+    return;
+  }
+
+  // Building outline
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(x - 24,   y - 24,   48, 48);
+  ctx.fillStyle = c;
+  ctx.fillRect(x - 22.5, y - 22.5, 45, 45);
+  // Hangar door (front) — when producing, door cycles open/closed and a
+  // warm interior glow reads through. When idle, door stays closed.
+  const doorTop = y - 19.5;
+  const doorMaxH = 13.5;
+  if (producing) {
+    // Bright interior shows through the opening
+    ctx.fillStyle = 'rgba(255, 180, 80, 0.6)';
+    ctx.fillRect(x - 13.5, doorTop, 28.5, doorMaxH);
+    // Door height oscillates — when doorH is small, the opening is large
+    const doorH = doorMaxH * (0.5 + 0.5 * Math.sin(time / 400));
+    ctx.fillStyle = '#0a0604';
+    ctx.fillRect(x - 13.5, doorTop + (doorMaxH - doorH), 28.5, doorH);
+  } else {
+    ctx.fillStyle = '#0a0604';
+    ctx.fillRect(x - 13.5, doorTop, 28.5, doorMaxH);
+  }
+  // Roof corrugation
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  for (let i = -18; i <= 16.5; i += 7.5) {
+    ctx.fillRect(x + i, y - 1.5, 2.1, 21);
+  }
+  // Antenna
+  ctx.strokeStyle = '#3a2a18';
+  ctx.lineWidth = 2 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(x + 16.5, y - 19.5); ctx.lineTo(x + 22.5, y - 30);
+  ctx.stroke();
+  // Status light — pulses while active, brighter when actively producing
+  const pulse = 0.6 + 0.4 * Math.sin(time / 200);
+  if (active) {
+    ctx.fillStyle = producing ? `rgba(155, 255, 125, ${pulse})` : `rgba(255, 200, 90, ${pulse})`;
+    ctx.beginPath(); ctx.arc(x + 16.5, y - 30, 3.6, 0, TAU); ctx.fill();
+  }
+}

@@ -235,9 +235,14 @@ function simulate(dt, combatDt = dt) {
   // in the map; consumers gate on falsy result, which is the same check
   // they already did before.)
   state.turretById.clear();
-  state.turretsByOwner.clear();
-  state.turretsByType.clear();
-  state.turretGrid.clear();
+  // Reuse bucket arrays across rebuilds — zero each instead of dropping it
+  // (.clear() churns GC ×20/frame at fast-forward). Contents are still rebuilt
+  // every sub-step so freshness is identical; an empty bucket that lingers for a
+  // now-unoccupied owner/type/cell reads the same as an absent key — every
+  // consumer uses `.get()||[]` or guards n===0 (see drones.rebuildLoiterCenters).
+  for (const b of state.turretsByOwner.values()) b.length = 0;
+  for (const b of state.turretsByType.values()) b.length = 0;
+  for (const b of state.turretGrid.values()) b.length = 0;
   const GRID_CELL = 250;
   for (const t of state.turrets) {
     state.turretById.set(t.id, t);
@@ -253,10 +258,11 @@ function simulate(dt, combatDt = dt) {
     gBucket.push(t);
   }
   state.fleetById.clear();
-  state.droneGrid.clear();
-  state.groundFleetGrid.clear();
   state.droneCountByOwner.clear();
   state.inboundDronesByTarget.clear();
+  // Bucket maps: zero-and-reuse the arrays (see turret grids above).
+  for (const b of state.droneGrid.values()) b.length = 0;
+  for (const b of state.groundFleetGrid.values()) b.length = 0;
   for (const f of state.fleets) {
     state.fleetById.set(f._id, f);
     const fKey = Math.floor(f.x / GRID_CELL) * 10000 + Math.floor(f.y / GRID_CELL);

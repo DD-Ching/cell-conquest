@@ -386,6 +386,16 @@ function loop() {
     // run every step. Same DPS × game-time, ~half the combat work at 10×+.
     const combatDecimate = subSteps >= 4 ? 2 : 1;
     const simT0 = performance.now();
+    // Cosmetic VFX advance ONCE per frame, BEFORE the sub-steps spawn this
+    // frame's new puffs — so every fresh particle / tracer / scorch still
+    // renders at least one frame at full brightness (even at 40×, where gameDt
+    // can exceed a puff's sub-second lifetime) before it ages next frame.
+    // Linear aging makes one gameDt step identical to N subDt steps, and VFX are
+    // never read by sim / AI / pathing. Previously these ran INSIDE the loop —
+    // up to 20×/frame at fast-forward — for zero visual benefit.
+    updateParticles(gameDt);
+    updateTracers(gameDt);
+    updateScorches(gameDt);
     for (let s = 0; s < subSteps; s++) {
       const runCombat = (s % combatDecimate === 0);
       simulate(subDt, runCombat ? subDt * combatDecimate : 0);
@@ -397,9 +407,6 @@ function loop() {
       for (const ai of AIS) {
         if (aiBridge.shouldMainThreadTick(ai)) aiTick(ai, subDt);
       }
-      updateParticles(subDt);
-      updateTracers(subDt);
-      updateScorches(subDt);
     }
     state._perfSimMs[state._perfIdx] = performance.now() - simT0;
     state.elapsed += gameDt;

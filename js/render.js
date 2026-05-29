@@ -8,9 +8,10 @@
 //                            heat haze, vignette
 //   render-territory.js    bottom-layer faction turf wash (fades in late-game)
 //   render-procgen.js      procgen region tint + river/canyon barrier shapes
-//   render-world.js        roads, nets, wrecks, shells, range rings, fleet trails,
-//                            placement preview, salvo marker, drag preview, minimap,
-//                            hold-fire banner
+//   render-world.js        roads, nets, wrecks, shells, range rings, fleet trails
+//   render-overlays.js     placement preview, salvo marker, hold-fire banner,
+//                            home indicators, drag preview
+//   render-minimap.js      bottom-right strategic minimap
 //   render-entities.js     nodes, turrets, troop fleets, drone fleets, top-layer labels
 //
 // Anything visible on screen lives in one of those files. This file is
@@ -32,9 +33,12 @@ import {
 import {
   drawRoads, drawWreckPiles, drawNets, drawShells,
   drawFleetTrails, drawRangeRings,
-  drawPlacementPreview, drawSalvoMarker, drawHoldFireBanner,
-  drawDragPreview, renderMinimap, drawHomeIndicators,
 } from './render-world.js';
+import {
+  drawPlacementPreview, drawSalvoMarker, drawHoldFireBanner,
+  drawDragPreview, drawHomeIndicators,
+} from './render-overlays.js';
+import { renderMinimap } from './render-minimap.js';
 import {
   drawNodes, drawTurrets, drawTroopFleets, drawDroneFleets,
   drawNodeLabelsOnTop,

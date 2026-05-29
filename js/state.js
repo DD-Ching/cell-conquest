@@ -109,8 +109,8 @@ export const state = {
                              //               drone/fleet death cleanups)
   droneCountByOwner: new Map(), // owner -> # currently airborne drones.
                              //   Read by factory tick to gate drone spawn at
-                             //   DRONE_CAP_PER_FACTION. Rebuilt per sim tick
-                             //   alongside the other entity buckets.
+                             //   DRONE_CAP_PER_FACTORY × (owner's factory count).
+                             //   Rebuilt per sim tick alongside the other buckets.
   inboundDronesByTarget: new Map(), // `${kind}:${id}` -> count of drones whose
                              //   current target is this entity. Stops factories
                              //   from piling MORE drones on a target that already

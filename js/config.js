@@ -95,7 +95,7 @@ export const AA_DPS = 15;
 
 export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;
-export const DF_PRODUCTION_T = 12;      // sec between drone spawns
+export const DF_PRODUCTION_T = 5;       // sec between drone spawns (fast — many factories build a real swarm)
 export const FACTORY_MAX_STOCKPILE = 20; // max held drones per factory while Hold-Fire is on
                                          // (high so both the player's alpha-strike and the AI's
                                          // stalemate stockpile can amass a real wall of drones)
@@ -135,12 +135,17 @@ export const ARTILLERY_SHELL_FLIGHT  = 0.7;   // sec of flight before detonation
 export const DRONE_HP_AIR = 30;
 export const DRONE_SPEED = 130;
 export const DRONE_DAMAGE = 50;
-// Mid-late game accumulation controls. Without these, factories keep producing
-// across a 90-min match and the air gets clogged with thousands of in-flight
-// drones, dragging perf down for everyone. With both: each faction's "active
-// drone fleet" stays bounded, individual drones get culled if they wander too
-// long without engaging.
-export const DRONE_CAP_PER_FACTION = 150;     // soft cap — factories skip prod when met
+// Drone swarm sizing. The airborne ceiling scales with how many factories you
+// build (cap = DRONE_CAP_PER_FACTORY × your factory count), so factory
+// investment ALWAYS buys a bigger swarm — there is NO flat per-faction wall.
+// (The old DRONE_CAP_PER_FACTION=150 was a flat ceiling: 1 factory or 20, you
+// hit 150 and stopped — extra factories were pointless. Removed.) The per-
+// factory value is generous so it only acts as a runaway-FPS safety valve at
+// extreme scale, never a normal-play handicap. DRONE_MAX_LIFETIME still culls
+// drones that wander too long without engaging.
+export const DRONE_CAP_PER_FACTORY = 50;      // airborne ceiling PER owned factory
+export const DRONE_WAVE_SIZE       = 4;       // factory accumulates this many, then
+                                              // launches them together → rolling waves
 export const DRONE_MAX_LIFETIME    = 360;     // game-seconds; expires past this
 // Drones now hunt enemy ground fleets they detect in flight.
 export const DRONE_DETECT_R = 110;      // scan radius for nearby ground fleets

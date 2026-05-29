@@ -24,7 +24,7 @@ import {
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
   WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
-  DRONE_CAP_PER_FACTION,
+  DRONE_CAP_PER_FACTORY, DRONE_WAVE_SIZE,
   TRACER_CAP,
 } from './config.js';
 import { launchOneDroneFrom } from './drones.js';
@@ -478,6 +478,14 @@ export function updateScorches(dt) {
 // Buildings tick — construction, factory production, decay, dead-turret cleanup
 // =====================================================
 export function updateBuildings(dt) {
+  // Per-owner active-factory count — the drone ceiling scales with it, so the
+  // more factories you own the bigger your swarm (no flat per-faction wall).
+  // One cheap pre-pass; reused by every factory's launch gate below.
+  const factoryCount = new Map();
+  for (const t of state.turrets) {
+    if (t.type === 'factory' && t.active) factoryCount.set(t.owner, (factoryCount.get(t.owner) || 0) + 1);
+  }
+
   for (let i = state.turrets.length - 1; i >= 0; i--) {
     const t = state.turrets[i];
     if (t.hp <= 0) {
@@ -504,19 +512,24 @@ export function updateBuildings(dt) {
           const stockpiling = (t.owner === 'player')
             ? state.holdFire
             : !!state.aiHoldFire[t.owner];
-          if (stockpiling && t.dronesReady < FACTORY_MAX_STOCKPILE) {
-            t.dronesReady += 1;
+          if (stockpiling) {
+            // Hold-Fire: amass for a player/AI alpha-strike (released elsewhere).
+            if (t.dronesReady < FACTORY_MAX_STOCKPILE) t.dronesReady += 1;
           } else {
-            // Not stockpiling (or stockpile full): trickle a drone out. Soft cap:
-            // skip if this faction already has DRONE_CAP_PER_FACTION airborne.
-            // Crucially, a successful launch DRAINS any held stockpile — so a
-            // salvo remainder (drones with no target at release time) or a
-            // leftover never sits stuck on the factory; it trickles out the
-            // moment Hold-Fire is off.
-            const live = state.droneCountByOwner.get(t.owner) || 0;
-            if (live < DRONE_CAP_PER_FACTION) {
-              const launched = launchOneDroneFrom(t);
-              if (launched && t.dronesReady > 0) t.dronesReady -= 1;
+            // Auto-WAVE: bank a drone each prod tick, then launch the whole batch
+            // together once it reaches DRONE_WAVE_SIZE — rolling waves, not a
+            // 1-by-1 dribble. Ceiling scales with factory count (no flat wall);
+            // any batch that can't fully launch (cap hit) stays banked for the
+            // next wave. droneCountByOwner is a per-tick snapshot, so track a
+            // local `live` as we launch to honour the cap within this tick.
+            t.dronesReady += 1;
+            if (t.dronesReady >= DRONE_WAVE_SIZE) {
+              const cap = DRONE_CAP_PER_FACTORY * (factoryCount.get(t.owner) || 1);
+              let live = state.droneCountByOwner.get(t.owner) || 0;
+              while (t.dronesReady > 0 && live < cap) {
+                if (!launchOneDroneFrom(t)) break;   // no worthwhile target right now → hold the batch
+                t.dronesReady -= 1; live++;
+              }
             }
           }
         }

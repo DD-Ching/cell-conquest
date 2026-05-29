@@ -197,8 +197,10 @@ function retargetOnCooldown(drone) {
 // INTO the ring rather than teleporting, then rides the rotation. The instant
 // a real target appears it peels off. Orbiting (vs. coasting toward the stale
 // target) is also safe — it never drifts onto a now-friendly node + detonates.
-const LOITER_R = 90;                       // ring radius, world px (big, visible)
-const LOITER_ROT = 0.5;                    // ring angular velocity, rad/s
+const LOITER_R = 900;                      // ring radius, world px — wide patrol loiter (10× the old 90)
+const LOITER_ROT = 0.05;                   // ring angular velocity, rad/s — scaled ÷10 alongside the
+                                           // 10× radius so tangential speed (R×ROT) stays ≈cruise;
+                                           // otherwise the slot outruns the drone and the ring never forms
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));   // 2.39996… — even angular spread
 
 // owner -> {cx,cy} rally centre. Rebuilt ONCE PER FRAME, not per sub-step:
@@ -241,11 +243,11 @@ function rebuildLoiterCenters() {
 }
 function loiterDrone(drone, dt) {
   const c = _loiterCenters.get(drone.owner);
-  if (!c) {                                 // no factory rally point — tiny solo orbit
+  if (!c) {                                 // no factory rally point — wide solo orbit (10× radius)
     if (drone._loiterCx === undefined) { drone._loiterCx = drone.x; drone._loiterCy = drone.y; drone._loiterA = Math.random() * Math.PI * 2; }
-    drone._loiterA += (DRONE_SPEED / 30) * dt;
-    drone.x = drone._loiterCx + Math.cos(drone._loiterA) * 30;
-    drone.y = drone._loiterCy + Math.sin(drone._loiterA) * 30;
+    drone._loiterA += (DRONE_SPEED / 300) * dt;   // ÷10 angular with 10× radius → same cruise tangential
+    drone.x = drone._loiterCx + Math.cos(drone._loiterA) * 300;
+    drone.y = drone._loiterCy + Math.sin(drone._loiterA) * 300;
     return;
   }
   // Shared ring slot: a stable golden-angle offset per drone id + a common

@@ -72,7 +72,10 @@ function hydrate(snap) {
   state.roads     = snap.roads;
   state.edgeData  = new Map(snap.edgeData);
   state.regions   = snap.regions  || [];   // procgen region tint
-  state.barriers  = snap.barriers || [];   // procgen river/canyon shapes
+  state.barriers  = snap.barriers || [];   // procgen river/ridge shapes
+  state.worldTheme    = snap.worldTheme    || null;   // procgen v2 theme palette
+  state.resourceBelts = snap.resourceBelts || [];     // procgen v2 belts
+  state.geoGrid       = snap.geoGrid       || null;   // procgen v2 elevation grid
   state.worldSeed = snap.worldSeed || 0;   // procgen bake-cache key
 
   state.particles = snap.particles;

@@ -1,25 +1,25 @@
 // =====================================================
-// Procgen tactical-map art — dark command-map ground layer + region labels.
+// Procgen tactical-map art — satellite-style terrain ground layer.
 //
-// Only active when the geography-first generator ran (state.regions non-empty);
-// legacy maps draw nothing. Renders the macro "sci-fi reconnaissance map" look
-// BENEATH the faction turf wash / grid / roads / units:
+// Active when the geography-first generator ran (state.regions non-empty);
+// legacy maps draw nothing. Renders the macro "sci-fi reconnaissance map"
+// BENEATH the faction turf wash / grid / roads / units, from the procgen-v2
+// natural-geography data (state.geoGrid / worldTheme / barriers / resourceBelts):
 //
-//   • A static, BAKED offscreen (rebuilt only when the world changes) carries
-//     everything that never moves: a dark command-map wash, muted per-region
-//     terrain tint, faint topographic contour rings, seeded crater landmarks,
-//     and the river/canyon channels. One drawImage per frame — cheap even at
-//     40× late game (the spec's "cache static layers").
-//   • Per frame we add only the region NAME labels (≤15 fillText), sized in
-//     screen space and faded out as you zoom in so they read as atmospheric
-//     sector names at the strategic overview.
+//   • A static BAKED offscreen (rebuilt only when the world changes) carries
+//     everything that never moves: the world-theme base, a SATELLITE elevation
+//     shade upsampled from the coarse geoGrid (water basins → lowlands →
+//     highlands → peaks in the theme palette, with a cheap west-light
+//     hillshade), per-region tint, resource-belt hints, and the river/ridge
+//     features. One drawImage per frame — cheap even at 40×.
+//   • Per frame we add only the region NAME labels, faded out as you zoom in.
+//
+// Falls back gracefully: no geoGrid (e.g. an old worker snapshot) → a flat dark
+// wash instead of the elevation shade, everything else unchanged.
 //
 // Worker-safe: render.js calls this in both contexts; the render snapshot ships
-// state.regions / barriers / worldSeed, and the buffer uses OffscreenCanvas off
-// the main thread.
-//
-// TODO(art pass 2): nodeType tactical icons, animated supply-route dashes,
-// holographic scanline overlay, mountain-ridge silhouettes.
+// regions / barriers / worldTheme / resourceBelts / worldSeed, and geoGrid via
+// the one-shot terrain message. Buffer uses OffscreenCanvas off the main thread.
 // =====================================================
 import { state } from './state.js';
 import { WORLD_W, WORLD_H } from './config.js';
@@ -27,6 +27,9 @@ import { REGION_TINT, rgba } from './tactical-theme.js';
 
 const TEX_MAX = 1400;                  // baked map long side (px) — fixed, world-size independent
 let buf = null, bufW = 0, bufH = 0, scale = 1, bakedSig = null;
+
+const DEFAULT_PAL = { bg: '#140d09', lo: '#2c1d12', mid: '#48301c', hi: '#6c4a28', water: '#26201a', accent: '#c8743c' };
+const BELT_COL = { mineral: '#caa24a', energy: '#4ab0a0', rare: '#b06ad0' };
 
 function makeCanvas(w, h) {
   if (typeof document !== 'undefined') {
@@ -36,7 +39,6 @@ function makeCanvas(w, h) {
   return new OffscreenCanvas(w, h);
 }
 
-// Small seeded PRNG so the decorative craters are deterministic per world.
 function mulberry32(a) {
   return function () {
     a = (a + 0x6D2B79F5) | 0;
@@ -46,12 +48,45 @@ function mulberry32(a) {
   };
 }
 
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const cl = (v) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+
 function sig() {
-  return `${state.worldSeed}|${state.regions.length}|${WORLD_W}x${WORLD_H}`;
+  return `${state.worldSeed}|${state.regions.length}|${state.worldTheme ? state.worldTheme.key : '-'}|${state.geoGrid ? 1 : 0}|${WORLD_W}x${WORLD_H}`;
 }
 
-/** Bake the static tactical-map ground into the offscreen buffer (world coords
- *  via a scale transform, so all sizes below are in WORLD px). */
+/** Satellite elevation shade — colour each geoGrid cell by elevation band in
+ *  the theme palette, with a cheap west-facing hillshade, then upscale smoothly
+ *  across the whole buffer. */
+function bakeElevation(c, gg, pal) {
+  const { GW, GH, elev, seaLevel } = gg;
+  const lo = hex(pal.lo), mid = hex(pal.mid), hi = hex(pal.hi), water = hex(pal.water);
+  const tmp = makeCanvas(GW, GH);
+  const tctx = tmp.getContext('2d');
+  const id = tctx.createImageData(GW, GH);
+  for (let i = 0; i < GW * GH; i++) {
+    const e = elev[i];
+    let col;
+    if (e < seaLevel) {
+      col = lerp(water, lo, Math.max(0, e / Math.max(0.001, seaLevel)));   // deeper = darker water
+    } else {
+      const t = (e - seaLevel) / (1 - seaLevel);          // 0..1 above sea
+      col = t < 0.6 ? lerp(lo, mid, t / 0.6) : lerp(mid, hi, (t - 0.6) / 0.4);
+    }
+    // West-light hillshade from the E–W elevation gradient (relief).
+    const x = i % GW;
+    const eL = elev[i - (x > 0 ? 1 : 0)], eR = elev[i + (x < GW - 1 ? 1 : 0)];
+    const sh = 1 + (eL - eR) * 1.4;
+    const k = i * 4;
+    id.data[k] = cl(col[0] * sh); id.data[k + 1] = cl(col[1] * sh); id.data[k + 2] = cl(col[2] * sh); id.data[k + 3] = 255;
+  }
+  tctx.putImageData(id, 0, 0);
+  c.imageSmoothingEnabled = true;
+  c.drawImage(tmp, 0, 0, WORLD_W, WORLD_H);              // c is world-scaled → fills buffer, smooth
+}
+
+/** Bake the static tactical-map ground (world coords via a scale transform). */
 function bakeTacticalMap() {
   scale = TEX_MAX / Math.max(WORLD_W, WORLD_H);
   bufW = Math.max(1, Math.round(WORLD_W * scale));
@@ -62,85 +97,73 @@ function bakeTacticalMap() {
   c.save();
   c.scale(scale, scale);
 
-  // 1) Command-map wash — a cool dark veil over the rust terrain for the
-  //    serious "satellite recon" mood.
-  c.fillStyle = 'rgba(10, 8, 14, 0.30)';
+  const theme = state.worldTheme;
+  const pal = (theme && theme.pal) || DEFAULT_PAL;
+
+  // 1) Theme base + satellite elevation shade (or flat wash fallback).
+  c.fillStyle = pal.bg;
+  c.fillRect(0, 0, WORLD_W, WORLD_H);
+  if (state.geoGrid && state.geoGrid.elev) bakeElevation(c, state.geoGrid, pal);
+  // Dark command-map veil over the terrain for the serious recon mood.
+  c.fillStyle = 'rgba(8, 6, 12, 0.22)';
   c.fillRect(0, 0, WORLD_W, WORLD_H);
 
-  // 1b) Mountain ridges — a few seeded relief silhouettes (top-down: an
-  //     elongated dark shadow spine + a faint lit ridgeline + perpendicular
-  //     hatch ticks) so the terrain reads as elevated rock, not flat ground.
-  //     Periphery-biased + low-opacity so they frame the theatre without
-  //     crowding the contested interior. Baked → free per frame.
-  const rRng = mulberry32(((state.worldSeed || 1) ^ 0x85ebca6b) >>> 0);
-  const ridgeN = 2 + Math.floor(rRng() * 2);             // 2–3
-  const edgeBias = (v) => v < 0.5 ? v * 0.7 : 0.3 + v * 0.7;   // pull toward rims
-  for (let i = 0; i < ridgeN; i++) {
-    const x0 = edgeBias(rRng()) * WORLD_W;
-    const y0 = edgeBias(rRng()) * WORLD_H;
-    const ang = rRng() * Math.PI;
-    const len = 900 + rRng() * 1500;
-    const x1 = x0 + Math.cos(ang) * len, y1 = y0 + Math.sin(ang) * len;
-    c.lineCap = 'round';
-    c.strokeStyle = 'rgba(18, 11, 7, 0.32)';             // broad shadow base
-    c.lineWidth = 150; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
-    c.strokeStyle = 'rgba(74, 53, 35, 0.26)';            // rocky body
-    c.lineWidth = 70;  c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
-    c.strokeStyle = 'rgba(206, 166, 116, 0.14)';         // lit ridgeline
-    c.lineWidth = 4;   c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
-    const nx = Math.cos(ang + Math.PI / 2), ny = Math.sin(ang + Math.PI / 2);
-    const ticks = Math.floor(len / 95);                  // relief hatch
-    c.strokeStyle = 'rgba(12, 8, 5, 0.26)'; c.lineWidth = 5;
-    for (let k = 1; k < ticks; k++) {
-      const t = k / ticks, mx = x0 + (x1 - x0) * t, my = y0 + (y1 - y0) * t;
-      const tl = 34 + rRng() * 40;
-      c.beginPath(); c.moveTo(mx - nx * tl, my - ny * tl); c.lineTo(mx + nx * tl, my + ny * tl); c.stroke();
-    }
-    c.lineCap = 'butt';
-  }
-
-  // 2) Region zones — muted tint + faint topographic contour rings so each
-  //    region reads as a controlled sector with elevation, not a flat patch.
+  // 2) Region zones — light tint + faint contour rings (sector identity).
   for (const r of state.regions) {
     const col = REGION_TINT[r.type] || '#6a6a78';
     const g = c.createRadialGradient(r.x, r.y, 0, r.x, r.y, r.radius);
-    g.addColorStop(0,   rgba(col, 0.16));
-    g.addColorStop(0.55, rgba(col, 0.07));
-    g.addColorStop(1,   rgba(col, 0));
+    g.addColorStop(0, rgba(col, 0.12));
+    g.addColorStop(0.55, rgba(col, 0.05));
+    g.addColorStop(1, rgba(col, 0));
     c.fillStyle = g;
     c.beginPath(); c.arc(r.x, r.y, r.radius, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = rgba(col, 0.10);
-    c.lineWidth = 2.5;                        // world px (ctx is scaled to world coords)
+    c.strokeStyle = rgba(col, 0.08);
+    c.lineWidth = 2.5;
     for (let k = 1; k <= 3; k++) {
       c.beginPath(); c.arc(r.x, r.y, r.radius * (0.32 + 0.22 * k), 0, Math.PI * 2); c.stroke();
     }
   }
 
-  // 3) Crater landmarks — seeded, scattered. Dark bowl + faint warm rim.
+  // 3) Resource belts — faint kind-coloured haze (mineral/energy/rare).
+  for (const b of state.resourceBelts) {
+    const col = BELT_COL[b.kind] || '#999';
+    const g = c.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+    g.addColorStop(0, rgba(col, 0.13));
+    g.addColorStop(1, rgba(col, 0));
+    c.fillStyle = g;
+    c.beginPath(); c.arc(b.x, b.y, b.r, 0, Math.PI * 2); c.fill();
+  }
+
+  // 4) Craters — a few seeded ruin-pocks (themed density), for texture.
   const rng = mulberry32(((state.worldSeed || 1) ^ 0x9e3779b9) >>> 0);
-  const craters = Math.round((WORLD_W * WORLD_H) / 9e6);
+  const ruin = theme ? (theme.ruinDensity || 1) : 1;
+  const craters = Math.round((WORLD_W * WORLD_H) / 9e6 * ruin);
   for (let i = 0; i < craters; i++) {
-    const x = rng() * WORLD_W, y = rng() * WORLD_H, rr = 120 + rng() * 280;
-    c.fillStyle = 'rgba(8, 5, 4, 0.30)';
+    const x = rng() * WORLD_W, y = rng() * WORLD_H, rr = 110 + rng() * 240;
+    c.fillStyle = 'rgba(8, 5, 4, 0.28)';
     c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = 'rgba(190, 135, 90, 0.10)';
+    c.strokeStyle = 'rgba(200, 150, 100, 0.10)';
     c.lineWidth = 3;
     c.beginPath(); c.arc(x, y, rr * 0.95, 0, Math.PI * 2); c.stroke();
   }
 
-  // 4) Barriers — rivers/canyons as wide terrain channels (now baked).
+  // 5) Natural features — rivers as bright water channels, mountain ridges as
+  //    dark crest silhouettes with a lit top edge. These are the real procgen
+  //    barriers, so they line up with the bridge/pass chokepoints.
   for (const bar of state.barriers) {
     const p = bar.points;
     if (!p || p.length < 2) continue;
     c.lineCap = 'round'; c.lineJoin = 'round';
-    c.beginPath();
-    c.moveTo(p[0].x, p[0].y);
-    for (let i = 1; i < p.length; i++) c.lineTo(p[i].x, p[i].y);
-    const river = bar.kind === 'river';
-    c.strokeStyle = river ? 'rgba(34, 60, 96, 0.50)' : 'rgba(24, 15, 10, 0.60)';
-    c.lineWidth = 100; c.stroke();
-    c.strokeStyle = river ? 'rgba(66, 116, 166, 0.55)' : 'rgba(12, 8, 6, 0.75)';
-    c.lineWidth = 44; c.stroke();
+    const trace = () => { c.beginPath(); c.moveTo(p[0].x, p[0].y); for (let i = 1; i < p.length; i++) c.lineTo(p[i].x, p[i].y); };
+    if (bar.kind === 'river') {
+      trace(); c.strokeStyle = rgba(pal.water, 0.55);      c.lineWidth = 80; c.stroke();
+      trace(); c.strokeStyle = 'rgba(120, 170, 210, 0.55)'; c.lineWidth = 30; c.stroke();
+      trace(); c.strokeStyle = 'rgba(180, 215, 235, 0.45)'; c.lineWidth = 8;  c.stroke();
+    } else {                                  // 'mountain' / 'canyon'
+      trace(); c.strokeStyle = 'rgba(14, 9, 7, 0.55)';   c.lineWidth = 130; c.stroke();
+      trace(); c.strokeStyle = 'rgba(70, 52, 36, 0.50)'; c.lineWidth = 64;  c.stroke();
+      trace(); c.strokeStyle = 'rgba(206, 170, 120, 0.30)'; c.lineWidth = 6; c.stroke();
+    }
     c.lineCap = 'butt'; c.lineJoin = 'miter';
   }
 
@@ -154,8 +177,7 @@ export function drawProcgen(ctx, zoom) {
   if (bakedSig !== sig() || !buf) bakeTacticalMap();
   ctx.drawImage(buf, 0, 0, WORLD_W, WORLD_H);
 
-  // Sector names — faint, tracked, uppercase; fade out as you zoom in so they
-  // stay an overview flourish, not clutter when fighting up close.
+  // Sector names — faint, tracked, uppercase; fade out as you zoom in.
   const a = Math.max(0, Math.min(0.42, (0.55 - zoom) / 0.5));
   if (a <= 0.01) return;
   ctx.save();
@@ -170,7 +192,7 @@ export function drawProcgen(ctx, zoom) {
     ctx.lineWidth = 4 / zoom;
     ctx.strokeStyle = `rgba(0, 0, 0, ${a * 0.85})`;
     ctx.strokeText(txt, r.x, r.y);
-    ctx.fillStyle = `rgba(216, 208, 192, ${a})`;
+    ctx.fillStyle = `rgba(220, 212, 196, ${a})`;
     ctx.fillText(txt, r.x, r.y);
   }
   ctx.restore();

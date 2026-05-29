@@ -128,7 +128,10 @@ function buildSnapshot() {
     roads:    state.roads,
     edgeData: sliceEdgeData(state.edgeData, 'render'),
     regions:  state.regions,          // procgen region tint (empty in legacy gen)
-    barriers: state.barriers,         // procgen river/canyon shapes
+    barriers: state.barriers,         // procgen river/ridge shapes
+    worldTheme: state.worldTheme,     // procgen v2 theme (palette + densities) — small
+    resourceBelts: state.resourceBelts, // procgen v2 belts (a few {kind,x,y,r})
+    geoGrid:  state.geoGrid,          // procgen v2 elevation grid for satellite shade
     worldSeed: state.worldSeed,       // procgen bake-cache key (rebake on new world)
 
     particles: state.particles,

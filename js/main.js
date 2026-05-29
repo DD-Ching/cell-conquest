@@ -150,6 +150,7 @@ export function newGame() {
     node.size      = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
     node.capacity  = Math.floor(145 * strength);
     node.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
+    node.nodeType  = 'capital';   // HQ double-ring tactical icon (both gen modes)
   }
   function pickFarNode() {
     let best = null, bestD = -1;

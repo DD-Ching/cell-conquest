@@ -15,7 +15,7 @@ import {
   drawAATurret, drawTankTurret, drawFactoryTurret, drawArtilleryTurret,
 } from './sprites.js';
 import {
-  drawNodeCompounds, drawRadarSweeps, drawNodeBuildings,
+  drawNodeCompounds, drawRadarSweeps, drawNodeBuildings, drawNodeIcons,
 } from './render-node-detail.js';
 
 const CELL = 250;                          // matches the spatial-grid cell size
@@ -157,6 +157,11 @@ export function drawNodes(ctx, zoom, now) {
 
   // Pass 7 — central core + building ring + hub beacon + capture flash.
   drawNodeBuildings(ctx, visible, zoom, now, state.adj);
+
+  // Pass 7b — nodeType tactical designation frames (square=factory, diamond=
+  // mine, hexagon=fortress, ring=city, double-ring=HQ, scan=research). Drawn
+  // before labels so the unit count reads on top of the symbol.
+  drawNodeIcons(ctx, visible, zoom, now);
 
   // Pass 8 — labels, Lieutenant underline, engineer badge, build flash.
   ctx.textAlign = 'center';

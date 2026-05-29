@@ -67,6 +67,38 @@ function bakeTacticalMap() {
   c.fillStyle = 'rgba(10, 8, 14, 0.30)';
   c.fillRect(0, 0, WORLD_W, WORLD_H);
 
+  // 1b) Mountain ridges — a few seeded relief silhouettes (top-down: an
+  //     elongated dark shadow spine + a faint lit ridgeline + perpendicular
+  //     hatch ticks) so the terrain reads as elevated rock, not flat ground.
+  //     Periphery-biased + low-opacity so they frame the theatre without
+  //     crowding the contested interior. Baked → free per frame.
+  const rRng = mulberry32(((state.worldSeed || 1) ^ 0x85ebca6b) >>> 0);
+  const ridgeN = 2 + Math.floor(rRng() * 2);             // 2–3
+  const edgeBias = (v) => v < 0.5 ? v * 0.7 : 0.3 + v * 0.7;   // pull toward rims
+  for (let i = 0; i < ridgeN; i++) {
+    const x0 = edgeBias(rRng()) * WORLD_W;
+    const y0 = edgeBias(rRng()) * WORLD_H;
+    const ang = rRng() * Math.PI;
+    const len = 900 + rRng() * 1500;
+    const x1 = x0 + Math.cos(ang) * len, y1 = y0 + Math.sin(ang) * len;
+    c.lineCap = 'round';
+    c.strokeStyle = 'rgba(18, 11, 7, 0.32)';             // broad shadow base
+    c.lineWidth = 150; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    c.strokeStyle = 'rgba(74, 53, 35, 0.26)';            // rocky body
+    c.lineWidth = 70;  c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    c.strokeStyle = 'rgba(206, 166, 116, 0.14)';         // lit ridgeline
+    c.lineWidth = 4;   c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    const nx = Math.cos(ang + Math.PI / 2), ny = Math.sin(ang + Math.PI / 2);
+    const ticks = Math.floor(len / 95);                  // relief hatch
+    c.strokeStyle = 'rgba(12, 8, 5, 0.26)'; c.lineWidth = 5;
+    for (let k = 1; k < ticks; k++) {
+      const t = k / ticks, mx = x0 + (x1 - x0) * t, my = y0 + (y1 - y0) * t;
+      const tl = 34 + rRng() * 40;
+      c.beginPath(); c.moveTo(mx - nx * tl, my - ny * tl); c.lineTo(mx + nx * tl, my + ny * tl); c.stroke();
+    }
+    c.lineCap = 'butt';
+  }
+
   // 2) Region zones — muted tint + faint topographic contour rings so each
   //    region reads as a controlled sector with elevation, not a flat patch.
   for (const r of state.regions) {

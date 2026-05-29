@@ -91,7 +91,7 @@ export function render() {
   drawScorches(ctx, zoom, now);
   drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in
   drawWorldBoundary(ctx, zoom);
-  drawRoads(ctx, zoom);
+  drawRoads(ctx, zoom, now);
   drawWreckPiles(ctx, zoom);
   drawNets(ctx, zoom);
   drawShells(ctx, zoom);

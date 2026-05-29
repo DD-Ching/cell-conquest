@@ -130,7 +130,7 @@ function blitSprite(ctx, asset, size, tint) {
 // ~0.5 for outskirts, ~1.5 for hub arteries) layers natural road hierarchy
 // on top.
 // =====================================================
-export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null) {
+export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null, now = 0) {
   ctx.lineCap = 'round';
   // Dark outer (path edge). Bridges get a wider steel deck shadow so a
   // chokepoint reads even before the accent stroke.
@@ -168,11 +168,13 @@ export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = n
     ctx.strokeStyle = 'rgba(255, 188, 92, 0.16)';     // soft glow halo
     ctx.lineWidth = 6.5 * widthMul;
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(255, 216, 132, 0.72)';    // bright dashed core
-    ctx.lineWidth = 1.8 * widthMul;
+    ctx.strokeStyle = 'rgba(255, 216, 132, 0.72)';    // bright core, dashes flow
+    ctx.lineWidth = 1.8 * widthMul;                   // a→b like a live supply line
     ctx.setLineDash([16, 11]);
+    ctx.lineDashOffset = -(now * 0.018) % 27;
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
   } else if (kind === 'bridge') {
     ctx.strokeStyle = 'rgba(150, 178, 214, 0.55)';    // steel glow
     ctx.lineWidth = 5 * widthMul;

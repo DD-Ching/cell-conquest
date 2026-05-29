@@ -21,7 +21,7 @@ import {
 } from './sprites.js';
 
 // ---- Roads (TD-style path with sand-tint blockage readout) ----
-export function drawRoads(ctx, zoom) {
+export function drawRoads(ctx, zoom, now = 0) {
   const { vL, vT, vR, vB } = state._view;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
@@ -32,7 +32,8 @@ export function drawRoads(ctx, zoom) {
     // Tint derived purely from pile count — visual readout of congestion,
     // not a speed multiplier (slowdown comes from physical detour).
     // widthMul comes from world.buildRoads (Gaussian × endpoint connectivity).
-    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind);
+    // `now` animates highway supply-line dashes.
+    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now);
   }
 }
 

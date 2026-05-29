@@ -103,6 +103,72 @@ export function drawRadarSweeps(ctx, visible, zoom, now) {
   ctx.globalAlpha = 1;
 }
 
+/** Pass C2 — nodeType tactical-designation frames (command-map symbols).
+ *  A faction-coloured shaped outline just outside the rim turns a round dot
+ *  into a recognisable map symbol:
+ *    square=factory · diamond=mine · hexagon=fortress · ring=city ·
+ *    double-ring=capital/HQ · ring+rotating-scan=research · side-ticks=bridge.
+ *  Towns/outposts stay plain (calm minors). Procgen nodes carry nodeType;
+ *  legacy nodes only carry it on faction capitals — so this lights up the
+ *  geography map and adds an HQ ring everywhere, no legacy clutter.
+ *  Cheap: thin strokes, no blur, no gradients. */
+const _ICON_SET = new Set(['factory', 'mine', 'fortress', 'research_lab', 'city', 'capital', 'bridge']);
+export function drawNodeIcons(ctx, visible, zoom, now) {
+  const lw  = 1.8 / zoom;
+  const off = 3 / zoom;
+  for (const n of visible) {
+    const t = n.nodeType;
+    if (!t || !_ICON_SET.has(t) || n.size < 24) continue;
+    const R = n.size + off;
+    ctx.strokeStyle = rgba(COLOR[n.owner] || '#cfc6b6', 0.7);
+    ctx.lineWidth = lw;
+    switch (t) {
+      case 'factory':
+        ctx.strokeRect(n.x - R, n.y - R, R * 2, R * 2);
+        break;
+      case 'mine':
+        ctx.beginPath();
+        ctx.moveTo(n.x, n.y - R); ctx.lineTo(n.x + R, n.y);
+        ctx.lineTo(n.x, n.y + R); ctx.lineTo(n.x - R, n.y);
+        ctx.closePath(); ctx.stroke();
+        break;
+      case 'fortress':
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const a = -Math.PI / 2 + k * (Math.PI / 3);
+          const px = n.x + Math.cos(a) * R, py = n.y + Math.sin(a) * R;
+          k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath(); ctx.stroke();
+        break;
+      case 'city':
+        ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, Math.PI * 2); ctx.stroke();
+        break;
+      case 'capital':
+        ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(n.x, n.y, R + off * 1.5, 0, Math.PI * 2); ctx.stroke();
+        break;
+      case 'research_lab':
+        ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 0.5;                       // rotating scan ring
+        ctx.setLineDash([4 / zoom, 5 / zoom]);
+        ctx.lineDashOffset = -(now / 22) % 1000;
+        ctx.beginPath(); ctx.arc(n.x, n.y, R + off, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        break;
+      case 'bridge': {
+        const tick = R * 0.5;                        // connector side-ticks
+        ctx.beginPath();
+        ctx.moveTo(n.x - R, n.y - tick); ctx.lineTo(n.x - R, n.y + tick);
+        ctx.moveTo(n.x + R, n.y - tick); ctx.lineTo(n.x + R, n.y + tick);
+        ctx.stroke();
+        break;
+      }
+    }
+  }
+}
+
 /** Pass C — building ring + central core + hub beacon. Flat fills only — NO
  *  shadowBlur halo (that was ~8000 blurred draws/frame). A 1px lighter
  *  top-left edge per building gives a cheap hint of depth instead. */

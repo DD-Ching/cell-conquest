@@ -38,6 +38,10 @@ function fullSlimNode(n) {
     id: n.id, x: n.x, y: n.y, owner: n.owner,
     units: n.units, capacity: n.capacity, regenRate: n.regenRate,
     size: n.size, kind: n.kind, lastRegenT: n.lastRegenT,
+    // Procgen tactical-icon type (undefined on legacy non-capital nodes — the
+    // icon pass no-ops there). Cheap string; lets the render-worker draw the
+    // same nodeType designation frames.
+    nodeType: n.nodeType,
     // Render-side visual state. Cheap to include and lets render-worker
     // share the same shape. Initialised on every node by world / engineering
     // setup so these are always real numbers (no undefined).

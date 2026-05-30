@@ -85,6 +85,34 @@ function aaScreenDivisor(x, y, owner) {
   return 1 + guards;          // each guarding AA roughly halves the node's pull
 }
 
+// ---- Per-tick node-scan cache (kills the retarget-wave spike) ----------------
+// retargetDrone scores every candidate node by min(units,160)/((1+dist/800)·
+// aaScreenDivisor) ×1.8-if-frontier. aaScreenDivisor is a spatial-grid scan and
+// the frontier check walks adjacency — and BOTH were recomputed for every node
+// FOR EVERY retargeting drone (drones × ~830 nodes × a grid scan when a wave
+// needs targets). But aaScreenDivisor (AA turret positions) and the frontier
+// flag (node ownership) DON'T change during a single updateDrones pass — node
+// captures happen in simulateFleets, turret removal in updateBuildings — so we
+// compute them ONCE per faction per tick and reuse. Live units / inbound /
+// distance still read per-drone, and the score arithmetic is byte-for-byte the
+// original, so target picks are identical. Cleared at the top of updateDrones.
+const _nodeScan = new Map();   // owner -> { aa: Float64Array, fr: Uint8Array }; aa[i]<0 = ally/neutral skip
+function nodeScanFor(owner) {
+  let c = _nodeScan.get(owner);
+  if (c) return c;
+  const nodes = state.nodes, N = nodes.length;
+  const aa = new Float64Array(N), fr = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const n = nodes[i];
+    if (n.owner === 'neutral' || isAlly(n.owner, owner)) { aa[i] = -1; continue; }
+    aa[i] = aaScreenDivisor(n.x, n.y, owner);
+    for (const nbId of state.adj.get(n.id)) { if (isAlly(nodes[nbId].owner, owner)) { fr[i] = 1; break; } }
+  }
+  c = { aa, fr };
+  _nodeScan.set(owner, c);
+  return c;
+}
+
 /** Does the drone's stored target still WARRANT a strike?
  *
  *  IN-FLIGHT COMMITMENT with a release valve: a launched drone flies its run,
@@ -144,25 +172,26 @@ function retargetDrone(drone) {
     // Value-first node pick (not nearest): a drone that lost its target should
     // reach for a node with units worth chipping, skipping bombed-flat husks
     // and dying factions. Distance is only a mild taper so it can push deep.
+    // aaScreenDivisor + frontier are read from the per-tick cache (nodeScanFor);
+    // units / inbound / distance stay live; the score arithmetic is unchanged.
+    const { aa, fr } = nodeScanFor(drone.owner);
+    const nodes = state.nodes;
     let bestNodeScore = 0;
-    for (const n of state.nodes) {
-      if (isAlly(n.owner, drone.owner) || n.owner === 'neutral') continue;
-      if (state.strippedOwners.has(n.owner)) continue;  // dying faction — ground troops' job
-      if (n.units < DRONE_ENGAGE_UNITS) continue;        // bombed-flat — nothing to chip
+    for (let i = 0; i < nodes.length; i++) {
+      const aav = aa[i];
+      if (aav < 0) continue;                              // ally / neutral (cached skip)
+      const n = nodes[i];
+      if (state.strippedOwners.has(n.owner)) continue;    // dying faction — ground troops' job
+      if (n.units < DRONE_ENGAGE_UNITS) continue;         // bombed-flat — nothing to chip
       // Respect the value-aware inbound cap so a whole salvo that just peeled
       // off a dead node spreads across fresh targets instead of re-dogpiling one.
       const cap = Math.min(NODE_DRONE_CAP, Math.max(1, Math.ceil(n.units / 45)));
       if ((state.inboundDronesByTarget.get(inboundKey('node', n.id)) || 0) >= cap) continue;
       const dx = n.x - drone.x, dy = n.y - drone.y;
       // Same value model as the launch picker: fat core >> husk, screened-by-AA
-      // cores wait their turn.
-      let score = Math.min(n.units, 160)
-        / ((1 + Math.sqrt(dx * dx + dy * dy) / 800) * aaScreenDivisor(n.x, n.y, drone.owner));
-      // Frontier boost (same as the launch picker): lean onto the contested
-      // border so suppression sets up a ground capture.
-      for (const nbId of state.adj.get(n.id)) {
-        if (isAlly(state.nodes[nbId].owner, drone.owner)) { score *= 1.8; break; }
-      }
+      // cores wait their turn. Frontier boost leans onto the contested border.
+      let score = Math.min(n.units, 160) / ((1 + Math.sqrt(dx * dx + dy * dy) / 800) * aav);
+      if (fr[i]) score *= 1.8;
       if (score > bestNodeScore) {
         bestNodeScore = score;
         best = { kind: 'node', id: n.id, x: n.x, y: n.y };
@@ -326,6 +355,7 @@ export function updateDrones(dt) {
   // Per-faction loiter rally centres (factory centroid) for the shared
   // holding-ring formation — rebuilt once per tick, read by loiterDrone.
   rebuildLoiterCenters();
+  _nodeScan.clear();             // per-call cache of node aaScreen/frontier (retarget scan)
 
   // Anti-overkill bookkeeping. `inboundDronesByTarget` (built in simulate) is a
   // tick-TOP snapshot of how many drones are already committed to each target.

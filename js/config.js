@@ -98,16 +98,15 @@ export const ENG_COST = 12;             // units consumed at source node to disp
 export const AA_BUILD_TIME = 10;
 export const AA_HP = 100;
 export const AA_RADIUS = 200;
-// Anti-air firepower — 100× the original 15 (two ×10 player bumps: hard counter
-// to drone swarms). AA splits this DPS across all drones in range (saturation),
-// so this is total drone-HP shredded per second per battery: a lone drone
-// (30 HP) is gone almost instantly; even a big swarm is divided down fast
-// (N drones each take 1500/N DPS → the whole swarm dies in ~N/50 s). Pure
-// constant — read by both the wasm batch path and the JS fallback, so it costs
-// ZERO extra per-frame work (faster kills → fewer live drones → if anything
-// LESS sim load). Mass die-off VFX/SFX stay bounded by the particle FIFO +
-// per-frame explosion cap (≤4) + gunshot cap (≤3) — no stutter.
-export const AA_DPS = 1500;
+// Anti-air firepower — 30× the original 15. The ×100 (1500) bump shredded drones
+// instantly and felt too strong, so the last ×10 was dialled back to ×3 off the
+// 150 baseline → 450. Still a solid swarm counter without being an instant-kill
+// no-fly zone. AA splits this DPS across all drones in range (saturation), so
+// this is total drone-HP/sec per battery: a lone 30-HP drone dies in ~0.07 s; a
+// swarm of N each takes 450/N DPS → the whole swarm clears in ~N/15 s. Pure
+// constant — read by both the wasm batch path and the JS fallback, so ZERO extra
+// per-frame work (faster kills → fewer live drones → if anything LESS sim load).
+export const AA_DPS = 450;
 
 export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;

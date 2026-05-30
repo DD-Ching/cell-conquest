@@ -8,24 +8,35 @@ it even when the conversation is about something unrelated. Keep the command
 **current**: if the launch method ever changes, update both this block and the
 reminder you print.
 
+**zsh gotcha (important):** the user's shell is zsh, which does NOT strip `# …`
+as an inline comment. So NEVER put a `#` comment inside a copy-pasteable command
+block — a pasted `python3 serve.py  # http://…` hands `#` to the script as the
+port arg. Keep every code fence to runnable commands only; put URLs / notes in
+prose outside the fence.
+
 Current launch (always `cd` to the absolute repo path first):
 
 ```
 cd /Users/ddh/Cell
-python3 serve.py        # no-cache dev server → http://localhost:8765/node-conquest.html
+python3 serve.py
 ```
 
-(Abs path is this MacBook's checkout; the Intel NUC checkout may live elsewhere
-— adjust the `cd` target there.)
+Then open **http://localhost:8765/node-conquest.html** in the browser. (Abs path
+is this MacBook's checkout; the Intel NUC checkout may live elsewhere — adjust
+the `cd` target there. Use `serve.py`, NOT `python3 -m http.server` — see the
+cache note below.)
 
-If the port is busy (`OSError: Address already in use`):
+If the port is busy (`OSError: Address already in use`), free it then re-run:
 
 ```
-lsof -ti:8765 | xargs kill -9     # free :8765, then re-run serve.py
-# …or just pick another port:  python3 serve.py 8770
+lsof -ti:8765 | xargs kill -9
 ```
 
-(Use `serve.py`, NOT `python3 -m http.server` — see the cache note below.)
+…or just pick another port:
+
+```
+python3 serve.py 8770
+```
 
 ## Repo
 

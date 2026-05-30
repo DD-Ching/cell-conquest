@@ -33,7 +33,15 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    # zsh (the default macOS shell) does NOT strip `# ...` as an inline comment,
+    # so pasting `python3 serve.py   # http://...` hands us '#' as argv[1]. Be
+    # forgiving: any non-numeric first arg → fall back to the default port.
+    port = 8765
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            print(f"(ignoring non-numeric arg {sys.argv[1]!r} — using default port {port})")
     httpd = ThreadingHTTPServer(('', port), NoCacheHandler)
     print(f"Mars Front dev server (no-cache) → http://localhost:{port}/node-conquest.html")
     print("  add ?procgen=1 for the geography-first map · Ctrl-C to stop")

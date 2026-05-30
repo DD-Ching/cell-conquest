@@ -390,6 +390,15 @@ import { isWasmReady, wasmDroneHuntTargets } from './wasm-bridge.js';
 import { isAlly } from './alliance.js';
 
 // ---- Per-tick ----
+// Reusable scratch for the batched wasm hunt scan + anti-overkill pledges —
+// cleared (length=0 / .clear()) each tick instead of re-allocated. A fresh [] /
+// new Map() every sub-step (up to ~10×/frame at fast-forward × hundreds of
+// drones) was a real GC source — GC pauses read as frame stutter. Zeroing reuses
+// the backing store; contents are rebuilt every tick so behaviour is identical.
+const _huntDrones = [];
+const _huntGrounds = [];
+const _pledged = new Map();
+
 export function updateDrones(dt) {
   // state.fleetById is built once per tick in simulate() — reuse it for
   // O(1) "give me fleet X" lookups (the hottest part of this function).
@@ -406,7 +415,7 @@ export function updateDrones(dt) {
   // `pledged` accumulates commitments made DURING this tick's drone loop, so a
   // burst of idle drones near one convoy can't ALL dive it in the same tick
   // before the snapshot would catch up. Effective inbound = snapshot + pledged.
-  const pledged = new Map();   // fleetId -> drones that committed this tick
+  const pledged = _pledged; pledged.clear();   // fleetId -> drones that committed this tick
 
   // ---- Batched wasm hunt scan (with JS fallback) ----
   // When wasm is loaded, gather all live drones + transit ground fleets
@@ -418,13 +427,20 @@ export function updateDrones(dt) {
   let huntDrones = null;
   let huntGrounds = null;
   if (isWasmReady()) {
-    huntDrones = [];
-    huntGrounds = [];
+    huntDrones = _huntDrones;   huntDrones.length = 0;
+    huntGrounds = _huntGrounds; huntGrounds.length = 0;
     for (const f of state.fleets) {
-      // Stamp each drone's slot in huntDrones[] as we pack it, so the per-drone
-      // loop below can index wasmHuntIdx directly — no per-tick id→slot Map.
-      if (f.kind === 'drone' && f.hp > 0) { f._huntSlot = huntDrones.length; huntDrones.push(f); }
-      else if (f.kind !== 'drone' && !f._dead && f.path && f.segIdx < f.path.length - 1) huntGrounds.push(f);
+      if (f.kind === 'drone') {
+        // Pack ONLY drones that will re-decide this tick. A throttled (non-due)
+        // drone takes the between-decision path and never reads the hunt result,
+        // so packing + wasm-scanning it was pure waste — ~6/7 of the swarm at
+        // steady state. Stamp _huntSlot as we pack so the decision block can index
+        // wasmHuntIdx directly (only due drones read it, so a stale slot on a
+        // non-due drone is never touched).
+        if (f.hp > 0 && state.elapsed >= (f._nextDecisionT || 0)) { f._huntSlot = huntDrones.length; huntDrones.push(f); }
+      } else if (!f._dead && f.path && f.segIdx < f.path.length - 1) {
+        huntGrounds.push(f);
+      }
     }
     if (huntDrones.length && huntGrounds.length) {
       wasmHuntIdx = wasmDroneHuntTargets(huntDrones, huntGrounds, DRONE_DETECT_R2);
@@ -464,8 +480,10 @@ export function updateDrones(dt) {
     // otherwise fall back to the JS grid sweep that was the hot path before.
     let huntFleet = null, huntD2 = DRONE_DETECT_R2;
     if (wasmHuntIdx !== null) {
-      // _huntSlot was stamped during the pack loop above; every drone reaching
-      // here (hp>0, not yet spliced) is in huntDrones, so the index is valid.
+      // _huntSlot was stamped during the pack loop. Only decision-DUE drones are
+      // packed now, and only due drones reach here (this is inside the due gate)
+      // — and the pack condition (hp>0 && due) is the same test that let us in —
+      // so f's slot is valid and current this tick.
       const gIdx = wasmHuntIdx[f._huntSlot];
       if (gIdx >= 0) {
         const g = huntGrounds[gIdx];

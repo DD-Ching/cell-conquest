@@ -237,6 +237,26 @@ function retargetOnCooldown(drone) {
   return state.elapsed - (drone._lastRetargetT || 0) < RETARGET_COOLDOWN_S;
 }
 
+// ---- Temporal decision batching (stage 1b) -------------------------------
+// A drone re-evaluates its TARGET (hunt scan + retarget + anti-overkill) at most
+// every DECISION_INTERVAL game-seconds — NOT every sub-step. Flight (steerDrone)
+// and the arrival/impact test still run EVERY tick, so motion stays perfectly
+// smooth and a drone can never skim through its target; only the *decision*
+// cadence is throttled. Two wins at swarm scale:
+//   1. Steady-state per-drone decision cost drops ~linearly with the sub-steps
+//      we skip (≈6 decisions/sec instead of up to 20).
+//   2. The bigger one for STUTTER: the interval is randomized per drone (golden-
+//      ratio hash of its id), so a salvo that all lost its target on the same
+//      frame no longer re-runs the O(N-nodes) retarget scan in one bunched spike
+//      — those scans spread across ticks. No global re-sync, ever.
+// Reaction latency stays ≤ DECISION_INTERVAL (≈0.15s — imperceptible). The hash
+// is deterministic (no RNG) so replays/worker mirrors stay in lockstep.
+const DECISION_INTERVAL = 0.15;        // game-seconds between target re-evaluations
+function nextDecisionT(f) {
+  const phase = (f._id * 0.6180339887) % 1;     // even per-id spread in [0,1)
+  return state.elapsed + DECISION_INTERVAL * (0.5 + 0.5 * phase);   // 0.075–0.15s
+}
+
 // ---- Loiter — shared "holding ring" (a conga line in the sky) ----
 // A drone awaiting a target (its objective got captured by its own side, or
 // the retarget scan is on cooldown / found nothing) used to FREEZE in place,
@@ -293,6 +313,7 @@ function rebuildLoiterCenters() {
   }
 }
 function loiterDrone(drone, dt) {
+  drone._loitering = true;     // between decisions, keep orbiting (don't fly a stale target)
   const c = _loiterCenters.get(drone.owner);
   let tx, ty;
   if (!c) {                                 // no factory rally point — wide solo orbit
@@ -320,6 +341,11 @@ function droneHit(drone) {
   if (drone.targetKind === 'turret') target = state.turretById.get(drone.targetId);
   else                                target = state.nodes[drone.targetId];
   if (!target) return false;
+  // Never friendly-fire: a target can flip to our own side WHILE the drone is in
+  // its terminal dive (more likely now that target re-evaluation is throttled to
+  // DECISION_INTERVAL — the drone may arrive before its next decision notices the
+  // capture). Abort the hit instead of damaging a friendly node/turret.
+  if (isAlly(target.owner, drone.owner)) return false;
   const dmg = drone.damage;
   if (drone.targetKind === 'turret') {
     target.hp -= dmg;
@@ -423,6 +449,15 @@ export function updateDrones(dt) {
       spawnScorch(f.x, f.y, 'small');
       state.fleets.splice(i, 1); continue;
     }
+
+    // ---- Decision throttle (stage 1b) ----
+    // Re-pick a target at most every DECISION_INTERVAL (staggered per drone).
+    // When NOT due (the `else` far below) we hold the current commitment and fall
+    // straight through to the every-tick flight + impact code at the bottom of the
+    // loop. The decision block here is deliberately left at loop indent (not re-
+    // indented under the `if`) so this hot-path diff stays reviewable.
+    if (state.elapsed >= (f._nextDecisionT || 0)) {
+    f._nextDecisionT = nextDecisionT(f);
 
     // Hunt scan: nearest enemy ground fleet in transit, within detection radius.
     // When wasm is loaded the batched pre-computed table answers in O(1);
@@ -540,11 +575,22 @@ export function updateDrones(dt) {
     if (f.targetKind === 'fleet' && (_prevKind !== 'fleet' || _prevTid !== f.targetId)) {
       pledged.set(f.targetId, (pledged.get(f.targetId) || 0) + 1);
     }
+    } else {
+      // Not due for a decision — hold the current plan. Keep orbiting if we were
+      // loitering; if locked on a moving fleet, refresh the aim so the terminal
+      // dive still connects. Flight + impact still happen below, every tick.
+      if (f._loitering) { loiterDrone(f, dt); continue; }
+      if (f.targetKind === 'fleet') {
+        const locked = fleetById.get(f.targetId);
+        if (locked) { f.tx = locked.x; f.ty = locked.y; }
+      }
+    }
 
     // Reaching here means the drone has a live target and resumes its run —
     // drop any loiter anchor so the next time it needs to wait it re-circles
     // from wherever it then is.
     f._loiterCx = undefined;
+    f._loitering = false;
 
     // Approach / impact — still need real `d` here because we normalize by it
     // for the movement step (dx/d, dy/d). The arrival check stays scalar.

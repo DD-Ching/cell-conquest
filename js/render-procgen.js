@@ -24,6 +24,7 @@
 import { state } from './state.js';
 import { WORLD_W, WORLD_H } from './config.js';
 import { REGION_TINT, rgba } from './tactical-theme.js';
+import { bakeContours, contourLevels } from './map-cartography.js';
 
 const TEX_MAX = 1400;                  // baked map long side (px) — fixed, world-size independent
 let buf = null, bufW = 0, bufH = 0, scale = 1, bakedSig = null;
@@ -74,10 +75,13 @@ function bakeElevation(c, gg, pal) {
       const t = (e - seaLevel) / (1 - seaLevel);          // 0..1 above sea
       col = t < 0.6 ? lerp(lo, mid, t / 0.6) : lerp(mid, hi, (t - 0.6) / 0.4);
     }
-    // West-light hillshade from the E–W elevation gradient (relief).
-    const x = i % GW;
+    // NW-light hillshade — a strong E–W slope plus a softer N–S term gives the
+    // terrain real relief instead of a near-flat wash (the old ×1.4 E–W-only
+    // shade barely read once the command veil went over it).
+    const x = i % GW, yy = (i / GW) | 0;
     const eL = elev[i - (x > 0 ? 1 : 0)], eR = elev[i + (x < GW - 1 ? 1 : 0)];
-    const sh = 1 + (eL - eR) * 1.4;
+    const eU = elev[i - (yy > 0 ? GW : 0)], eD = elev[i + (yy < GH - 1 ? GW : 0)];
+    const sh = 1 + (eL - eR) * 2.1 + (eU - eD) * 1.1;
     const k = i * 4;
     id.data[k] = cl(col[0] * sh); id.data[k + 1] = cl(col[1] * sh); id.data[k + 2] = cl(col[2] * sh); id.data[k + 3] = 255;
   }
@@ -104,20 +108,48 @@ function bakeTacticalMap() {
   c.fillStyle = pal.bg;
   c.fillRect(0, 0, WORLD_W, WORLD_H);
   if (state.geoGrid && state.geoGrid.elev) bakeElevation(c, state.geoGrid, pal);
-  // Dark command-map veil over the terrain for the serious recon mood.
-  c.fillStyle = 'rgba(8, 6, 12, 0.22)';
+  // Command-map veil over the terrain — kept THIN so the elevation shade +
+  // contour lines below still read (the old 0.22 veil flattened the map into a
+  // near-uniform field; that emptiness is what made it look like a graph).
+  c.fillStyle = 'rgba(8, 6, 12, 0.13)';
   c.fillRect(0, 0, WORLD_W, WORLD_H);
+
+  // 1b) Topographic contour lines + coastline (marching squares from geoGrid).
+  //     The single biggest "this is a map" signal: faint elevation isolines
+  //     across the whole theatre, plus a brighter shore where terrain dips
+  //     below sea level. Bake-time only — see map-cartography.js.
+  if (state.geoGrid && state.geoGrid.elev) {
+    const gg = state.geoGrid;
+    // Minor contours — the fine topographic web (close spacing, thin + faint).
+    bakeContours(c, gg, {
+      levels: contourLevels(gg.seaLevel, 0.07),
+      color: 'rgba(236, 214, 176, 1)', lineWidth: 7, alpha: 0.14,
+    });
+    // Index contours — every ~3rd level drawn bolder, the way a real topo map
+    // thickens its labelled lines. This is what makes the relief read.
+    bakeContours(c, gg, {
+      levels: contourLevels(gg.seaLevel, 0.21),
+      color: 'rgba(246, 226, 190, 1)', lineWidth: 13, alpha: 0.28,
+    });
+    // Coastline — the seaLevel iso, bright + thick, where the world has water.
+    if (gg.seaLevel > 0.04) {
+      bakeContours(c, gg, {
+        levels: [gg.seaLevel],
+        color: pal.water || '#3a6f8a', lineWidth: 36, alpha: 0.5,
+      });
+    }
+  }
 
   // 2) Region zones — light tint + faint contour rings (sector identity).
   for (const r of state.regions) {
     const col = REGION_TINT[r.type] || '#6a6a78';
     const g = c.createRadialGradient(r.x, r.y, 0, r.x, r.y, r.radius);
-    g.addColorStop(0, rgba(col, 0.12));
-    g.addColorStop(0.55, rgba(col, 0.05));
+    g.addColorStop(0, rgba(col, 0.18));
+    g.addColorStop(0.55, rgba(col, 0.08));
     g.addColorStop(1, rgba(col, 0));
     c.fillStyle = g;
     c.beginPath(); c.arc(r.x, r.y, r.radius, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = rgba(col, 0.08);
+    c.strokeStyle = rgba(col, 0.11);
     c.lineWidth = 2.5;
     for (let k = 1; k <= 3; k++) {
       c.beginPath(); c.arc(r.x, r.y, r.radius * (0.32 + 0.22 * k), 0, Math.PI * 2); c.stroke();

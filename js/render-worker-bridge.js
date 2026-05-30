@@ -153,6 +153,7 @@ function buildSnapshot() {
     salvoTarget: state.salvoTarget,
     mousePos:    state.mousePos,
     painting:    state.painting,
+    mapMode:     state.mapMode,    // cartographic view mode (V key) — worker honors it
 
     // Faction colours: COLOR/GLOW are populated by rollFactions() on the MAIN
     // thread; the worker's own factions.js module starts empty, so without this

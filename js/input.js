@@ -11,7 +11,7 @@
 // newGame() to prime panel opacity (imported back across the boundary).
 // =====================================================
 import { state } from './state.js';
-import { NET_PICK_R, SPEEDS } from './config.js';
+import { NET_PICK_R, SPEEDS, MAP_MODES } from './config.js';
 import { pointInPolygon } from './util.js';
 import { clampCamera, zoomBy } from './camera.js';
 import { nodeAt, roadAt, turretAt } from './world.js';
@@ -301,6 +301,14 @@ export function attachInput() {
     if (k === 'm') {
       const m = toggleMute();
       console.log('[audio] ' + (m ? 'muted' : 'unmuted'));
+    }
+    // V — cycle the cartographic view mode (cinematic → strategic → detailed →
+    // debug → …). Cartographic modes curve roads + demote minor nodes so the
+    // map reads as terrain; debug restores the literal straight-edge graph.
+    if (k === 'v') {
+      const i = MAP_MODES.indexOf(state.mapMode);
+      state.mapMode = MAP_MODES[(i + 1) % MAP_MODES.length];
+      console.log('[map] view mode →', state.mapMode);
     }
     // Debug: Shift+W toggles wasm hot loops on/off so the player can A/B
     // compare the perf overlay (ms sim) between Rust and JS paths.

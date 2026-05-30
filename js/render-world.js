@@ -12,6 +12,7 @@ import { ARTILLERY_AOE } from './config.js';
 import { COLOR } from './factions.js';
 import { getEdge, edgeVisualBlockage, TURRET_RANGES } from './engineering.js';
 import { drawRoadStyled } from './sprites.js';
+import { roadBow, curveOffsetForPoint } from './road-curve.js';
 
 // ---- Roads (TD-style path with sand-tint blockage readout) ----
 export function drawRoads(ctx, zoom, now = 0) {
@@ -25,8 +26,10 @@ export function drawRoads(ctx, zoom, now = 0) {
     // Tint derived purely from pile count — visual readout of congestion,
     // not a speed multiplier (slowdown comes from physical detour).
     // widthMul comes from world.buildRoads (Gaussian × endpoint connectivity).
-    // `now` animates highway supply-line dashes.
-    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now);
+    // `now` animates highway supply-line dashes. `bow` gently bends the painted
+    // road off the straight chord — render-only, outcome-neutral (road-curve.js).
+    const bow = roadBow(a.id, b.id, Math.hypot(b.x - a.x, b.y - a.y));
+    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now, bow);
   }
 }
 
@@ -44,15 +47,20 @@ export function drawWreckPiles(ctx, zoom) {
     if (lowLOD) {
       // Match WRECK_RENDER_R = 8 so the pile footprint stays the same as
       // the detailed render — a road full of wrecks looks just as choked
-      // at low zoom as at high zoom.
+      // at low zoom as at high zoom. Each pile rides the painted road curve
+      // (sim w.x/w.y stay on the straight centerline — see road-curve.js).
       ctx.fillStyle = 'rgba(20, 10, 4, 0.75)';
-      for (const w of e.wrecks) ctx.fillRect(w.x - 8, w.y - 8, 16, 16);
+      for (const w of e.wrecks) {
+        const o = curveOffsetForPoint(a.x, a.y, b.x, b.y, a.id, b.id, w.x, w.y);
+        ctx.fillRect(w.x - 8 + o.ox, w.y - 8 + o.oy, 16, 16);
+      }
       continue;
     }
     for (const w of e.wrecks) {
       const hpFrac = Math.max(0.4, w.hp / w.hpMax);   // fades while being cleared
+      const o = curveOffsetForPoint(a.x, a.y, b.x, b.y, a.id, b.id, w.x, w.y);
       ctx.save();
-      ctx.translate(w.x, w.y);
+      ctx.translate(w.x + o.ox, w.y + o.oy);
       ctx.rotate(w.rot);
       // Soot halo on the sand around the pile
       ctx.fillStyle = `rgba(20, 10, 4, ${0.55 * hpFrac})`;
@@ -164,11 +172,19 @@ export function drawFleetTrails(ctx, zoom) {
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (!f.path || f.segIdx >= f.path.length - 1) continue;
+    const segA = state.nodes[f.path[f.segIdx]];
     const segB = state.nodes[f.path[f.segIdx + 1]];
+    // Keep the trail attached to the curve-shifted unit (road-curve.js); the
+    // far end is a node, which sits at offset 0, so the trail meets it cleanly.
+    let sx = f.x, sy = f.y;
+    if (!f.offroad) {
+      const o = curveOffsetForPoint(segA.x, segA.y, segB.x, segB.y, segA.id, segB.id, f.x, f.y);
+      sx += o.ox; sy += o.oy;
+    }
     ctx.strokeStyle = COLOR[f.owner] + '40';
     ctx.lineWidth = 1 / zoom;
     ctx.beginPath();
-    ctx.moveTo(f.x, f.y);
+    ctx.moveTo(sx, sy);
     ctx.lineTo(segB.x, segB.y);
     ctx.stroke();
   }

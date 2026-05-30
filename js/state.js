@@ -191,4 +191,11 @@ export const state = {
   // (U-key toggle). main render() must skip when true (canvas surface
   // now lives in the worker). HUD + minimap stay main-thread.
   renderInWorker: false,
+
+  // Cartographic view mode (V cycles). 'cinematic' | 'strategic' | 'detailed'
+  // | 'debug'. Cartographic modes bend roads + demote the swarm of minor nodes
+  // so the geography reads as a map; 'debug' restores the literal straight-edge,
+  // all-nodes-equal graph for diagnostics. Shipped in the render snapshot so the
+  // render worker honors it too.
+  mapMode: 'cinematic',
 };

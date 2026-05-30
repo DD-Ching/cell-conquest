@@ -44,6 +44,13 @@ export function setNodeRange(min, max) {
 export const PROCGEN_REGIONS_MIN = 8;
 export const PROCGEN_REGIONS_MAX = 15;
 
+// ---- Cartographic view modes (V key cycles) ----
+// The map can be drawn at four "view philosophy" levels. All but 'debug' are
+// cartographic (curved roads + geography-first + minor nodes demoted by
+// importance); 'debug' restores the raw graph (straight edges, every node +
+// number drawn equally) for diagnostics.
+export const MAP_MODES = ['cinematic', 'strategic', 'detailed', 'debug'];
+
 // ---- Movement ----
 export const FLEET_SPEED = 95;          // troop fleets, world px/sec
 export const PAN_SPEED = 1800;          // camera key-pan speed (bumped for big map)

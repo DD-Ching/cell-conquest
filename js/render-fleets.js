@@ -13,6 +13,7 @@ import { COLOR } from './factions.js';
 import {
   drawTroopSprite, drawEngineerSprite, drawDroneSprite,
 } from './sprites.js';
+import { curveOffsetForPoint } from './road-curve.js';
 
 // ---- Ground fleets — column of vehicles trailing a leader ----
 export function drawTroopFleets(ctx, zoom) {
@@ -34,6 +35,16 @@ export function drawTroopFleets(ctx, zoom) {
     } else if (!f.path) {
       continue;
     }
+    // Ride the painted road curve: shift the DRAW anchor by the same
+    // perpendicular offset the road stroke uses (road-curve.js). Render-only —
+    // f.x/f.y (the sim positions combat reads) stay on the straight centerline,
+    // so this is outcome-neutral. Off-road final legs stay straight.
+    let fx = f.x, fy = f.y;
+    if (f.path && f.segIdx < f.path.length - 1 && !f.offroad) {
+      const ca = state.nodes[f.path[f.segIdx]], cb = state.nodes[f.path[f.segIdx + 1]];
+      const o = curveOffsetForPoint(ca.x, ca.y, cb.x, cb.y, ca.id, cb.id, f.x, f.y);
+      fx += o.ox; fy += o.oy;
+    }
     // LOW LOD: collapse the column-of-sprites into ONE oriented rect that
     // matches the visual footprint of the full column at LOD 3 (~36 px wide,
     // and as long as the column would have been — GAP*count of vehicles). So
@@ -49,21 +60,21 @@ export function drawTroopFleets(ctx, zoom) {
       const px = -sin * wid, py = cos * wid;         // perpendicular
       ctx.fillStyle = COLOR[f.owner];
       ctx.beginPath();
-      ctx.moveTo(f.x + hx + px, f.y + hy + py);
-      ctx.lineTo(f.x + hx - px, f.y + hy - py);
-      ctx.lineTo(f.x + bx - px, f.y + by - py);
-      ctx.lineTo(f.x + bx + px, f.y + by + py);
+      ctx.moveTo(fx + hx + px, fy + hy + py);
+      ctx.lineTo(fx + hx - px, fy + hy - py);
+      ctx.lineTo(fx + bx - px, fy + by - py);
+      ctx.lineTo(fx + bx + px, fy + by + py);
       ctx.closePath();
       ctx.fill();
       continue;
     }
     // ENGINEERS / DEPLOY: single dozer (they're individual vehicles)
     if (f.kind === 'engineer' || f.kind === 'deploy') {
-      drawEngineerSprite(ctx, f.x, f.y, angle, f.owner, zoom);
+      drawEngineerSprite(ctx, fx, fy, angle, f.owner, zoom);
       ctx.fillStyle = COLOR[f.owner];
       ctx.font = `bold ${12 / zoom}px ui-monospace, monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText('⚙', f.x, f.y - 18);
+      ctx.fillText('⚙', fx, fy - 18);
       continue;
     }
     // TROOPS / ASSAULT: column of individual vehicles (1 sprite ≈ 5 units, max 8)
@@ -75,8 +86,8 @@ export function drawTroopFleets(ctx, zoom) {
     for (let k = 0; k < showCount; k++) {
       // Alternating lateral jitter so it doesn't look like a comb
       const jitter = (k % 2 === 0 ? 1 : -1) * (k > 0 ? 1.6 : 0);
-      const vx = f.x + backX * (k * GAP) + perpX * jitter;
-      const vy = f.y + backY * (k * GAP) + perpY * jitter;
+      const vx = fx + backX * (k * GAP) + perpX * jitter;
+      const vy = fy + backY * (k * GAP) + perpY * jitter;
       if (f.kind === 'assault') {
         drawTroopSprite(ctx, vx, vy, angle, Math.max(40, perVehUnits), f.owner, zoom);
       } else {
@@ -87,7 +98,7 @@ export function drawTroopFleets(ctx, zoom) {
     ctx.fillStyle = COLOR[f.owner];
     ctx.font = `bold ${12 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(totalUnits, f.x, f.y - 18);
+    ctx.fillText(totalUnits, fx, fy - 18);
   }
 }
 

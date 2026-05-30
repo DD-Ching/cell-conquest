@@ -98,6 +98,7 @@ function hydrate(snap) {
   state.salvoTarget = snap.salvoTarget;
   state.mousePos    = snap.mousePos;
   state.painting    = snap.painting;
+  if (snap.mapMode) state.mapMode = snap.mapMode;   // cartographic view mode (V key)
 
   // Rebuild the turretGrid the way main.js simulate() does — drawTurrets'
   // aim-scan uses state.turretGrid + state.groundFleetGrid to find targets

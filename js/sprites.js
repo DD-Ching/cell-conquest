@@ -13,6 +13,7 @@
 // that looked oversized on the map.
 // =====================================================
 import { COLOR } from './factions.js';
+import { tracePath } from './road-curve.js';
 
 const TAU = Math.PI * 2;
 
@@ -134,15 +135,17 @@ export function blitSprite(ctx, asset, size, tint) {
 // ~0.5 for outskirts, ~1.5 for hub arteries) layers natural road hierarchy
 // on top.
 // =====================================================
-export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null, now = 0) {
+export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null, now = 0, bow = 0) {
   ctx.lineCap = 'round';
   // Dark outer (path edge). Bridges get a wider steel deck shadow so a
-  // chokepoint reads even before the accent stroke.
+  // chokepoint reads even before the accent stroke. The whole road is ONE
+  // path — gently bowed when `bow`≠0 (curve geometry comes from road-curve.js;
+  // the caller passes the per-edge bow) — and every later stroke layer below
+  // reuses it, so the curve only has to be built once.
   ctx.strokeStyle = kind === 'bridge' ? 'rgba(20, 26, 36, 0.95)' : 'rgba(38, 22, 11, 0.95)';
   ctx.lineWidth = (kind === 'bridge' ? 9.5 : 8) * widthMul;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  tracePath(ctx, a.x, a.y, b.x, b.y, bow);
   ctx.stroke();
   // Inner sand fill — darker as blockage rises
   const sandAlpha = 0.92 - blockage * 0.35;

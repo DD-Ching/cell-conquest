@@ -37,6 +37,7 @@ let worker = null;
 let workerReady = false;
 let enabled = false;
 let pendingTerrain = false;
+let pendingProcgen = false;       // ship the static geoGrid once per world (not per frame)
 let lastFrameT = 0;
 
 /** Has the canvas been transferred to the worker? Returns true as soon as
@@ -82,6 +83,7 @@ export function enable() {
     enabled = true;
     state.renderInWorker = true;
     pendingTerrain = true;        // ship terrain on next frame, once it's baked
+    pendingProcgen = true;        // + the static procgen elevation grid (one-shot)
     return true;
   } catch (e) {
     console.error('[render-worker] enable failed:', e);
@@ -102,6 +104,7 @@ export function notifyNewGame() {
   if (!enabled || !worker) return;
   worker.postMessage({ type: 'newGame' });
   pendingTerrain = true;
+  pendingProcgen = true;          // re-ship the new world's elevation grid
 }
 
 /** Build the per-frame snapshot. Slim by design — only what render()
@@ -131,7 +134,8 @@ function buildSnapshot() {
     barriers: state.barriers,         // procgen river/ridge shapes
     worldTheme: state.worldTheme,     // procgen v2 theme (palette + densities) — small
     resourceBelts: state.resourceBelts, // procgen v2 belts (a few {kind,x,y,r})
-    geoGrid:  state.geoGrid,          // procgen v2 elevation grid for satellite shade
+    // geoGrid (9240 floats) is STATIC per world — shipped once via the 'procgen'
+    // one-shot below, NOT per frame (it would be ~74 KB/frame otherwise).
     worldSeed: state.worldSeed,       // procgen bake-cache key (rebake on new world)
 
     particles: state.particles,
@@ -175,6 +179,12 @@ export function tickFrame() {
   if (pendingTerrain && state.terrain && state.terrain.length > 0) {
     worker.postMessage({ type: 'terrain', terrain: state.terrain });
     pendingTerrain = false;
+  }
+  // Ship the STATIC procgen elevation grid once per world (before the first
+  // frame's bake), not every snapshot. Cleared like pendingTerrain.
+  if (pendingProcgen && state.geoGrid) {
+    worker.postMessage({ type: 'procgen', geoGrid: state.geoGrid });
+    pendingProcgen = false;
   }
 
   worker.postMessage({ type: 'frame', snapshot: buildSnapshot(), dt });

@@ -75,7 +75,8 @@ function hydrate(snap) {
   state.barriers  = snap.barriers || [];   // procgen river/ridge shapes
   state.worldTheme    = snap.worldTheme    || null;   // procgen v2 theme palette
   state.resourceBelts = snap.resourceBelts || [];     // procgen v2 belts
-  state.geoGrid       = snap.geoGrid       || null;   // procgen v2 elevation grid
+  // state.geoGrid is NOT in the per-frame snapshot — it's set once by the
+  // 'procgen' one-shot message (static per world). Leave the existing value.
   state.worldSeed = snap.worldSeed || 0;   // procgen bake-cache key
 
   state.particles = snap.particles;
@@ -160,6 +161,13 @@ self.onmessage = (e) => {
       state.terrain = msg.terrain;
       try { bakeTerrain(); }
       catch (e) { console.warn('[render-worker] bakeTerrain skipped:', e.message); }
+      return;
+    }
+
+    case 'procgen': {
+      // Static per-world procgen elevation grid (satellite shade). Shipped once
+      // per world, not per frame — see render-worker-bridge tickFrame.
+      state.geoGrid = msg.geoGrid;
       return;
     }
 

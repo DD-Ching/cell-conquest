@@ -363,7 +363,10 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
     if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
     if (!state.selectedIds.has(n.id)) {
       if (cartoDemote) {
-        if (nodeImportance(n) < 2) continue;
+        // Strategic map: only OWNED garrisons (your + enemy holdings) show a
+        // count — neutral places read as dots/icons, not a field of figures.
+        // Keeps the overview about terrain + territory, not every garrison.
+        if (n.owner === 'neutral') continue;
       } else if (declutter &&
           n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
     }

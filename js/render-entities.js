@@ -353,10 +353,20 @@ export function drawNodeLabelsOnTop(ctx, zoom) {
   // coloured dot until you zoom in. (Spec: numbers on hover / selection / high
   // zoom only.) The 0.6 cutoff matches the LOD-1 dot-mode threshold.
   const declutter = zoom < 0.6;
+  // Cartographic modes hide raw unit counts harder at strategic zoom — only
+  // MAJOR places (owned bases + typed landmarks) keep a number, so the overview
+  // reads as a map of places, not a field of figures. detailed keeps the
+  // size-based declutter; debug shows all. (Spec: numbers secondary/hidden.)
+  const mode = state.mapMode;
+  const cartoDemote = (mode === 'cinematic' || mode === 'strategic') && zoom < 0.6;
   for (const n of state.nodes) {
     if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
-    if (declutter && !state.selectedIds.has(n.id) &&
-        n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
+    if (!state.selectedIds.has(n.id)) {
+      if (cartoDemote) {
+        if (nodeImportance(n) < 2) continue;
+      } else if (declutter &&
+          n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
+    }
     catchUpRegen(n);                         // fresh units for the top-layer label
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;

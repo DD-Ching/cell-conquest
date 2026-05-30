@@ -17,11 +17,19 @@ import { roadBow, curveOffsetForPoint } from './road-curve.js';
 // ---- Roads (TD-style path with sand-tint blockage readout) ----
 export function drawRoads(ctx, zoom, now = 0) {
   const { vL, vT, vR, vB } = state._view;
+  // Cartographic road hierarchy: at strategic zoom (low LOD) the local-road mesh
+  // fades back so the inter-region HIGHWAY skeleton reads first — the way a real
+  // map drops local streets when you zoom out. detailed/debug keep every road at
+  // full strength.
+  const mode = state.mapMode;
+  const fadeLocals = (mode === 'cinematic' || mode === 'strategic') && state._lod < 2;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
     // Segment-AABB cull
     if (Math.max(a.x, b.x) < vL || Math.min(a.x, b.x) > vR ||
         Math.max(a.y, b.y) < vT || Math.min(a.y, b.y) > vB) continue;
+    const minor = fadeLocals && r.kind !== 'highway' && r.kind !== 'bridge';
+    if (minor) ctx.globalAlpha = 0.3;
     const e = getEdge(r.a, r.b);
     // Tint derived purely from pile count — visual readout of congestion,
     // not a speed multiplier (slowdown comes from physical detour).
@@ -30,6 +38,7 @@ export function drawRoads(ctx, zoom, now = 0) {
     // road off the straight chord — render-only, outcome-neutral (road-curve.js).
     const bow = roadBow(a.id, b.id, Math.hypot(b.x - a.x, b.y - a.y));
     drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now, bow);
+    if (minor) ctx.globalAlpha = 1;
   }
 }
 

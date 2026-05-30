@@ -878,8 +878,23 @@ function releaseStockpileFor(owner, fixedTarget, fullDump = false) {
       continue;
     }
 
-    // AI release: spread across the value-budgeted plan; un-budgeted drones
-    // STAY stockpiled (don't vaporise onto a dead front).
+    // AI release: spread across the value-budgeted plan FIRST (best targets,
+    // no overkill), then DRAIN any remainder via launchOneDroneFrom — the same
+    // map-wide picker the player's release + the auto-wave use, which has a
+    // nearest-enemy-with-units fallback for targets outside buildSalvoPlan's
+    // 1500/1700px scoring range.
+    //
+    // WHY THIS MATTERS (the "NPC factory goes dead at 20" bug): on the big map a
+    // factory behind the front has its nearest enemy well past 1700px, so
+    // buildSalvoPlan returns an EMPTY plan — the old code then left
+    // `dronesReady = n` untouched, so the factory released 0 drones and stayed
+    // pinned at FACTORY_MAX_STOCKPILE forever (tryDroneSalvo kept "firing" every
+    // 35-55 s but launching nothing). The player never hit this because the H
+    // release uses fullDump (launchOneDroneFrom + always zeroes dronesReady).
+    // Draining the remainder map-wide makes the two paths symmetric. Only when
+    // there is GENUINELY no enemy-with-units left anywhere (launchOneDroneFrom
+    // returns false) do drones stay stockpiled — the correct "nearly won, don't
+    // waste them on a dead front" hold.
     const plan = buildSalvoPlan(t, fixedTarget, n);
     for (let k = 0; k < plan.length; k++) {
       const jx = (Math.random() - 0.5) * 14;
@@ -887,7 +902,12 @@ function releaseStockpileFor(owner, fixedTarget, fullDump = false) {
       spawnDrone(t.x + jx, t.y + jy, t.owner, plan[k]);
       launched++;
     }
-    t.dronesReady = n - plan.length;                 // keep the unspent remainder
+    let remainder = n - plan.length;
+    while (remainder > 0) {
+      if (!launchOneDroneFrom(t)) break;   // no enemy-with-units anywhere → hold the rest
+      remainder--; launched++;
+    }
+    t.dronesReady = remainder;
     if (t.dronesReady <= 0) { t.dronesReady = 0; t.prodCooldown = DF_PRODUCTION_T; }
   }
   return launched;

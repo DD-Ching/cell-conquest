@@ -40,6 +40,20 @@ function tintBright(hex) {
   return s;
 }
 
+// Cartographic node importance — what anchors the map vs. what's just texture.
+// Majors (owned bases, typed landmarks, sizeable settlements) always read;
+// minor neutral outposts recede or hide at strategic zoom in the cartographic
+// modes so the map shows a skeleton of key places over terrain instead of ~800
+// equal dots. PURELY VISUAL: world.nodeAt picking is unchanged, so a demoted
+// node is still selectable/commandable — gameplay is identical.
+const _MAJOR_TYPES = new Set(['capital', 'city', 'fortress', 'factory', 'mine', 'research_lab']);
+function nodeImportance(n) {
+  if (n.owner !== 'neutral') return 2;        // anything owned is a place that matters
+  if (_MAJOR_TYPES.has(n.nodeType)) return 2; // typed landmark (city/fortress/mine/…)
+  if (n.size >= 40) return 1;                 // a sizeable neutral settlement
+  return 0;                                   // minor town / outpost / open-plains scatter
+}
+
 // ---- Nodes (fortified compounds: rim, glow, inner structures, count) ----
 // Per-layer passes over the visible set so uniform-alpha layers (selection,
 // wounded) set globalAlpha once per pass instead of once per node.
@@ -55,11 +69,19 @@ export function drawNodes(ctx, zoom, now) {
     // translucent) so the big map reads as coloured territory spreading over a
     // muted neutral field, not 830 identical dots.
     const minR = 6 / zoom;
+    // Cartographic demotion (cinematic/strategic only): minor neutral outposts
+    // recede, and at deep overview they hide entirely, so the geography + key
+    // places carry the frame. 'detailed' / 'debug' draw every node (full info).
+    const mode = state.mapMode;
+    const demote = mode === 'cinematic' || mode === 'strategic';
+    const hideMinors = demote && zoom < (mode === 'cinematic' ? 0.42 : 0.30);
     for (const n of state.nodes) {
       const owned = n.owner !== 'neutral';
-      const r = Math.max(n.size, minR) * (owned ? 1 : 0.82);
+      const minor = demote && nodeImportance(n) === 0;
+      if (minor && hideMinors) continue;                  // vanish at overview
+      const r = Math.max(n.size, minR) * (owned ? 1 : 0.82) * (minor ? 0.7 : 1);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
-      ctx.globalAlpha = owned ? 1 : 0.62;
+      ctx.globalAlpha = (owned ? 1 : 0.62) * (minor ? 0.5 : 1);
       ctx.fillStyle = COLOR[n.owner];
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);

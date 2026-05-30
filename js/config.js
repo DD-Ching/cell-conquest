@@ -98,7 +98,14 @@ export const ENG_COST = 12;             // units consumed at source node to disp
 export const AA_BUILD_TIME = 10;
 export const AA_HP = 100;
 export const AA_RADIUS = 200;
-export const AA_DPS = 15;
+// Anti-air firepower — 10× the original 15 (player request: hard counter to
+// drone swarms). AA splits this DPS across all drones in range (saturation), so
+// ×10 means one battery shreds 10× more total drone-HP/sec: a lone drone dies
+// in ~0.2 s, a 10-strong swarm in ~2 s each. Pure constant — read by both the
+// wasm batch path and the JS fallback, so it costs ZERO extra per-frame work
+// (faster kills → fewer live drones → if anything less sim load). VFX/SFX of
+// the mass die-off stay bounded by the particle FIFO + per-frame explosion cap.
+export const AA_DPS = 150;
 
 export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;

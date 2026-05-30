@@ -1,5 +1,28 @@
 # Cell Conquest — Project Memory
 
+## ⛳ Standing rule — END EVERY REPLY with the run command
+
+At the very end of **every** message to the user, append a short reminder of
+how to launch the game from the command line. This is a standing request — do
+it even when the conversation is about something unrelated. Keep the command
+**current**: if the launch method ever changes, update both this block and the
+reminder you print.
+
+Current launch (from the repo root):
+
+```
+python3 serve.py        # no-cache dev server → http://localhost:8765/node-conquest.html
+```
+
+If the port is busy (`OSError: Address already in use`):
+
+```
+lsof -ti:8765 | xargs kill -9     # free :8765, then re-run serve.py
+# …or just pick another port:  python3 serve.py 8770
+```
+
+(Use `serve.py`, NOT `python3 -m http.server` — see the cache note below.)
+
 ## Repo
 
 - GitHub: https://github.com/DD-Ching/cell-conquest (private)

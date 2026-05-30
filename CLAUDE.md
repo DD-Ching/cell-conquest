@@ -8,11 +8,15 @@ it even when the conversation is about something unrelated. Keep the command
 **current**: if the launch method ever changes, update both this block and the
 reminder you print.
 
-Current launch (from the repo root):
+Current launch (always `cd` to the absolute repo path first):
 
 ```
+cd /Users/ddh/Cell
 python3 serve.py        # no-cache dev server → http://localhost:8765/node-conquest.html
 ```
+
+(Abs path is this MacBook's checkout; the Intel NUC checkout may live elsewhere
+— adjust the `cd` target there.)
 
 If the port is busy (`OSError: Address already in use`):
 

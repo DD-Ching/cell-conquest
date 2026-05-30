@@ -14,7 +14,7 @@
 import { state } from './state.js';
 import {
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE, DRONE_MAX_LIFETIME,
-  DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO,
+  DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO, DRONE_TURN_RADIUS,
   DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE, AA_RADIUS,
 } from './config.js';
 import { dist, inboundKey } from './util.js';
@@ -39,7 +39,29 @@ function spawnDrone(originX, originY, owner, target) {
     targetId:   target.id,
     hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
     spawnT: state.elapsed,              // for DRONE_MAX_LIFETIME timeout
+    heading: Math.atan2(target.y - originY, target.x - originX),   // launch facing
   });
+}
+
+/** Turn-radius flight. The drone banks toward (tx,ty) at a BOUNDED turn rate
+ *  (ω = DRONE_SPEED / radius) and advances along its heading — it never snaps
+ *  direction or reverses on a dime. The radius tightens as it closes (clamped to
+ *  d·0.7) so a drone can always curve tight enough to dive in for the kill;
+ *  overshoot it from a bad angle and it arcs around in a wide circle, then
+ *  spirals in — the loiter orbit emerges from the motion itself. ALL drone
+ *  movement (combat run + idle loiter) routes through here so banking is uniform. */
+function steerDrone(f, tx, ty, dt) {
+  const dx = tx - f.x, dy = ty - f.y;
+  const d = Math.hypot(dx, dy) || 1;
+  if (f.heading === undefined) f.heading = Math.atan2(dy, dx);
+  let dh = Math.atan2(dy, dx) - f.heading;
+  if (dh > Math.PI) dh -= 2 * Math.PI; else if (dh < -Math.PI) dh += 2 * Math.PI;
+  const turnR = Math.min(DRONE_TURN_RADIUS, d * 0.7);   // tighten near the target
+  const maxTurn = (DRONE_SPEED / turnR) * dt;
+  if (dh > maxTurn) dh = maxTurn; else if (dh < -maxTurn) dh = -maxTurn;
+  f.heading += dh;
+  f.x += Math.cos(f.heading) * DRONE_SPEED * dt;
+  f.y += Math.sin(f.heading) * DRONE_SPEED * dt;
 }
 
 // ---- Target resolution ----
@@ -272,26 +294,22 @@ function rebuildLoiterCenters() {
 }
 function loiterDrone(drone, dt) {
   const c = _loiterCenters.get(drone.owner);
-  if (!c) {                                 // no factory rally point — wide solo orbit (10× radius)
+  let tx, ty;
+  if (!c) {                                 // no factory rally point — wide solo orbit
     if (drone._loiterCx === undefined) { drone._loiterCx = drone.x; drone._loiterCy = drone.y; drone._loiterA = Math.random() * Math.PI * 2; }
-    drone._loiterA += (DRONE_SPEED / 300) * dt;   // ÷10 angular with 10× radius → same cruise tangential
-    drone.x = drone._loiterCx + Math.cos(drone._loiterA) * 300;
-    drone.y = drone._loiterCy + Math.sin(drone._loiterA) * 300;
-    return;
+    drone._loiterA += (DRONE_SPEED / 300) * dt;
+    tx = drone._loiterCx + Math.cos(drone._loiterA) * 300;
+    ty = drone._loiterCy + Math.sin(drone._loiterA) * 300;
+  } else {
+    // Shared ring slot: a stable golden-angle offset per drone id + a common
+    // time rotation, so the whole formation turns as one and stays evenly
+    // spread however many join or leave.
+    const slot = state.elapsed * LOITER_ROT + drone._id * GOLDEN;
+    tx = c.cx + Math.cos(slot) * LOITER_R;
+    ty = c.cy + Math.sin(slot) * LOITER_R;
   }
-  // Shared ring slot: a stable golden-angle offset per drone id + a common
-  // time rotation, so the whole formation turns as one and stays evenly spread
-  // however many join or leave.
-  const slot = state.elapsed * LOITER_ROT + drone._id * GOLDEN;
-  const tx = c.cx + Math.cos(slot) * LOITER_R;
-  const ty = c.cy + Math.sin(slot) * LOITER_R;
-  // Fly toward the (moving) slot at cruise speed → eases in, then rides the
-  // rotation around the ring.
-  const dx = tx - drone.x, dy = ty - drone.y;
-  const d = Math.hypot(dx, dy) || 1;
-  const step = Math.min(d, DRONE_SPEED * dt);
-  drone.x += (dx / d) * step;
-  drone.y += (dy / d) * step;
+  // Bank toward the (moving) slot — the drone eases in then rides the rotation.
+  steerDrone(drone, tx, ty, dt);
 }
 
 // ---- Impact ----
@@ -580,9 +598,8 @@ export function updateDrones(dt) {
       }
       state.fleets.splice(i, 1); continue;
     }
-    const step = DRONE_SPEED * dt;
-    f.x += (dx / d) * step;
-    f.y += (dy / d) * step;
+    // Bank toward the target (turn-radius flight) instead of snapping straight.
+    steerDrone(f, f.tx, f.ty, dt);
   }
   // Cleanup pass: remove fleets killed mid-loop by drone hunts
   for (let i = state.fleets.length - 1; i >= 0; i--) {

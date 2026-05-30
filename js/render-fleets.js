@@ -101,7 +101,7 @@ export function drawDroneFleets(ctx, zoom, now) {
     for (const f of state.fleets) {
       if (f.kind !== 'drone') continue;
       if (f.x + 18 < vL || f.x - 18 > vR || f.y + 18 < vT || f.y - 18 > vB) continue;
-      const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
+      const angle = f.heading !== undefined ? f.heading : Math.atan2(f.ty - f.y, f.tx - f.x);
       const cos = Math.cos(angle), sin = Math.sin(angle);
       // Nose 14 forward, wings 10 back ± 9 perpendicular.
       const nx =  cos * 14,           ny =  sin * 14;
@@ -120,7 +120,7 @@ export function drawDroneFleets(ctx, zoom, now) {
   for (const f of state.fleets) {
     if (f.kind !== 'drone') continue;
     if (f.x + 35 < vL || f.x - 35 > vR || f.y + 35 < vT || f.y - 35 > vB) continue;
-    const angle = Math.atan2(f.ty - f.y, f.tx - f.x);
+    const angle = f.heading !== undefined ? f.heading : Math.atan2(f.ty - f.y, f.tx - f.x);
     drawDroneSprite(ctx, f.x, f.y, angle, f.owner, zoom, now);
     if (f.hp < DRONE_HP_AIR) {
       const bw = 18, frac = Math.max(0, f.hp) / DRONE_HP_AIR;

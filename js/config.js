@@ -135,6 +135,12 @@ export const ARTILLERY_SHELL_FLIGHT  = 0.7;   // sec of flight before detonation
 export const DRONE_HP_AIR = 30;
 export const DRONE_SPEED = 130;
 export const DRONE_DAMAGE = 50;
+// Turn radius (world px) for drone flight: drones bank toward their target at a
+// bounded turn rate (ω = DRONE_SPEED / radius) instead of snapping direction, so
+// they fly curved approaches and arc into wide circles when they overshoot —
+// the orbit emerges near the target, no separate loiter math needed. The radius
+// tightens as a drone closes in (so the terminal dive always connects).
+export const DRONE_TURN_RADIUS = 180;
 // Drone swarm sizing. The airborne ceiling scales with how many factories you
 // build (cap = DRONE_CAP_PER_FACTORY × your factory count), so factory
 // investment ALWAYS buys a bigger swarm — there is NO flat per-faction wall.

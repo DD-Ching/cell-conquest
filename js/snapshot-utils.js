@@ -113,6 +113,10 @@ export function sliceFleets(fleets) {
       // Drone / engineer / assault motion targets. Render uses these to
       // draw the off-road final leg + animate drones toward their target.
       tx: f.tx, ty: f.ty,
+      // Drone banking heading — render points the delta-wing sprite along
+      // the actual turn-radius flight direction, not straight at the target
+      // (without this the worker path falls back to target-facing → crabbing).
+      heading: f.heading,
       finalX: f.finalX, finalY: f.finalY,
       offroad: f.offroad,
     };

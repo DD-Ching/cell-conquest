@@ -73,40 +73,53 @@ export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
 }
 
 // =====================================================
-// Turret: tank — chassis + turret + cannon
-// `aimAngle === 0` is the caller's "no live target" sentinel (initial
-// state / placement preview). In that case we add a gentle ±3° idle
-// sway so the barrel doesn't look frozen.
+// Turret: tank — chassis + turret + cannon.
+//
+// Two modes, selected by `bodyAngle`:
+//   • bodyAngle === null  → STATIC building (the tank FACTORY). The square
+//     chassis stays axis-aligned and only the turret swivels by `aimAngle`
+//     (idle ±3° sway when aimAngle===0, the "no live target" sentinel).
+//   • bodyAngle = <radians> → MOBILE tank. The WHOLE hull (chassis + turret +
+//     barrel) rotates as one rigid body to face travel — that's what reads as
+//     "the tank is driving that way". The barrel is locked forward (no separate
+//     aim), so `aimAngle` is ignored in this mode.
+//
+// Heading convention: bodyAngle is atan2(dy, dx) (0 = east). The primitive
+// barrel points +x (east) by default, so rotate(bodyAngle) aligns it directly.
 // =====================================================
-export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, time = 0) {
+export function drawTankTurret(ctx, x, y, owner, active, zoom, aimAngle = 0, time = 0, bodyAngle = null) {
   const c = active ? COLOR[owner] : '#7a6a55';
+  const mobile = bodyAngle !== null;
 
   if (Asset.turret_tank?.ready) {
     ctx.save();
     ctx.translate(x, y);
+    // Mobile: spin the whole sprite to face travel. The top-down tank PNG is
+    // drawn nose-UP (−y), so map heading (0 = east) onto it with +90°.
+    if (mobile) ctx.rotate(bodyAngle + Math.PI / 2);
     blitSprite(ctx, Asset.turret_tank, 57, c);
     ctx.restore();
     return;
   }
 
-  // Idle sway only when no target — locked-on barrel must point at enemy.
-  // Compute locally so we don't mutate caller args (rendering side-effect).
-  const drawAngle = (aimAngle === 0)
-    ? 0.05 * Math.sin(time / 1300)
-    : aimAngle;
-
-  // Chassis (square base with tread highlights)
-  ctx.fillStyle = '#1a1206';
-  ctx.fillRect(x - 24,   y - 19.5, 48, 39);
-  ctx.fillStyle = c;
-  ctx.fillRect(x - 22.5, y - 18,   45, 36);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(x - 24,   y - 19.5, 48, 6);
-  ctx.fillRect(x - 24,   y + 13.5, 48, 6);
-  // Turret + cannon
+  // Primitive fallback. Draw in a translated (and, when mobile, rotated) local
+  // frame so a moving tank turns as one rigid body instead of a fixed square.
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(drawAngle);
+  if (mobile) ctx.rotate(bodyAngle);
+  // Chassis (square base with tread highlights — treads run front-to-back)
+  ctx.fillStyle = '#1a1206';
+  ctx.fillRect(-24,   -19.5, 48, 39);
+  ctx.fillStyle = c;
+  ctx.fillRect(-22.5, -18,   45, 36);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(-24,   -19.5, 48, 6);
+  ctx.fillRect(-24,    13.5, 48, 6);
+  // Turret + cannon. Mobile → barrel locked forward (+x in the rotated body
+  // frame). Static factory → turret swivels by aimAngle (idle sway at 0).
+  const turretRot = mobile ? 0
+    : (aimAngle === 0 ? 0.05 * Math.sin(time / 1300) : aimAngle);
+  ctx.rotate(turretRot);
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(0, 0, 13.5, 0, TAU); ctx.fill();
   ctx.fillStyle = c;

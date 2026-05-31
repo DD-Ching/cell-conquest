@@ -44,7 +44,11 @@ export function drawTroopFleets(ctx, zoom, now) {
         tx += o.ox; ty += o.oy;
         ang = curveHeadingForPoint(ca.x, ca.y, cb.x, cb.y, ca.id, cb.id, f.x, f.y);
       }
-      drawTankTurret(ctx, tx, ty, f.owner, true, zoom, ang, now);
+      // Mobile tank: rotate the WHOLE hull to face travel (bodyAngle = ang).
+      // Passing it in the bodyAngle slot makes drawTankTurret turn chassis +
+      // barrel as one rigid body — the static factory call omits it (stays a
+      // fixed building whose turret merely swivels).
+      drawTankTurret(ctx, tx, ty, f.owner, true, zoom, 0, now, ang);
       const hpMax = f.hpMax || f.units || 1;
       const frac = Math.max(0, f.units) / hpMax;
       if (frac < 0.999) {

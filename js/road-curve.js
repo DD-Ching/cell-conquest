@@ -104,3 +104,26 @@ export function curveOffsetForPoint(ax, ay, bx, by, aId, bId, wx, wy) {
   _off.oy = (dx / len) * k;
   return _off;
 }
+
+/** Tangent (heading) angle, in radians, of the (possibly curved) road at the
+ *  world point's projected chord-parameter t. On a STRAIGHT edge this is exactly
+ *  the chord angle; on a bowed edge it's the Bézier tangent, which can sit up to
+ *  ~27° off the chord near the segment ends. Lets a unit that RIDES the painted
+ *  curve (e.g. a tank's hull + gun barrel) point along the visible road instead
+ *  of the straight node-to-node chord. Render-only — never read by the sim. */
+export function curveHeadingForPoint(ax, ay, bx, by, aId, bId, wx, wy) {
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return Math.atan2(dy, dx);
+  const bow = roadBow(aId, bId, len);
+  if (!bow) return Math.atan2(dy, dx);            // straight → chord angle
+  const px = -dy / len, py = dx / len;            // unit perpendicular
+  const cx = (ax + bx) * 0.5 + px * bow * 2;      // quadratic control point
+  const cy = (ay + by) * 0.5 + py * bow * 2;
+  let t = ((wx - ax) * dx + (wy - ay) * dy) / (len * len);
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  // B'(t) = 2(1-t)(C-A) + 2t(B-C)  — quadratic Bézier derivative (tangent).
+  const tx = 2 * (1 - t) * (cx - ax) + 2 * t * (bx - cx);
+  const ty = 2 * (1 - t) * (cy - ay) + 2 * t * (by - cy);
+  return Math.atan2(ty, tx);
+}

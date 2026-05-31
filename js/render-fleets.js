@@ -13,7 +13,7 @@ import { COLOR } from './factions.js';
 import {
   drawTroopSprite, drawEngineerSprite, drawDroneSprite, drawTankTurret,
 } from './sprites.js';
-import { curveOffsetForPoint } from './road-curve.js';
+import { curveOffsetForPoint, curveHeadingForPoint } from './road-curve.js';
 
 // ---- Ground fleets — column of vehicles trailing a leader ----
 export function drawTroopFleets(ctx, zoom, now) {
@@ -31,15 +31,19 @@ export function drawTroopFleets(ctx, zoom, now) {
     // when it's taken damage. Drawn with the same tank sprite as the factory.
     if (f.kind === 'tank') {
       let tx = f.x, ty = f.y;
+      // Barrel/hull faces the TRAVEL direction. On a road segment that's the
+      // curve TANGENT at the tank's position (matches the bowed road it visually
+      // rides — the straight chord would point up to ~27° off near the ends).
+      // Parked (sieging / idle, no forward segment) → keep the last heading,
+      // which pointed at the node it arrived on, so the barrel reads as aimed
+      // into the base it's shelling.
+      let ang = (f.heading !== undefined) ? f.heading : 0;
       if (f.path && f.segIdx < f.path.length - 1) {
         const ca = state.nodes[f.path[f.segIdx]], cb = state.nodes[f.path[f.segIdx + 1]];
         const o = curveOffsetForPoint(ca.x, ca.y, cb.x, cb.y, ca.id, cb.id, f.x, f.y);
         tx += o.ox; ty += o.oy;
+        ang = curveHeadingForPoint(ca.x, ca.y, cb.x, cb.y, ca.id, cb.id, f.x, f.y);
       }
-      const ang = (f.heading !== undefined) ? f.heading
-        : (f.path && f.segIdx < f.path.length - 1)
-          ? Math.atan2(state.nodes[f.path[f.segIdx + 1]].y - f.y, state.nodes[f.path[f.segIdx + 1]].x - f.x)
-          : 0;
       drawTankTurret(ctx, tx, ty, f.owner, true, zoom, ang, now);
       const hpMax = f.hpMax || f.units || 1;
       const frac = Math.max(0, f.units) / hpMax;

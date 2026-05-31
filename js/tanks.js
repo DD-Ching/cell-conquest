@@ -29,7 +29,8 @@
 import { state } from './state.js';
 import {
   TANK_FACTORY_PRODUCTION_T, TANK_CAP_PER_FACTORY, TANK_UNIT_HP,
-  TANK_UNIT_RANGE, TANK_UNIT_DPS_FLEET, TANK_UNIT_DPS_TURRET, TANK_UNIT_DPS_NODE,
+  TANK_UNIT_RANGE, TANK_UNIT_DPS_FLEET, TANK_UNIT_DPS_TURRET,
+  TANK_NODE_RANGE, TANK_NODE_FIRE_INTERVAL, TANK_NODE_SHELL_DAMAGE,
   TANK_NODE_RETALIATE, TANK_SUPPRESS_UNITS, TANK_SIEGE_RECHECK_T,
 } from './config.js';
 import { findPath, catchUpRegen } from './world.js';
@@ -153,12 +154,16 @@ export function runTankProduction(dt) {
 // =====================================================
 // Weapons + siege (per sub-step)
 // =====================================================
-/** Park a tank at its destination node and open the siege. Called from
- *  fleets.simulateFleets when the road path completes. */
+/** Park a tank and open the RANGED bombardment of `node`. Called either from
+ *  fleets.simulateFleets when the road path fully completes (tank reached the
+ *  node) OR early from updateGroundTanks when the node first enters firing range
+ *  ("進入射程就開炮"). We do NOT snap the tank onto the node — it halts wherever it
+ *  is and shells from there, so a tank can sit a road-segment away and lob fire.
+ *  Cooldown starts ready so the first shell lands almost immediately on arrival. */
 export function beginTankSiege(f, node) {
   f.siegeNodeId = node.id;
   f._homeNodeId = node.id;
-  f.x = node.x; f.y = node.y;
+  if (f.nodeCooldown === undefined) f.nodeCooldown = 0;   // fire on the next siege tick
 }
 
 /** A ground target (troop column OR enemy tank) a tank gunned down. Off-road /
@@ -267,22 +272,40 @@ function applyTankSiege(f, dt) {
   if (!node) { f.siegeNodeId = undefined; f._idle = true; return false; }
   if (isAlly(node.owner, f.owner)) { advanceTank(f); return false; }   // infantry took it — move on
   catchUpRegen(node);
-  if (node.units > 0) f.units -= node.units * TANK_NODE_RETALIATE * dt;  // defenders shoot back
-  node.units -= TANK_UNIT_DPS_NODE * dt;
-  if (node.units < 0) node.units = 0;          // floor at 0 — tanks suppress, never drive it negative
-  if (Math.random() < 3 * dt) {
-    state.tracers.push({ x1: f.x, y1: f.y, x2: node.x, y2: node.y, age: 0, maxAge: 0.25, color: COLOR[f.owner] });
+  // Defenders return fire continuously while the tank is in the fight.
+  if (node.units > 0) f.units -= node.units * TANK_NODE_RETALIATE * dt;
+  // RANGED CANNON: hold fire until the cooldown elapses, then lob ONE shell that
+  // removes a fixed chunk of garrison ("遠距離開炮 + 冷卻"). Effective suppression
+  // rate = SHELL_DAMAGE / FIRE_INTERVAL, tuned in config to match the old drain.
+  if (f.nodeCooldown === undefined) f.nodeCooldown = 0;
+  f.nodeCooldown -= dt;
+  if (f.nodeCooldown <= 0) {
+    f.nodeCooldown = TANK_NODE_FIRE_INTERVAL;
+    node.units -= TANK_NODE_SHELL_DAMAGE;
+    if (node.units < 0) node.units = 0;        // floor at 0 — tanks suppress, never negative
+    fireNodeShell(f, node);                    // shell-in-flight VFX + impact boom
   }
   // Garrison broken (≤ suppression floor): the tank's job is done here — roll on
   // to the next frontier and leave the actual capture to a following infantry
   // column. We do NOT change node.owner.
   if (node.units <= TANK_SUPPRESS_UNITS) { advanceTank(f); return false; }
-  if (f.units <= 0.5) {                       // overwhelmed at the wall — dies at the node (off-road, no hulk)
+  if (f.units <= 0.5) {                       // overwhelmed at the wall — dies where it stands (off-road, no hulk)
     spawnBigExplosion(f.x, f.y, '#ffaa55', 26);
     spawnScorch(f.x, f.y, 'big');
     f._dead = true; return true;
   }
   return false;
+}
+
+/** Cannon-shot VFX from tank `f` at `node`: a fast tracer "shell" streak from the
+ *  muzzle to the node plus a small impact burst, so the ranged bombardment reads
+ *  visually (vs. the old silent continuous drain). Cosmetic only. */
+function fireNodeShell(f, node) {
+  state.tracers.push({
+    x1: f.x, y1: f.y, x2: node.x, y2: node.y,
+    age: 0, maxAge: 0.18, color: COLOR[f.owner],
+  });
+  spawnBigExplosion(node.x, node.y, '#ffb347', 6);
 }
 
 /** Per sub-step tank tick: weapons for all tanks, plus siege / idle handling. */
@@ -300,6 +323,17 @@ export function updateGroundTanks(dt) {
   for (const f of tanks) {
     if (f._dead) continue;
     applyTankTurretSiege(f, dt);
+    // EARLY HALT: a tank still road-travelling toward its target node opens its
+    // bombardment the instant the node enters TANK_NODE_RANGE — it doesn't drive
+    // all the way onto the node ("遠距離(進入射程)開炮"). Flipping siegeNodeId makes
+    // fleets.simulateFleets skip its movement, so it halts where it stands.
+    if (f.siegeNodeId === undefined && !f._idle && f.targetNodeId !== undefined) {
+      const tn = state.nodes[f.targetNodeId];
+      if (tn && !isAlly(tn.owner, f.owner)) {
+        const dx = tn.x - f.x, dy = tn.y - f.y;
+        if (dx * dx + dy * dy <= TANK_NODE_RANGE * TANK_NODE_RANGE) beginTankSiege(f, tn);
+      }
+    }
     if (f.siegeNodeId !== undefined) {
       if (applyTankSiege(f, dt)) dirty = true;
     } else if (f._idle) {

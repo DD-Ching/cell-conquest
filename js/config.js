@@ -161,7 +161,17 @@ export const TANK_UNIT_SPEED = 60;   // px/sec — heavy, slower than troops (FL
 export const TANK_UNIT_RANGE = 210;  // engage radius for en-route fire (enemy fleets + turrets)
 export const TANK_UNIT_DPS_FLEET  = 14;   // dmg/sec to enemy ground fleets in range
 export const TANK_UNIT_DPS_TURRET = 11;   // dmg/sec to enemy turrets in range (siege)
-export const TANK_UNIT_DPS_NODE   = 10;   // dmg/sec to a besieged node's garrison (bombard)
+// Node suppression is RANGED cannon fire, not a melee drain: a tank HALTS the
+// moment its target node enters TANK_NODE_RANGE, then lobs a shell every
+// TANK_NODE_FIRE_INTERVAL seconds (a cooldown), each removing a fixed chunk of
+// garrison. Effective DPS = SHELL_DAMAGE / FIRE_INTERVAL = 26/2.6 ≈ 10/s —
+// matched to the old continuous 10/s so prior balance holds; it just reads as
+// bombardment instead of a drain. RANGE (280) > the en-route fire radius (210)
+// so nodes are the longest-reach engagement ("遠距離開炮"). All three are the
+// damage⇄fire-rate knobs the player flagged — tune here.
+export const TANK_NODE_RANGE         = 280;  // halt + open fire when node is within this
+export const TANK_NODE_FIRE_INTERVAL = 2.6;  // sec between cannon shots at a node (cooldown)
+export const TANK_NODE_SHELL_DAMAGE  = 26;   // garrison removed per shell
 export const TANK_NODE_RETALIATE  = 0.10; // node fires (garrison × this)/sec back at the besieging tank
 // Tanks SUPPRESS, they don't CAPTURE — combined arms: a tank grinds a node's
 // garrison down to this floor, then rolls on to the next frontier instead of

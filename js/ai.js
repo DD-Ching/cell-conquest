@@ -36,7 +36,12 @@ import {
   tryDefend, tryAssaultTurrets, tryCoordinatedAttack,
   tryReinforceFrontline, tryOverflowDump,
 } from './ai-tactical.js';
-import { tryDroneSalvo } from './ai-strategic.js';
+// NOTE: the AI drone-salvo hold-fire phase (ai-strategic.tryDroneSalvo) is GONE.
+// It ran a per-owner stockpile state machine gated behind the one-action-per-tick
+// budget, so a busy empire never reached the release step and its factories sat
+// pinned at FACTORY_MAX_STOCKPILE forever (the "NPC factory stuck at 20" bug).
+// Factory production is now a single authority in drones.runFactoryProduction
+// (continuous rolling waves for AI — same throughput, can't dead-lock).
 import { relieveSaturation, clearBlockedRoads } from './ai-logistics.js';
 
 /** Tick one AI. Returns the actions array (empty when nothing happened).
@@ -103,7 +108,6 @@ export function aiTick(owner, dt) {
   if (tryBuildTurret(ctx))         return actions;
   if (tryBuildNet(ctx))            return actions;
   if (tryDefend(ctx))              return actions;
-  if (tryDroneSalvo(ctx))          return actions;
   if (tryAssaultTurrets(ctx))      return actions;
   if (tryCoordinatedAttack(ctx))   return actions;
   if (tryReinforceFrontline(ctx))  return actions;

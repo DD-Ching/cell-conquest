@@ -19,7 +19,7 @@ import {
   updateBuildings, updateTracers, updateScorches,
 } from './engineering.js';
 import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
-import { updateDrones } from './drones.js';
+import { updateDrones, runFactoryProduction } from './drones.js';
 import { aiTick } from './ai.js';
 import * as aiBridge from './ai-worker-bridge.js';
 import * as renderBridge from './render-worker-bridge.js';
@@ -417,6 +417,14 @@ function loop() {
         if (aiBridge.shouldMainThreadTick(ai)) aiTick(ai, subDt);
       }
     }
+    // Drone-factory production runs ONCE per frame at game-time rate (not per
+    // sub-step). It's the single authority for build/hold/launch across every
+    // owner — see drones.runFactoryProduction. Runs after the sub-step loop so
+    // the per-tick caches it reads (droneCountByOwner, turretGrid, inbound) are
+    // freshly built. DF_PRODUCTION_T (5 s) >> one frame's gameDt even at 40×, so
+    // once-per-frame keeps the exact production cadence the per-sub-step version
+    // had, with far fewer launch-decision points (less bursty).
+    runFactoryProduction(gameDt);
     state._perfSimMs[state._perfIdx] = performance.now() - simT0;
     state.elapsed += gameDt;
     checkVictory();

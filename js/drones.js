@@ -16,6 +16,7 @@ import {
   DRONE_HP_AIR, DRONE_SPEED, DRONE_DAMAGE, DRONE_MAX_LIFETIME,
   DRONE_DETECT_R, DRONE_HUNT_DMG, DRONE_HUNT_SWITCH_RATIO, DRONE_TURN_RADIUS,
   DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE, AA_RADIUS,
+  DRONE_WAVE_SIZE, DRONE_CAP_PER_FACTORY,
 } from './config.js';
 import { dist, inboundKey } from './util.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch, getEdge } from './engineering.js';
@@ -671,6 +672,87 @@ export function updateDrones(dt) {
   }
 }
 
+// =====================================================
+// Factory production — SINGLE AUTHORITY.
+//
+// One function owns the "should this factory build / hold / launch a drone this
+// tick" decision for EVERY owner (player + all AI/Lieutenant). It is called once
+// per frame from main.js's sim loop (NOT per sub-step — drone production is
+// game-time-rate based, not sub-step based; see DF_PRODUCTION_T accounting).
+//
+// Why this exists (the bug it kills): the old logic was split across three files
+// — engineering.updateBuildings decided hold-vs-launch, ai-strategic.tryDroneSalvo
+// ran a per-owner hold-fire STATE MACHINE, and drones.releaseStockpileFor did the
+// release. The AI hold-fire path was gated behind the AI's "one action per tick"
+// budget (phase 4 of 8), so a busy empire NEVER reached the release step and its
+// factories sat pinned at FACTORY_MAX_STOCKPILE forever — pure wasted production
+// (the "NPC factory stuck at 20, never fires" bug). Collapsing it here removes the
+// entire dead-lock-prone class: AI factories simply produce continuous rolling
+// waves (same throughput; stockpiling only changes burstiness, never total output).
+//
+// Player Hold-Fire (H) is UNCHANGED and still lives on its own flag/keys —
+// state.holdFire makes the player's factories accumulate dronesReady for an
+// alpha-strike; the second H press calls releasePlayerStockpile (fullDump). AI no
+// longer uses any hold-fire flag at all.
+//
+// produceTimerOwner-free: each factory carries its own prodCooldown, so there is
+// no cross-factory shared timer to desync.
+// =====================================================
+
+/** Launch a rolling wave from factory `t`: drain banked drones up to the owner's
+ *  airborne cap. Shared by the player's non-Hold-Fire path and every AI factory.
+ *  `liveByOwner` is the per-owner airborne count (mutated as we launch so the cap
+ *  holds within one tick across that owner's factories). */
+function launchWave(t, liveByOwner, factoryCount) {
+  const cap = DRONE_CAP_PER_FACTORY * (factoryCount.get(t.owner) || 1);
+  let live = liveByOwner.get(t.owner) || 0;
+  while (t.dronesReady > 0 && live < cap) {
+    if (!launchOneDroneFrom(t)) break;     // no enemy-with-units anywhere → hold the batch
+    t.dronesReady -= 1; live++;
+  }
+  liveByOwner.set(t.owner, live);
+}
+
+/** Per-frame factory production for ALL owners. Called once per frame from
+ *  main.js (dt = full frame game-time). Replaces the factory block that used to
+ *  live in engineering.updateBuildings + the AI hold-fire machine in
+ *  ai-strategic.tryDroneSalvo. */
+export function runFactoryProduction(dt) {
+  // Per-owner active-factory count (drone cap scales with it) + a live-airborne
+  // tally we decrement-from as we launch, so the cap holds across an owner's
+  // factories within this single call.
+  const factoryCount = new Map();
+  for (const t of state.turrets) {
+    if (t.type === 'factory' && t.active) {
+      factoryCount.set(t.owner, (factoryCount.get(t.owner) || 0) + 1);
+    }
+  }
+  const liveByOwner = new Map(state.droneCountByOwner);   // snapshot start, mutate locally
+
+  for (const t of state.turrets) {
+    if (t.type !== 'factory' || !t.active) continue;
+    if (t.dronesReady === undefined) t.dronesReady = 0;
+    t.prodCooldown -= dt;
+    if (t.prodCooldown > 0) continue;
+    t.prodCooldown = DF_PRODUCTION_T;
+    t.dronesReady += 1;                                    // banked this tick
+
+    // PLAYER Hold-Fire: accumulate for an alpha-strike (released by 2nd H press
+    // via releasePlayerStockpile). Capped so the stockpile badge can't run away.
+    if (t.owner === 'player' && state.holdFire) {
+      if (t.dronesReady > FACTORY_MAX_STOCKPILE) t.dronesReady = FACTORY_MAX_STOCKPILE;
+      continue;
+    }
+
+    // EVERYONE ELSE (AI/Lieutenant always; player when not Hold-Firing): rolling
+    // auto-wave — once a small batch has banked, launch it toward live targets.
+    // No hold-fire state machine, so it can never dead-lock at the cap.
+    if (t.dronesReady >= DRONE_WAVE_SIZE) {
+      launchWave(t, liveByOwner, factoryCount);
+    }
+  }
+}
+
 // ---- Factory production & stockpile release ----
 /** Pick a list of candidate targets for a drone leaving factory `t`.
  *  Sorted by score (highest first). Caller picks among top-K. */
@@ -813,122 +895,29 @@ function resolveSalvoTarget(s, salvoOwner, respectValue = true) {
   return null;
 }
 
-/** Per-target salvo budget so a small node isn't dogpiled — drones only chip
- *  units, so a node needs ~1 round per 45 garrison (cap 4); a bombed-flat node
- *  (< ENGAGE) gets 0 and is skipped entirely. */
-function nodeBudget(id) {
-  const fn = state.nodes[id];
-  if (!fn || fn.units < DRONE_ENGAGE_UNITS) return 0;
-  return Math.min(NODE_DRONE_CAP, Math.ceil(fn.units / 45) + 1);
-}
-
-/** Build a salvo plan: spread `n` drones across the best VALUE targets, each
- *  capped by its budget so nothing is overkilled. A fixed target (player click
- *  / AI focus) goes first (a TURRET soaks more; a dead node is dropped). This
- *  is the SAME evaluator launch + retarget use — one consistent system, so a
- *  salvo never again dumps the whole stockpile onto one near-empty city. */
-function buildSalvoPlan(t, fixedTarget, n) {
-  const budgeted = [];
-  if (fixedTarget) {
-    const b = fixedTarget.kind === 'turret' ? 8 : nodeBudget(fixedTarget.id);
-    if (b > 0) budgeted.push({ target: fixedTarget, budget: b });
-  }
-  for (const c of pickDroneTargetsFor(t)) {
-    if (fixedTarget && c.target.kind === fixedTarget.kind && c.target.id === fixedTarget.id) continue;
-    const b = c.target.kind === 'turret' ? 4 : nodeBudget(c.target.id);
-    if (b > 0) budgeted.push({ target: c.target, budget: b });
-  }
-  const plan = [];
-  let progressed = true;
-  while (plan.length < n && progressed) {
-    progressed = false;
-    for (const e of budgeted) {
-      if (e.budget <= 0) continue;
-      plan.push(e.target); e.budget--; progressed = true;
-      if (plan.length >= n) break;
-    }
-  }
-  return plan;                      // length ≤ n; shortfall = drones with no worthwhile target
-}
-
-/** Generic stockpile flush for any owner. Distributes the stockpile across the
- *  budgeted value plan; drones with no worthwhile target STAY stockpiled
- *  (aggregate, don't vaporise onto a dead front). Internal — both
- *  releasePlayerStockpile and releaseAIStockpile delegate here. */
-function releaseStockpileFor(owner, fixedTarget, fullDump = false) {
+/** Player-facing alpha-strike — driven by the second H press. Launches the
+ *  ENTIRE stockpile across every player factory at once (no anti-waste budget):
+ *  the player held fire to amass a wall and wants ALL of it airborne. Each drone
+ *  flies at the clicked target if any (overkill drones auto-abandon a flattened
+ *  node and re-pick the next enemy in flight); with no click each self-picks via
+ *  launchOneDroneFrom's map-wide nearest-worthwhile/closest-enemy fallback.
+ *
+ *  Self-contained: this is the ONLY stockpile-release path now (AI factories no
+ *  longer stockpile — see runFactoryProduction). respectValue=false honours the
+ *  player's explicit click even on a suppressed target. */
+export function releasePlayerStockpile() {
+  const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player', false);
   let launched = 0;
   for (const t of state.turrets) {
-    if (t.owner !== owner || t.type !== 'factory' || !t.dronesReady) continue;
-    const n = t.dronesReady;
-
-    // PLAYER ALPHA-STRIKE (fullDump): launch the ENTIRE stockpile at once — no
-    // anti-waste value budget, no per-node cap. The player held fire to amass
-    // a wall of drones and pressed launch; they want ALL of them in the air.
-    // Every drone aims at the clicked target (overkill drones auto-abandon a
-    // flattened node and re-pick the next enemy in flight); with no clicked
-    // target each self-picks its nearest worthwhile/closest enemy.
-    if (fullDump) {
-      for (let k = 0; k < n; k++) {
-        const jx = (Math.random() - 0.5) * 18;
-        const jy = (Math.random() - 0.5) * 18;
-        if (fixedTarget) { spawnDrone(t.x + jx, t.y + jy, t.owner, fixedTarget); launched++; }
-        else if (launchOneDroneFrom(t)) launched++;
-      }
-      t.dronesReady = 0; t.prodCooldown = DF_PRODUCTION_T;
-      continue;
+    if (t.owner !== 'player' || t.type !== 'factory' || !t.dronesReady) continue;
+    for (let k = 0; k < t.dronesReady; k++) {
+      const jx = (Math.random() - 0.5) * 18, jy = (Math.random() - 0.5) * 18;
+      if (fixedTarget) { spawnDrone(t.x + jx, t.y + jy, 'player', fixedTarget); launched++; }
+      else if (launchOneDroneFrom(t)) launched++;
     }
-
-    // AI release: spread across the value-budgeted plan FIRST (best targets,
-    // no overkill), then DRAIN any remainder via launchOneDroneFrom — the same
-    // map-wide picker the player's release + the auto-wave use, which has a
-    // nearest-enemy-with-units fallback for targets outside buildSalvoPlan's
-    // 1500/1700px scoring range.
-    //
-    // WHY THIS MATTERS (the "NPC factory goes dead at 20" bug): on the big map a
-    // factory behind the front has its nearest enemy well past 1700px, so
-    // buildSalvoPlan returns an EMPTY plan — the old code then left
-    // `dronesReady = n` untouched, so the factory released 0 drones and stayed
-    // pinned at FACTORY_MAX_STOCKPILE forever (tryDroneSalvo kept "firing" every
-    // 35-55 s but launching nothing). The player never hit this because the H
-    // release uses fullDump (launchOneDroneFrom + always zeroes dronesReady).
-    // Draining the remainder map-wide makes the two paths symmetric. Only when
-    // there is GENUINELY no enemy-with-units left anywhere (launchOneDroneFrom
-    // returns false) do drones stay stockpiled — the correct "nearly won, don't
-    // waste them on a dead front" hold.
-    const plan = buildSalvoPlan(t, fixedTarget, n);
-    for (let k = 0; k < plan.length; k++) {
-      const jx = (Math.random() - 0.5) * 14;
-      const jy = (Math.random() - 0.5) * 14;
-      spawnDrone(t.x + jx, t.y + jy, t.owner, plan[k]);
-      launched++;
-    }
-    let remainder = n - plan.length;
-    while (remainder > 0) {
-      if (!launchOneDroneFrom(t)) break;   // no enemy-with-units anywhere → hold the rest
-      remainder--; launched++;
-    }
-    t.dronesReady = remainder;
-    if (t.dronesReady <= 0) { t.dronesReady = 0; t.prodCooldown = DF_PRODUCTION_T; }
+    t.dronesReady = 0;
+    t.prodCooldown = DF_PRODUCTION_T;
   }
-  return launched;
-}
-
-/** Player-facing release — driven by the second H press. */
-export function releasePlayerStockpile() {
-  // respectValue=false: honour the player's explicit click even on a suppressed
-  // target. fullDump=true: launch every stockpiled drone, no value budget.
-  const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player', false);
-  const launched = releaseStockpileFor('player', fixedTarget, true);
   state.salvoTarget = null;
-  return launched;
-}
-
-/** AI-facing release — fired from aiTick when stockpile is large enough or
- *  has aged out. The AI may have pre-picked a focus target during Phase 1.5;
- *  if not, drones auto-diversify. */
-export function releaseAIStockpile(owner) {
-  const fixedTarget = resolveSalvoTarget(state.aiSalvoTarget[owner], owner);
-  const launched = releaseStockpileFor(owner, fixedTarget);
-  state.aiSalvoTarget[owner] = null;
   return launched;
 }

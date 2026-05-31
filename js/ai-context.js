@@ -245,7 +245,6 @@ export function buildContext(owner, myNodes) {
     assaultTurret:      effects.assaultTurret,
     placeTurretAt:      effects.placeTurretAt,
     placeNetOnEdge:     effects.placeNetOnEdge,
-    releaseAIStockpile: effects.releaseAIStockpile,
     actions,
   };
   return ctx;

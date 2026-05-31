@@ -18,15 +18,13 @@ import { findPath, catchUpAllNodes } from './world.js';
 import {
   ENG_HP, ENG_CLEAR_RATE, ENG_COST,
   AA_BUILD_TIME, AA_HP, AA_RADIUS,
-  DF_BUILD_TIME, DF_HP, DF_PRODUCTION_T, FACTORY_MAX_STOCKPILE,
+  DF_BUILD_TIME, DF_HP,
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS,
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
   WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
-  DRONE_CAP_PER_FACTORY, DRONE_WAVE_SIZE,
   TRACER_CAP,
 } from './config.js';
-import { launchOneDroneFrom } from './drones.js';
 import { sfxExplosion } from './audio.js';
 import { isAlly } from './alliance.js';
 // Cosmetic scorch-mark system lives in its own sibling now (this file defends
@@ -365,14 +363,11 @@ export function updateTracers(dt) {
 // Buildings tick — construction, factory production, decay, dead-turret cleanup
 // =====================================================
 export function updateBuildings(dt) {
-  // Per-owner active-factory count — the drone ceiling scales with it, so the
-  // more factories you own the bigger your swarm (no flat per-faction wall).
-  // One cheap pre-pass; reused by every factory's launch gate below.
-  const factoryCount = new Map();
-  for (const t of state.turrets) {
-    if (t.type === 'factory' && t.active) factoryCount.set(t.owner, (factoryCount.get(t.owner) || 0) + 1);
-  }
-
+  // NOTE: factory drone production moved OUT of this per-sub-step loop into
+  // drones.runFactoryProduction (called once per frame from main.js). It's the
+  // single authority for build/hold/launch across all owners — see the big
+  // header comment there. This loop now only handles construction progress +
+  // dead-turret cleanup, which DO belong per-sub-step.
   for (let i = state.turrets.length - 1; i >= 0; i--) {
     const t = state.turrets[i];
     if (t.hp <= 0) {
@@ -386,40 +381,6 @@ export function updateBuildings(dt) {
       if (t.engineers > 0) {
         t.progress += t.engineers * dt / t.total;
         if (t.progress >= 1.0) { t.progress = 1.0; t.active = true; }
-      }
-    } else {
-      // Factory: produce drones. Both player and AI factories can stockpile
-      // while their owner's Hold-Fire flag is on (player → state.holdFire,
-      // AI → state.aiHoldFire[owner]); release flushes the whole salvo.
-      if (t.type === 'factory') {
-        if (t.dronesReady === undefined) t.dronesReady = 0;
-        t.prodCooldown -= dt;
-        if (t.prodCooldown <= 0) {
-          t.prodCooldown = DF_PRODUCTION_T;
-          const stockpiling = (t.owner === 'player')
-            ? state.holdFire
-            : !!state.aiHoldFire[t.owner];
-          if (stockpiling) {
-            // Hold-Fire: amass for a player/AI alpha-strike (released elsewhere).
-            if (t.dronesReady < FACTORY_MAX_STOCKPILE) t.dronesReady += 1;
-          } else {
-            // Auto-WAVE: bank a drone each prod tick, then launch the whole batch
-            // together once it reaches DRONE_WAVE_SIZE — rolling waves, not a
-            // 1-by-1 dribble. Ceiling scales with factory count (no flat wall);
-            // any batch that can't fully launch (cap hit) stays banked for the
-            // next wave. droneCountByOwner is a per-tick snapshot, so track a
-            // local `live` as we launch to honour the cap within this tick.
-            t.dronesReady += 1;
-            if (t.dronesReady >= DRONE_WAVE_SIZE) {
-              const cap = DRONE_CAP_PER_FACTORY * (factoryCount.get(t.owner) || 1);
-              let live = state.droneCountByOwner.get(t.owner) || 0;
-              while (t.dronesReady > 0 && live < cap) {
-                if (!launchOneDroneFrom(t)) break;   // no worthwhile target right now → hold the batch
-                t.dronesReady -= 1; live++;
-              }
-            }
-          }
-        }
       }
     }
   }

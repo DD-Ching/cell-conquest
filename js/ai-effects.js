@@ -18,7 +18,9 @@
 // =====================================================
 import { sendFleet, assaultTurret } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge } from './engineering.js';
-import { releaseAIStockpile } from './drones.js';
+// NOTE: releaseAIStockpile is gone — AI factories no longer stockpile drones
+// (the hold-fire state machine dead-locked busy empires at the stockpile cap).
+// Factory production is a single authority now in drones.runFactoryProduction.
 
 /** Build an effects bundle whose calls mutate state via the real functions
  *  AND push a descriptor to `actions`. Phase code uses ctx.sendFleet(...)
@@ -43,15 +45,6 @@ export function makeEffects(actions) {
       const placed = placeNetOnEdge(a, b, owner);
       if (placed) actions.push({ type: 'placeNet', a, b, owner });
       return placed;
-    },
-    releaseAIStockpile(owner, salvoTarget) {
-      // The salvo target is currently set on state.aiSalvoTarget[owner]
-      // BEFORE this call, then releaseAIStockpile reads it. In worker mode
-      // the same write happens on the worker mirror; the recorded action
-      // carries the resolved target so the main thread can replay both
-      // steps as a single atomic effect.
-      releaseAIStockpile(owner);
-      actions.push({ type: 'releaseAIStockpile', owner, salvoTarget });
     },
   };
 }

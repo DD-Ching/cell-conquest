@@ -28,7 +28,6 @@
 import { state } from './state.js';
 import { sendFleet, assaultTurret } from './fleets.js';
 import { placeTurretAt, placeNetOnEdge } from './engineering.js';
-import { releaseAIStockpile } from './drones.js';
 import { AIS, factionStats } from './factions.js';
 import { NN_OWNERS } from './config.js';
 import { listAlliances } from './alliance.js';
@@ -141,14 +140,6 @@ function applyAction(a) {
     }
     case 'placeNet': {
       placeNetOnEdge(a.a, a.b, a.owner);
-      return;
-    }
-    case 'releaseAIStockpile': {
-      // The worker chose the salvo target alongside the release call; mirror
-      // that choice on the main thread BEFORE invoking, since releaseAIStockpile
-      // reads state.aiSalvoTarget[owner].
-      state.aiSalvoTarget[a.owner] = a.salvoTarget;
-      releaseAIStockpile(a.owner);
       return;
     }
   }

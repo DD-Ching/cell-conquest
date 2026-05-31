@@ -254,6 +254,40 @@ function generateNodes(rng, regions, geo, res) {
   }
 }
 
+/** Give the MAJOR nodes a settlement name (Helix City, Iron Works, Pale Gate…),
+ *  baked into node.name. Deliberately SPARSE — like a real atlas, only the
+ *  places that anchor the map get a name; the swarm of minor outposts stay
+ *  nameless dots until you select them. Sizeable typed POIs + big hubs qualify.
+ *  (Faction CAPITALS are tagged later in main.js from these nodes; a capital
+ *  picked from a sizeable node already carries a name. Sizes here are pre-
+ *  adjustHubSizes, so the thresholds are a touch lower than the final render's.)
+ *  Deterministic: seeded rng + stable node order → same map, same names, and the
+ *  render-worker mirror (which gets node.name in the snapshot) matches. */
+const _NAMED_TYPES = new Set(['city', 'fortress', 'factory', 'mine', 'research_lab']);
+function nameMajorNodes(rng) {
+  const used = new Set();
+  for (const n of state.nodes) {
+    // Sparse, atlas-like: only sizeable typed POIs + genuinely big hubs. Sizes
+    // here are PRE-adjustHubSizes, so the bars sit a bit under the final render
+    // thresholds; tuned to land ~70-90 names on a default 830-node map, not 200+.
+    const major = (_NAMED_TYPES.has(n.nodeType) && n.size >= 40) || n.size >= 52;
+    if (major) n.name = makePlaceName(rng, n.nodeType, used);
+  }
+}
+
+/** Name a node on demand (used by main.js to guarantee every faction CAPITAL
+ *  carries a name, even if it was a smaller node before promotion). Idempotent —
+ *  keeps any existing name. Uses Math.random (capitals are picked post-gen, off
+ *  the seeded stream), which is fine: capital names need only be unique, not
+ *  reproducible. `usedNames` collects current names to avoid collisions. */
+export function ensureNodeName(n) {
+  if (n.name) return n.name;
+  const used = new Set();
+  for (const m of state.nodes) if (m.name) used.add(m.name);
+  n.name = makePlaceName(Math.random, n.nodeType, used);
+  return n.name;
+}
+
 /** Quality gate — every node reachable from node 0, sane count. */
 function validateMap() {
   const { nodes, adj } = state;
@@ -317,6 +351,7 @@ export function generateWorld(seed, themeKey) {
     const regions = generateRegions(rng, geo, res);
     state.regions = regions;     // generateRoads reads state.regions for the highway MST
     generateNodes(rng, regions, geo, res);
+    nameMajorNodes(rng);         // settlement names on the major nodes (atlas layer)
     generateRoads(rng);
     applyBarrierChokepoints();   // cull cross-barrier edges down to a few passes
 

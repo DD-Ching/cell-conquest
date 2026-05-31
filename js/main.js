@@ -33,7 +33,7 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
-import { generateWorld, pickRegionStarts } from './worldgen.js';
+import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio } from './audio.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
 // its own module now. main.js calls attachInput() once at boot and reuses
@@ -155,6 +155,10 @@ export function newGame() {
     node.capacity  = Math.floor(145 * strength);
     node.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
     node.nodeType  = 'capital';   // HQ double-ring tactical icon (both gen modes)
+    // Every capital is a named place (the atlas's loudest anchor). procgen named
+    // most major nodes already; this guarantees a name even if the capital was
+    // promoted from a smaller node. Legacy gen (no procgen names) gets one too.
+    ensureNodeName(node);
   }
   function pickFarNode() {
     let best = null, bestD = -1;

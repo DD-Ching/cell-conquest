@@ -44,6 +44,7 @@ import {
   drawNodeLabelsOnTop,
 } from './render-entities.js';
 import { drawTerritory } from './render-territory.js';
+import { drawTerritoryBorders } from './render-borders.js';
 import { drawProcgen } from './render-procgen.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.

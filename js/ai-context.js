@@ -25,6 +25,7 @@ import { TANK_RADIUS, TANK_DPS } from './config.js';
 import { isAlly } from './alliance.js';
 import { factionStats } from './factions.js';
 import { makeEffects } from './ai-effects.js';
+import { VISION_NODE, AI_VISION_MUL } from './config.js';
 
 /** Build the once-per-tick shared context for an AI owner.
  *  `myNodes` is passed in (aiTick already filtered + early-returned on empty).
@@ -69,6 +70,40 @@ export function buildContext(owner, myNodes) {
   // converges on it. Gated on the AI being established (>=3 nodes); case (b)
   // also waits out the opening (>60s) so early land-grab thinness isn't
   // misread as suppression.
+  // ===== AI vision (Pillar 3 — fog of war for NPCs) =====
+  // The AI can't see the whole map either. It always "knows" its own nodes and
+  // their immediate neighbours (border knowledge — you can see what's next to
+  // you), plus any node within a slightly-generous vision range of an own node.
+  // Enemies it can't see are skipped by the elimination-convergence gate below,
+  // so the AI fights what it has actually scouted instead of omnisciently
+  // focusing a far-off hub. canSeeNode rides on ctx for the phase target
+  // pickers. Toggle the whole mechanic off with ?aifog=0 (state.aiFog=false).
+  const aiFogOn = state.aiFog !== false;
+  const visibleNodeIds = new Set();
+  const visibleOwners = new Set();
+  if (aiFogOn) {
+    for (const n of myNodes) {
+      visibleNodeIds.add(n.id);
+      const nb = state.adj.get(n.id);
+      if (nb) for (const id of nb) visibleNodeIds.add(id);
+    }
+    const visR = VISION_NODE * AI_VISION_MUL, visR2 = visR * visR;
+    for (const n of state.nodes) {
+      if (visibleNodeIds.has(n.id)) continue;
+      for (const mn of myNodes) {
+        const dx = n.x - mn.x, dy = n.y - mn.y;
+        if (dx * dx + dy * dy <= visR2) { visibleNodeIds.add(n.id); break; }
+      }
+    }
+    for (const id of visibleNodeIds) {
+      const n = state.nodes[id];
+      if (n) visibleOwners.add(n.owner);
+    }
+  }
+  // canSeeNode: true when fog is off, or the node is in the visible set. Phases
+  // use this to avoid targeting unscouted enemy territory.
+  const canSeeNode = (node) => !aiFogOn || visibleNodeIds.has(node.id);
+
   const eliminationOwners = new Set();
   if (myNodes.length >= 3) {
     const enemyUnits = {}, enemyCap = {};
@@ -79,6 +114,8 @@ export function buildContext(owner, myNodes) {
     }
     for (const o in counts) {
       if (isAlly(o, owner) || o === 'neutral') continue;
+      // Fog: don't converge on an enemy we can't see a single node of.
+      if (aiFogOn && !visibleOwners.has(o)) continue;
       if (counts[o] <= 2) { eliminationOwners.add(o); continue; }   // (a) near-dead
       // (b) suppressed: still holds ground (>=4 nodes) but the empire is pinned
       // near-empty (fill < 28%) AND its average garrison is tiny (< 14) — it
@@ -240,6 +277,7 @@ export function buildContext(owner, myNodes) {
     eliminationOwners,
     fleetsByTarget,
     incomingTo, attackerAvail, turretThreatTo, isExposedToEnemyTank,
+    canSeeNode, aiFogOn,           // AI fog-of-war vision gate (Pillar 3)
     // Side-effects (see ai-effects.js):
     sendFleet:          effects.sendFleet,
     assaultTurret:      effects.assaultTurret,

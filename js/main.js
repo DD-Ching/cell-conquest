@@ -584,6 +584,9 @@ if (state.seedPinned) state.worldSeed = parseInt(_seedParam, 10) >>> 0;
 // fractured_mountain, crater_belt, ruined_megacity, polar_corridor,
 // river_civilization, war_scar). Distinct from the faction ?theme= palette.
 state.worldThemeKey = _mapParams.get('world') || null;
+// AI fog of war (Pillar 3): NPCs get limited vision too. ?aifog=0 disables it
+// (omniscient AI) for debugging / balance comparison.
+state.aiFog = _mapParams.get('aifog') !== '0';
 
 // Render worker MUST be enabled before resize() (which would otherwise
 // touch canvas.width and before initWorldCtx() gets called by anything).

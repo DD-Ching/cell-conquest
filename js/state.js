@@ -240,4 +240,9 @@ export const state = {
   // sim/AI). 0=dawn, 0.25=noon, 0.5=dusk, 0.75=night. drawBackground tints by
   // it. Pure cosmetic.
   dayPhase: 0.18,
+
+  // AI fog (Pillar 3): when true, NPCs only act on enemies their own nodes /
+  // fleets can see (ai-context.js gates elimination + the phase target pickers
+  // via ctx.canSeeNode). ?aifog=0 sets this false → omniscient AI (debug / A-B).
+  aiFog: true,
 };

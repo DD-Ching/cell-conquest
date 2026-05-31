@@ -173,25 +173,29 @@ export function drawTerritoryBorders(ctx, zoom) {
   if (sig !== _sig) { _sig = sig; bakeBorders(); }
   if (_paths.size === 0) return;
 
-  // World-space widths (scale with the map like roads) divided by nothing — the
-  // ctx is already world-scaled. 3 concentric passes = a cheap bloom: wide+faint
-  // outer halo → mid → bright lightened core. Border alpha is pushed a bit above
-  // the wash so the frontier line clearly pops off its own turf.
+  // 3 concentric passes = a cheap bloom: wide+faint outer halo → mid → bright
+  // lightened core. Each pass width is max(WORLD width, SCREEN-pixel floor / zoom):
+  // zoomed in it's a chunky world-scale frontier (scales with the map like roads),
+  // zoomed out to the strategic overview the /zoom floor keeps it a crisp, clearly
+  // visible national border instead of fading to a hairline (the reference look is
+  // a bold outline at any zoom). The ctx is world-scaled, so dividing the screen
+  // floor by zoom converts it back to the world units lineWidth expects.
   const a = _fadeAlpha;
   const prev = ctx.globalAlpha;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
+  const z = zoom || 1;
   const passes = [
-    { w: 26, alpha: 0.10, lite: false },
-    { w: 12, alpha: 0.22, lite: false },
-    { w: 4.5, alpha: 0.95, lite: true },
+    { w: 26,  screen: 16, alpha: 0.12, lite: false },   // outer glow halo
+    { w: 12,  screen: 7,  alpha: 0.26, lite: false },   // mid body
+    { w: 4.5, screen: 2.5, alpha: 0.95, lite: true },   // bright crisp core
   ];
   for (const [owner, path] of _paths) {
     const base = COLOR[owner] || '#ffffff';
     for (const p of passes) {
       ctx.strokeStyle = p.lite ? lighten(base) : base;
-      ctx.lineWidth = p.w;
-      ctx.globalAlpha = prev * a * p.alpha * (TERRITORY_MAX_ALPHA / 0.20);
+      ctx.lineWidth = Math.max(p.w, p.screen / z);
+      ctx.globalAlpha = prev * a * p.alpha;
       ctx.stroke(path);
     }
   }

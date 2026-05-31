@@ -44,6 +44,25 @@ function spawnDrone(originX, originY, owner, target) {
   });
 }
 
+/** Spawn a drone straight into the HOLD-FIRE holding ring — NO attack target.
+ *  Used for factory OVERFLOW past the stockpile cap: while the player holds fire
+ *  the hold-fire gate in updateDrones forces every player drone to orbit home, so
+ *  this drone just joins the ring (越聚越大) until the 2nd H press releases it.
+ *  targetKind:null is safe — the gate runs before any target deref, and on
+ *  release droneTargetExists() returns false so it retargets like any drone. */
+function spawnHeldDrone(t) {
+  state.fleets.push({
+    _id: state._nextFleetId++,
+    kind: 'drone', owner: t.owner, units: 1,
+    x: t.x, y: t.y, tx: t.x, ty: t.y,
+    targetKind: null, targetId: undefined,
+    hp: DRONE_HP_AIR, damage: DRONE_DAMAGE,
+    spawnT: state.elapsed,
+    heading: ((t.x * 0.013 + t.y * 0.017 + state.elapsed) % 1) * Math.PI * 2,  // varied launch facing, no RNG
+    _loitering: true,
+  });
+}
+
 /** Turn-radius flight. The drone banks toward (tx,ty) at a BOUNDED turn rate
  *  (ω = DRONE_SPEED / radius) and advances along its heading — it never snaps
  *  direction or reverses on a dime. The radius tightens as it closes (clamped to
@@ -304,13 +323,16 @@ function rebuildLoiterCenters() {
       const dx = en.x - fx, dy = en.y - fy, d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = en; }
     }
-    if (!best) { _loiterCenters.set(o, { cx: fx, cy: fy }); continue; }
+    // hx/hy = HOME (factory centroid). The player's hold-fire ring orbits home
+    // (我方陣地) for a safe muster, vs cx/cy which forward-stages toward the enemy
+    // for idle/overkill drones outside hold-fire.
+    if (!best) { _loiterCenters.set(o, { cx: fx, cy: fy, hx: fx, hy: fy }); continue; }
     const d = Math.sqrt(bestD2) || 1;
     const ux = (best.x - fx) / d, uy = (best.y - fy) / d;
     // Stand off far enough that the WHOLE ring (radius LOITER_R) sits outside
     // the hub's flak umbrella, so the swarm gathers safely before it strikes.
     const standoff = Math.max(0, d - (AA_RADIUS * 1.3 + LOITER_R));
-    _loiterCenters.set(o, { cx: fx + ux * standoff, cy: fy + uy * standoff });
+    _loiterCenters.set(o, { cx: fx + ux * standoff, cy: fy + uy * standoff, hx: fx, hy: fy });
   }
 }
 function loiterDrone(drone, dt) {
@@ -325,10 +347,15 @@ function loiterDrone(drone, dt) {
   } else {
     // Shared ring slot: a stable golden-angle offset per drone id + a common
     // time rotation, so the whole formation turns as one and stays evenly
-    // spread however many join or leave.
+    // spread however many join or leave. During the player's hold-fire the ring
+    // orbits HOME (c.hx/c.hy) for a safe alpha-strike muster; otherwise it rides
+    // the forward-staging point (c.cx/c.cy).
+    const home = state.holdFire && drone.owner === 'player';
+    const cx = home ? c.hx : c.cx;
+    const cy = home ? c.hy : c.cy;
     const slot = state.elapsed * LOITER_ROT + drone._id * GOLDEN;
-    tx = c.cx + Math.cos(slot) * LOITER_R;
-    ty = c.cy + Math.sin(slot) * LOITER_R;
+    tx = cx + Math.cos(slot) * LOITER_R;
+    ty = cy + Math.sin(slot) * LOITER_R;
   }
   // Bank toward the (moving) slot — the drone eases in then rides the rotation.
   steerDrone(drone, tx, ty, dt);
@@ -453,7 +480,10 @@ export function updateDrones(dt) {
     if (f.kind !== 'drone') continue;
     // Lifetime expiry — wandering drones that haven't found a target self-
     // destruct. Without this, late-game accumulates "lost" drones forever.
-    if (state.elapsed - (f.spawnT || 0) > DRONE_MAX_LIFETIME) f.hp = 0;
+    // EXEMPT player drones held in the hold-fire ring: the muster must persist
+    // however long the player holds, so the alpha-strike isn't thinned by timeout.
+    const heldByPlayer = state.holdFire && f.owner === 'player';
+    if (!heldByPlayer && state.elapsed - (f.spawnT || 0) > DRONE_MAX_LIFETIME) f.hp = 0;
     // Shot down by AA
     if (f.hp <= 0) {
       for (let k = 0; k < 6; k++) {
@@ -466,6 +496,15 @@ export function updateDrones(dt) {
       spawnScorch(f.x, f.y, 'small');
       state.fleets.splice(i, 1); continue;
     }
+
+    // ---- HOLD-FIRE recall (player) ----
+    // While the player holds fire, EVERY player drone is recalled to the home
+    // holding ring instead of attacking — airborne drones peel off their runs and
+    // gather, factory overflow joins them, so one growing orbit musters over our
+    // own territory. Runs before the decision/throttle/flight logic so a drone
+    // mid-dive aborts and circles back. Released by the 2nd H press
+    // (releasePlayerStockpile clears state.holdFire → normal hunting resumes).
+    if (heldByPlayer) { loiterDrone(f, dt); continue; }
 
     // ---- Decision throttle (stage 1b) ----
     // Re-pick a target at most every DECISION_INTERVAL (staggered per drone).
@@ -737,10 +776,17 @@ export function runFactoryProduction(dt) {
     t.prodCooldown = DF_PRODUCTION_T;
     t.dronesReady += 1;                                    // banked this tick
 
-    // PLAYER Hold-Fire: accumulate for an alpha-strike (released by 2nd H press
-    // via releasePlayerStockpile). Capped so the stockpile badge can't run away.
+    // PLAYER Hold-Fire: bank a stockpile for an alpha-strike (released by the 2nd
+    // H press via releasePlayerStockpile). Past the per-factory cap the OVERFLOW
+    // is NOT wasted — it launches into the home holding ring (the hold-fire gate
+    // in updateDrones keeps every player drone orbiting), so the ring grows
+    // (越聚越大) while the badge stays pinned at the cap. On release the banked
+    // stockpile AND the airborne ring all fly at once (萬箭齊發).
     if (t.owner === 'player' && state.holdFire) {
-      if (t.dronesReady > FACTORY_MAX_STOCKPILE) t.dronesReady = FACTORY_MAX_STOCKPILE;
+      if (t.dronesReady > FACTORY_MAX_STOCKPILE) {
+        t.dronesReady = FACTORY_MAX_STOCKPILE;
+        spawnHeldDrone(t);                 // excess → airborne, joins the ring
+      }
       continue;
     }
 
@@ -908,6 +954,7 @@ function resolveSalvoTarget(s, salvoOwner, respectValue = true) {
 export function releasePlayerStockpile() {
   const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player', false);
   let launched = 0;
+  // 1) Flush the banked stockpile — fresh drones off every player factory.
   for (const t of state.turrets) {
     if (t.owner !== 'player' || t.type !== 'factory' || !t.dronesReady) continue;
     for (let k = 0; k < t.dronesReady; k++) {
@@ -917,6 +964,21 @@ export function releasePlayerStockpile() {
     }
     t.dronesReady = 0;
     t.prodCooldown = DF_PRODUCTION_T;
+  }
+  // 2) Release the AIRBORNE holding ring too — every player drone that was
+  //    orbiting (recalled + factory overflow) joins the salvo. A clicked salvo
+  //    target sends them all at that point (萬箭齊發); with no click they drop
+  //    the loiter and re-pick worthwhile targets next tick (decision T = now).
+  for (const f of state.fleets) {
+    if (f.kind !== 'drone' || f.owner !== 'player') continue;
+    f._loitering = false;
+    f._loiterCx = undefined;
+    f._nextDecisionT = 0;                 // decide immediately, don't wait the throttle
+    if (fixedTarget) {
+      f.targetKind = fixedTarget.kind;
+      f.targetId = fixedTarget.id;
+      f.tx = fixedTarget.x; f.ty = fixedTarget.y;
+    }
   }
   state.salvoTarget = null;
   return launched;

@@ -128,66 +128,135 @@ export function blitSprite(ctx, asset, size, tint) {
 }
 
 // =====================================================
-// Roads — thin path with edge highlights. Line widths are WORLD-space (no
-// `/zoom`) so the road thickness scales with the canvas: chunky highways
-// when zoomed in for tactics, hair-thin spider-web when zoomed out for
-// strategic overview. `widthMul` (assigned in world.buildRoads per-edge:
-// ~0.5 for outskirts, ~1.5 for hub arteries) layers natural road hierarchy
-// on top.
+// Roads. Two looks, selected by `thin`:
+//
+//   • thin === false  → DEBUG: the original chunky "supply road" (thick dark
+//     casing + bright sand fill + glowing highway dashes). Kept verbatim so the
+//     debug map mode can still show the raw graph as fat, obvious paths.
+//
+//   • thin === true (cinematic/strategic/detailed)  → CARTOGRAPHIC map road: a
+//     thin, Google-Maps-style line with a subtle dark casing and a MUTED fill —
+//     not a golden tube. Class hierarchy (kind + widthMul, the per-edge degree
+//     weight from world.buildRoads): highways are clearly-visible amber supply
+//     corridors with a faint animated dashed core; arterials (high-widthMul
+//     locals) a touch wider; back-lane locals are thin + low-opacity so they
+//     recede; bridges are short bright steel spans (chokepoints). Highways +
+//     bridges get a SCREEN-pixel floor (max(world, px/zoom)) so the artery
+//     skeleton stays legible at strategic zoom while local lanes correctly
+//     thin away — the way a real map drops streets when you zoom out.
+//
+// Widths are WORLD-space except those floors. The whole road is ONE path
+// (gently bowed when `bow`≠0 — geometry from road-curve.js); every stroke layer
+// reuses it so the curve is built once.
 // =====================================================
-export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null, now = 0, bow = 0) {
+export function drawRoadStyled(ctx, a, b, blockage, zoom, widthMul = 1, kind = null, now = 0, bow = 0, thin = true) {
   ctx.lineCap = 'round';
-  // Dark outer (path edge). Bridges get a wider steel deck shadow so a
-  // chokepoint reads even before the accent stroke. The whole road is ONE
-  // path — gently bowed when `bow`≠0 (curve geometry comes from road-curve.js;
-  // the caller passes the per-edge bow) — and every later stroke layer below
-  // reuses it, so the curve only has to be built once.
-  ctx.strokeStyle = kind === 'bridge' ? 'rgba(20, 26, 36, 0.95)' : 'rgba(38, 22, 11, 0.95)';
-  ctx.lineWidth = (kind === 'bridge' ? 9.5 : 8) * widthMul;
+
+  if (!thin) {
+    // ---- DEBUG: original chunky look (unchanged) ----
+    ctx.strokeStyle = kind === 'bridge' ? 'rgba(20, 26, 36, 0.95)' : 'rgba(38, 22, 11, 0.95)';
+    ctx.lineWidth = (kind === 'bridge' ? 9.5 : 8) * widthMul;
+    ctx.beginPath();
+    tracePath(ctx, a.x, a.y, b.x, b.y, bow);
+    ctx.stroke();
+    const sandAlpha = 0.92 - blockage * 0.35;
+    const sandR = Math.floor(190 - 30 * blockage);
+    const sandG = Math.floor(145 - 60 * blockage);
+    const sandB = Math.floor(95 - 50 * blockage);
+    ctx.strokeStyle = `rgba(${sandR}, ${sandG}, ${sandB}, ${sandAlpha})`;
+    ctx.lineWidth = 5.5 * widthMul;
+    ctx.stroke();
+    if (blockage > 0.5) {
+      ctx.strokeStyle = `rgba(220, 70, 35, ${Math.min(0.7, blockage * 0.85)})`;
+      ctx.lineWidth = 5 * widthMul;
+      ctx.setLineDash([7, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (blockage > 0.08) {
+      ctx.strokeStyle = `rgba(180, 70, 35, ${blockage * 0.55})`;
+      ctx.lineWidth = 3.5 * widthMul;
+      ctx.stroke();
+    }
+    if (kind === 'highway') {
+      ctx.strokeStyle = 'rgba(255, 188, 92, 0.16)';
+      ctx.lineWidth = 6.5 * widthMul;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 216, 132, 0.72)';
+      ctx.lineWidth = 1.8 * widthMul;
+      ctx.setLineDash([16, 11]);
+      ctx.lineDashOffset = -(now * 0.018) % 27;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    } else if (kind === 'bridge') {
+      ctx.strokeStyle = 'rgba(150, 178, 214, 0.55)';
+      ctx.lineWidth = 5 * widthMul;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(220, 236, 255, 0.85)';
+      ctx.lineWidth = 1.6 * widthMul;
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+    return;
+  }
+
+  // ---- CARTOGRAPHIC thin map road ----
+  const isHwy = kind === 'highway';
+  const isBr  = kind === 'bridge';
+  const z = zoom || 1;
+  // Fill width by class. Highways/bridges hold a screen-pixel floor so the artery
+  // skeleton stays visible zoomed out; locals are pure world-space (thin + they
+  // vanish at far zoom, as a back-lane should).
+  const fill = isHwy ? Math.max(2.0, 1.4 / z)
+             : isBr  ? Math.max(1.9, 1.3 / z)
+             : Math.max(0.7, 1.0 * widthMul);
+  const casing = fill + (isHwy || isBr ? 1.2 : 0.8);
+
   ctx.beginPath();
   tracePath(ctx, a.x, a.y, b.x, b.y, bow);
-  ctx.stroke();
-  // Inner sand fill — darker as blockage rises
-  const sandAlpha = 0.92 - blockage * 0.35;
-  const sandR = Math.floor(190 - 30 * blockage);
-  const sandG = Math.floor(145 - 60 * blockage);
-  const sandB = Math.floor(95 - 50 * blockage);
-  ctx.strokeStyle = `rgba(${sandR}, ${sandG}, ${sandB}, ${sandAlpha})`;
-  ctx.lineWidth = 5.5 * widthMul;
-  ctx.stroke();
-  // Wreckage / death-highway overlay
-  if (blockage > 0.5) {
-    ctx.strokeStyle = `rgba(220, 70, 35, ${Math.min(0.7, blockage * 0.85)})`;
-    ctx.lineWidth = 5 * widthMul;
-    ctx.setLineDash([7, 6]);             // world-space — scales with the road
-    ctx.stroke();
-    ctx.setLineDash([]);
-  } else if (blockage > 0.08) {
-    ctx.strokeStyle = `rgba(180, 70, 35, ${blockage * 0.55})`;
-    ctx.lineWidth = 3.5 * widthMul;
+
+  // Highway glow halo, behind everything (faint amber bloom → "supply corridor").
+  if (isHwy) {
+    ctx.strokeStyle = 'rgba(255, 198, 110, 0.10)';
+    ctx.lineWidth = casing + 2.0;
     ctx.stroke();
   }
-  // Road-class accent (procgen). Highways read as glowing arteries (wide soft
-  // amber underlay + bright dashed core); bridges/passes as bright steel spans —
-  // so the supply hierarchy + chokepoints pop. Locals keep the base look. Cheap:
-  // only the ~30 highway/bridge roads take the extra strokes (no shadowBlur).
-  if (kind === 'highway') {
-    ctx.strokeStyle = 'rgba(255, 188, 92, 0.16)';     // soft glow halo
-    ctx.lineWidth = 6.5 * widthMul;
+  // Thin dark casing — a subtle map edge, not a pipe wall.
+  ctx.strokeStyle = isBr ? 'rgba(18, 24, 34, 0.55)' : 'rgba(26, 16, 9, 0.5)';
+  ctx.lineWidth = casing;
+  ctx.stroke();
+  // Inner fill — muted. Locals are dim warm-grey at low alpha (recede); highways
+  // a subtle amber; bridges steel-blue.
+  if (isHwy) {
+    ctx.strokeStyle = 'rgba(208, 174, 118, 0.82)';
+  } else if (isBr) {
+    ctx.strokeStyle = 'rgba(168, 194, 224, 0.78)';
+  } else {
+    const la = 0.34 + Math.min(0.30, widthMul * 0.2);   // arterials a bit stronger than back-lanes
+    ctx.strokeStyle = `rgba(156, 132, 102, ${la})`;
+  }
+  ctx.lineWidth = fill;
+  ctx.stroke();
+  // Damage readout — a faint dashed red "contested route" overlay, never a thick pipe.
+  if (blockage > 0.12) {
+    ctx.strokeStyle = `rgba(210, 80, 45, ${Math.min(0.6, blockage * 0.7)})`;
+    ctx.lineWidth = Math.max(0.8, fill * 0.8);
+    ctx.setLineDash([5, 5]);
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(255, 216, 132, 0.72)';    // bright core, dashes flow
-    ctx.lineWidth = 1.8 * widthMul;                   // a→b like a live supply line
-    ctx.setLineDash([16, 11]);
-    ctx.lineDashOffset = -(now * 0.018) % 27;
+    ctx.setLineDash([]);
+  }
+  // Highway animated supply-line core / bridge bright deck.
+  if (isHwy) {
+    ctx.strokeStyle = 'rgba(255, 222, 150, 0.6)';
+    ctx.lineWidth = Math.max(0.8, 0.8 / z);
+    ctx.setLineDash([14, 12]);
+    ctx.lineDashOffset = -(now * 0.018) % 26;
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
-  } else if (kind === 'bridge') {
-    ctx.strokeStyle = 'rgba(150, 178, 214, 0.55)';    // steel glow
-    ctx.lineWidth = 5 * widthMul;
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(220, 236, 255, 0.85)';    // bright deck
-    ctx.lineWidth = 1.6 * widthMul;
+  } else if (isBr) {
+    ctx.strokeStyle = 'rgba(224, 238, 255, 0.85)';
+    ctx.lineWidth = Math.max(0.8, 0.7 / z);
     ctx.stroke();
   }
   ctx.lineCap = 'butt';

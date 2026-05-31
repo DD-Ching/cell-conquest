@@ -22,6 +22,9 @@ export function drawRoads(ctx, zoom, now = 0) {
   // map drops local streets when you zoom out. detailed/debug keep every road at
   // full strength.
   const mode = state.mapMode;
+  // debug → the chunky raw-graph road look; every other mode → the thin
+  // cartographic map road (drawRoadStyled's `thin` branch).
+  const thin = mode !== 'debug';
   const fadeLocals = (mode === 'cinematic' || mode === 'strategic') && state._lod < 2;
   for (const r of state.roads) {
     const a = state.nodes[r.a], b = state.nodes[r.b];
@@ -37,7 +40,7 @@ export function drawRoads(ctx, zoom, now = 0) {
     // `now` animates highway supply-line dashes. `bow` gently bends the painted
     // road off the straight chord — render-only, outcome-neutral (road-curve.js).
     const bow = roadBow(a.id, b.id, Math.hypot(b.x - a.x, b.y - a.y));
-    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now, bow);
+    drawRoadStyled(ctx, a, b, edgeVisualBlockage(e), zoom, r.widthMul, r.kind, now, bow, thin);
     if (minor) ctx.globalAlpha = 1;
   }
 }

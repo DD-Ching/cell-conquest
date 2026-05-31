@@ -46,6 +46,43 @@ function nearestK(n, pool, k) {
     .slice(0, k);
 }
 
+/** Connect any two physically-close nodes the region-scoped LOCAL pass missed
+ *  (different regions, or just past the k-nearest cut). The radius is adaptive —
+ *  the median nearest-neighbour gap × a factor — so "close" scales with THIS
+ *  map's spacing instead of a brittle absolute. Each node is also guaranteed an
+ *  edge to its single nearest neighbour even if just beyond the radius, so no
+ *  node is ever left islanded next to a visible sibling. O(N²), world-gen-time
+ *  only (one pass, a few ms at ~800 nodes). All edges classified 'local' (a
+ *  short street, not a glowing highway); cross-barrier ones are culled later. */
+function connectNearby(nodes) {
+  const N = nodes.length;
+  if (N < 2) return;
+  // adaptive radius = median nearest-neighbour distance × 2.2
+  const nn = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let best = Infinity; const ni = nodes[i];
+    for (let j = 0; j < N; j++) {
+      if (j === i) continue;
+      const d = dist(ni, nodes[j]);
+      if (d < best) best = d;
+    }
+    nn[i] = best;
+  }
+  const sorted = nn.slice().sort((a, b) => a - b);
+  const R = sorted[sorted.length >> 1] * 2.2;
+  for (let i = 0; i < N; i++) {
+    const ni = nodes[i];
+    let nearest = -1, nearestD = Infinity;
+    for (let j = 0; j < N; j++) {
+      if (j === i) continue;
+      const d = dist(ni, nodes[j]);
+      if (j > i && d <= R) addEdge(ni.id, nodes[j].id, 'local', d);   // pair once (j>i)
+      if (d < nearestD) { nearestD = d; nearest = j; }
+    }
+    if (nearest >= 0) addEdge(ni.id, nodes[nearest].id, 'local', nearestD);   // guaranteed nearest link
+  }
+}
+
 /** Union-find stitch: bridge any disconnected components by the shortest
  *  cross-component node pair, exactly like legacy buildRoads. Bounded retries. */
 function bridgeComponents() {
@@ -103,6 +140,16 @@ export function generateRoads(rng) {
     const pool = (n.regionId >= 0 && bucket && bucket.length > LOCAL_K) ? bucket : nodes;
     for (const o of nearestK(n, pool, LOCAL_K)) addEdge(n.id, o.id, 'local', o.d);
   }
+
+  // 1b) PROXIMITY mesh — the LOCAL pass only wires SAME-region neighbours, so two
+  //     bases that physically sit right next to each other but belong to DIFFERENT
+  //     regions (or fell just outside a node's k-nearest) were left with NO road —
+  //     the "two nodes touching, no link between them" the player flagged. Connect
+  //     every pair within a density-adaptive radius regardless of region, and
+  //     guarantee each node a link to its single nearest neighbour. Cross-barrier
+  //     edges are culled afterward by applyBarrierChokepoints, exactly like any
+  //     other edge, so this never paints a road over a river/ridge.
+  connectNearby(nodes);
 
   // 2) HIGHWAYS — MST over region centres; each backbone edge becomes a highway
   //    between the closest node pair across the two regions. Sparse by design.

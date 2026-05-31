@@ -106,7 +106,12 @@ export const AA_RADIUS = 200;
 // swarm of N each takes 450/N DPS → the whole swarm clears in ~N/15 s. Pure
 // constant — read by both the wasm batch path and the JS fallback, so ZERO extra
 // per-frame work (faster kills → fewer live drones → if anything LESS sim load).
-export const AA_DPS = 450;
+//
+// Dialed DOWN from 450: at 450 AA still felt too strong, so per the player it's
+// cut to 2/5 → 180 (12× the original 15). A lone drone (30 HP) still dies in
+// ~0.17 s, but a swarm divides the fire down (N drones → 180/N each) so a real
+// mass can now push some drones through — a counter, not an instant no-fly zone.
+export const AA_DPS = 180;
 
 export const DF_BUILD_TIME = 15;
 export const DF_HP = 150;
@@ -138,7 +143,12 @@ export const TANK_DPS = 8;
 // shell wipes the whole cluster. Counters dense defenses.
 export const ARTILLERY_BUILD_TIME    = 20;
 export const ARTILLERY_HP            = 120;
-export const ARTILLERY_RANGE         = 420;   // longest range in the game
+export const ARTILLERY_RANGE         = 2520;  // 6× the old 420 — true long-range bombardment that reaches deep
+// Minimum range (dead zone): artillery is a HIGH-ARC bombard, so it can't hit
+// anything too close — targets inside this radius are safe from it (the player
+// asked for "not 0→100, more like 30→100"). ~28% of max range → a real close-in
+// blind spot you can exploit by closing the distance. Gated in combat.js.
+export const ARTILLERY_MIN_RANGE     = 700;
 export const ARTILLERY_AOE           = 42;    // tighter blast — only really hits a *tight* cluster
 export const ARTILLERY_INTERVAL      = 5.0;   // slower fire — bombardment, not autocannon
 export const ARTILLERY_INACCURACY    = 240;   // very wide wobble — shells can land anywhere in this radius around the aim

@@ -8,7 +8,7 @@
 // render-entities.js.
 // =====================================================
 import { state } from './state.js';
-import { ARTILLERY_AOE } from './config.js';
+import { ARTILLERY_AOE, ARTILLERY_MIN_RANGE } from './config.js';
 import { COLOR } from './factions.js';
 import { getEdge, edgeVisualBlockage, TURRET_RANGES } from './engineering.js';
 import { drawRoadStyled } from './sprites.js';
@@ -216,6 +216,15 @@ export function drawRangeRings(ctx, zoom) {
     ctx.beginPath();
     ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
     ctx.stroke();
+    // Artillery dead-zone: a fainter inner ring marks the min-range blind spot
+    // (anything inside is safe from this battery — the player can exploit it by
+    // closing the distance). Cheap: one extra arc only for artillery turrets.
+    if (t.type === 'artillery') {
+      ctx.strokeStyle = COLOR[t.owner] + '22';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, ARTILLERY_MIN_RANGE, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
   }
 }

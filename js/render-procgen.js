@@ -218,13 +218,20 @@ export function drawProcgen(ctx, zoom) {
   ctx.letterSpacing = (4 / zoom) + 'px';
   for (const r of state.regions) {
     if (!r.name) continue;
-    const f = 26 / zoom;
+    // Size hierarchy — big sprawling / high-value sectors get a BIG name, small
+    // outposts a small one, so the map reads like a real atlas (capitals louder
+    // than villages) instead of a flat field of identical labels. Drives off the
+    // region's physical radius + strategic value; bigger names also sit a touch
+    // more opaque so the eye lands on them first.
+    const importance = (r.radius || 600) * 0.014 + (r.value || 1) * 3.5;   // ≈ 10–34
+    const f = (14 + importance) / zoom;                                    // ≈ 24–48 px
+    const aMul = Math.min(1.25, 0.8 + importance / 40);                    // big names pop more
     ctx.font = `600 ${f}px -apple-system, system-ui, sans-serif`;
     const txt = r.name.toUpperCase();
     ctx.lineWidth = 4 / zoom;
     ctx.strokeStyle = `rgba(0, 0, 0, ${a * 0.85})`;
     ctx.strokeText(txt, r.x, r.y);
-    ctx.fillStyle = `rgba(220, 212, 196, ${a})`;
+    ctx.fillStyle = `rgba(220, 212, 196, ${Math.min(0.6, a * aMul)})`;
     ctx.fillText(txt, r.x, r.y);
   }
   ctx.restore();

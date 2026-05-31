@@ -10,7 +10,7 @@ import { state } from './state.js';
 import {
   AA_RADIUS, AA_DPS,
   TANK_RADIUS, TANK_DPS,
-  ARTILLERY_RANGE, ARTILLERY_AOE, ARTILLERY_INTERVAL,
+  ARTILLERY_RANGE, ARTILLERY_MIN_RANGE, ARTILLERY_AOE, ARTILLERY_INTERVAL,
   ARTILLERY_INACCURACY, ARTILLERY_DAMAGE_TURRET, ARTILLERY_DAMAGE_FLEET,
   ARTILLERY_SHELL_FLIGHT,
   SHELL_CAP,
@@ -23,8 +23,9 @@ import { isAlly } from './alliance.js';
 // Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
 const AA_R2          = AA_RADIUS * AA_RADIUS;
 const TANK_R2        = TANK_RADIUS * TANK_RADIUS;
-const ARTILLERY_R2   = ARTILLERY_RANGE * ARTILLERY_RANGE;
-const ARTILLERY_AOE2 = ARTILLERY_AOE * ARTILLERY_AOE;
+const ARTILLERY_R2     = ARTILLERY_RANGE * ARTILLERY_RANGE;
+const ARTILLERY_MIN_R2 = ARTILLERY_MIN_RANGE * ARTILLERY_MIN_RANGE;   // dead-zone (too close to hit)
+const ARTILLERY_AOE2   = ARTILLERY_AOE * ARTILLERY_AOE;
 
 // Spatial-grid cell size — matches the build in main.js simulate().
 const GRID_CELL = 250;
@@ -248,13 +249,16 @@ export function updateArtillery(dt) {
 
 function fireArtilleryShell(t) {
   const cands = [];
-  // Grid query saves scanning out-of-range turrets — ARTILLERY_RANGE 420 px
-  // means a 4×4 cell window vs the whole turret array.
+  // Grid query saves scanning out-of-range turrets — the wide ARTILLERY_RANGE
+  // touches a larger cell window than tank/AA but still skips the whole array.
+  // Targets must sit in the ANNULUS [MIN_RANGE, RANGE]: beyond MAX is out of
+  // reach, inside MIN is the high-arc dead zone (too close to lob a shell at).
   forTurretsNear(t.x, t.y, ARTILLERY_RANGE, (e) => {
     if (isAlly(e.owner, t.owner)) return;
     if (e.pendingEngineer) return;          // dirt placeholder, not a real target
     const dx = e.x - t.x, dy = e.y - t.y;
-    if (dx * dx + dy * dy > ARTILLERY_R2) return;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > ARTILLERY_R2 || d2 < ARTILLERY_MIN_R2) return;
     cands.push({ x: e.x, y: e.y, weight: 2 });   // turrets worth more
   });
   // Ground fleets in range via grid (skips drones automatically — they're in
@@ -262,7 +266,8 @@ function fireArtilleryShell(t) {
   forGroundNear(t.x, t.y, ARTILLERY_RANGE, (f) => {
     if (isAlly(f.owner, t.owner)) return;
     const dx = f.x - t.x, dy = f.y - t.y;
-    if (dx * dx + dy * dy > ARTILLERY_R2) return;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > ARTILLERY_R2 || d2 < ARTILLERY_MIN_R2) return;
     cands.push({ x: f.x, y: f.y, weight: 1 });
   });
   if (cands.length === 0) return;

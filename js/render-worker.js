@@ -104,6 +104,7 @@ function hydrate(snap) {
   state.fogReveal = !!snap.fogReveal;
   state.phase     = snap.phase || 'playing';
   state.spawnCandidates = snap.spawnCandidates || [];
+  if (snap.dayPhase != null) state.dayPhase = snap.dayPhase;
 
   // Rebuild the turretGrid the way main.js simulate() does — drawTurrets'
   // aim-scan uses state.turretGrid + state.groundFleetGrid to find targets

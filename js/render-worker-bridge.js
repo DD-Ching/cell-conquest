@@ -162,6 +162,7 @@ function buildSnapshot() {
     fogReveal:   state.fogReveal,
     phase:       state.phase,
     spawnCandidates: state.spawnCandidates,
+    dayPhase:    state.dayPhase,   // cosmetic day/night veil phase
 
     // Faction colours: COLOR/GLOW are populated by rollFactions() on the MAIN
     // thread; the worker's own factions.js module starts empty, so without this

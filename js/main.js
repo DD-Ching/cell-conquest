@@ -537,6 +537,9 @@ function loop() {
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
   if (state._perfPhaseOn) state._pFrames++;
   updateSnow(realDt);
+  // Day/night ambiance: advance the cosmetic cycle on REAL time (~4 min/loop)
+  // so it's never coupled to game speed and never read by sim/AI. Pure veil.
+  state.dayPhase = (state.dayPhase + realDt / 240) % 1;
   updateAudio(realDt);     // drone-swarm buzz + AA gunfire, spatialised by the live view
   updateHUD();
   // Fog of war: recompute the player's vision before rendering. Self-gates on

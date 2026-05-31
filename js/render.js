@@ -47,6 +47,7 @@ import { drawTerritory } from './render-territory.js';
 import { drawTerritoryBorders } from './render-borders.js';
 import { drawProcgen } from './render-procgen.js';
 import { drawFog } from './render-fog.js';
+import { drawDayNight } from './render-daynight.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -129,6 +130,9 @@ export function render() {
   // Screen-space vignette: dark corners framing the world. Above everything
   // except the HUD, so it must sit after the world restore + before the banner.
   drawVignette(ctx, W, H);
+  // Day/night cosmetic veil — screen-space, over the world + vignette but under
+  // the HUD banners. Subtle; never affects sim/AI (see render-daynight.js).
+  drawDayNight(ctx, W, H);
   drawHoldFireBanner(ctx, W, now);
   // Orientation aid — edge arrows to your bases, but ONLY when none is on
   // screen (you've lost track of your territory). Auto-hides otherwise.

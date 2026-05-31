@@ -9,8 +9,10 @@
 //   • updateGroundTanks(dt)  — per sub-step: en-route weapons (gun down enemy
 //                              ground fleets, siege enemy turrets) + the arrival
 //                              bombard-siege (chip a node's garrison, take
-//                              retaliation, capture, then advance to the next
-//                              frontier node).
+//                              retaliation, then — once the garrison is SUPPRESSED
+//                              to TANK_SUPPRESS_UNITS — advance to the next
+//                              frontier node). Tanks NEVER capture: flipping the
+//                              node is infantry's job (send a troop column behind).
 //   • beginTankSiege(f,node) — called from fleets.simulateFleets when a tank's
 //                              road path completes (parks it for the siege).
 //
@@ -28,14 +30,13 @@ import { state } from './state.js';
 import {
   TANK_FACTORY_PRODUCTION_T, TANK_CAP_PER_FACTORY, TANK_UNIT_HP,
   TANK_UNIT_RANGE, TANK_UNIT_DPS_FLEET, TANK_UNIT_DPS_TURRET, TANK_UNIT_DPS_NODE,
-  TANK_NODE_RETALIATE, TANK_SIEGE_RECHECK_T,
+  TANK_NODE_RETALIATE, TANK_SUPPRESS_UNITS, TANK_SIEGE_RECHECK_T,
 } from './config.js';
 import { findPath, catchUpRegen } from './world.js';
 import { isAlly } from './alliance.js';
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
 import { isWasmReady, wasmTankDamageFleets } from './wasm-bridge.js';
-import { sfxCapture } from './audio.js';
 
 const GRID_CELL = 250;
 const TANK_R2 = TANK_UNIT_RANGE * TANK_UNIT_RANGE;
@@ -71,13 +72,19 @@ function nearestAlliedNode(x, y, owner) {
 /** Pick the nearest reachable FRONTIER node (a non-allied node touching our
  *  territory) for a tank starting at `fromNode`. Enemies are preferred over
  *  neutral land (×1.5 distance penalty on neutral). Returns {node, path} or
- *  null when nothing is reachable. Because each capture flips a node to our
- *  side, the next frontier node becomes reachable — so tanks crawl outward,
- *  taking neutral ground and grinding into enemy hubs. */
+ *  null when nothing is reachable.
+ *
+ *  Tanks SUPPRESS but never capture, so the frontier doesn't advance on its own
+ *  — it advances when INFANTRY takes a suppressed node. Already-suppressed nodes
+ *  (garrison ≤ TANK_SUPPRESS_UNITS) are skipped so tanks roll toward live
+ *  resistance instead of re-hammering a husk and ping-ponging in place; if the
+ *  whole front is suppressed and no infantry follows, the tank goes idle and
+ *  re-checks (a garrison that regens back above the floor re-attracts it). */
 function pickTankTarget(owner, fromNode) {
   let best = null, bestScore = Infinity;
   for (const n of state.nodes) {
     if (isAlly(n.owner, owner)) continue;
+    if (n.units <= TANK_SUPPRESS_UNITS) continue;   // already suppressed/empty — infantry's job
     let frontier = false;
     for (const nb of state.adj.get(n.id)) {
       if (isAlly(state.nodes[nb].owner, owner)) { frontier = true; break; }
@@ -233,24 +240,12 @@ function applyTankTurretSiege(f, dt) {
   });
 }
 
-/** Capture a node a besieging tank has flattened. */
-function captureNode(f, node) {
-  node.owner = f.owner;
-  node.units = 1;
-  node.flash = 1; node.pulse = 1;
-  node.lastRegenT = state.elapsed;   // new owner — reset lazy-regen baseline
-  sfxCapture(node.x, node.y);
-  for (let k = 0; k < 18; k++) {
-    const a = Math.random() * Math.PI * 2, s = 70 + Math.random() * 120;
-    state.particles.push({
-      x: node.x, y: node.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-      life: 0.8, maxLife: 0.8, color: COLOR[f.owner], kind: 'capture',
-    });
-  }
-}
-
-/** After a siege ends (captured, or the node turned friendly), pick the next
- *  frontier target from the now-held node — or go idle and re-scan later. */
+/** After a siege ends (garrison suppressed, or the node turned friendly because
+ *  infantry took it), pick the next frontier target — or go idle and re-scan
+ *  later. The tank is parked AT the suppressed node `f.siegeNodeId` (still
+ *  enemy/neutral — tanks don't flip ownership), and that node IS a frontier (it
+ *  has a friendly neighbour), so findPath from it reaches the rest of our road
+ *  network without the tank teleporting. */
 function advanceTank(f) {
   const home = state.nodes[f.siegeNodeId];
   f.siegeNodeId = undefined;
@@ -265,19 +260,23 @@ function advanceTank(f) {
   }
 }
 
-/** Bombard the besieged node, take retaliation, capture / advance / die.
- *  Returns true if the tank itself was destroyed this tick. */
+/** Bombard the besieged node, take retaliation, then SUPPRESS-and-advance (never
+ *  capture) / die. Returns true if the tank itself was destroyed this tick. */
 function applyTankSiege(f, dt) {
   const node = state.nodes[f.siegeNodeId];
   if (!node) { f.siegeNodeId = undefined; f._idle = true; return false; }
-  if (isAlly(node.owner, f.owner)) { advanceTank(f); return false; }   // ours now — move on
+  if (isAlly(node.owner, f.owner)) { advanceTank(f); return false; }   // infantry took it — move on
   catchUpRegen(node);
   if (node.units > 0) f.units -= node.units * TANK_NODE_RETALIATE * dt;  // defenders shoot back
   node.units -= TANK_UNIT_DPS_NODE * dt;
+  if (node.units < 0) node.units = 0;          // floor at 0 — tanks suppress, never drive it negative
   if (Math.random() < 3 * dt) {
     state.tracers.push({ x1: f.x, y1: f.y, x2: node.x, y2: node.y, age: 0, maxAge: 0.25, color: COLOR[f.owner] });
   }
-  if (node.units <= 0.5) { captureNode(f, node); advanceTank(f); return false; }
+  // Garrison broken (≤ suppression floor): the tank's job is done here — roll on
+  // to the next frontier and leave the actual capture to a following infantry
+  // column. We do NOT change node.owner.
+  if (node.units <= TANK_SUPPRESS_UNITS) { advanceTank(f); return false; }
   if (f.units <= 0.5) {                       // overwhelmed at the wall — dies at the node (off-road, no hulk)
     spawnBigExplosion(f.x, f.y, '#ffaa55', 26);
     spawnScorch(f.x, f.y, 'big');

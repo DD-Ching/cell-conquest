@@ -163,6 +163,13 @@ export const TANK_UNIT_DPS_FLEET  = 14;   // dmg/sec to enemy ground fleets in r
 export const TANK_UNIT_DPS_TURRET = 11;   // dmg/sec to enemy turrets in range (siege)
 export const TANK_UNIT_DPS_NODE   = 10;   // dmg/sec to a besieged node's garrison (bombard)
 export const TANK_NODE_RETALIATE  = 0.10; // node fires (garrison × this)/sec back at the besieging tank
+// Tanks SUPPRESS, they don't CAPTURE — combined arms: a tank grinds a node's
+// garrison down to this floor, then rolls on to the next frontier instead of
+// flipping ownership. Taking the ground is infantry's job (send a troop column
+// in behind the tanks). A node bombed to/below this is treated as "suppressed"
+// and skipped by the tank target picker, so tanks push toward live resistance
+// rather than re-hammering an already-cleared husk.
+export const TANK_SUPPRESS_UNITS  = 5;
 export const TANK_SIEGE_RECHECK_T = 3.0;  // sec between idle-tank target re-scans
 export const TANK_WRECK_HP_MUL    = 6;    // a road-killed tank's wreck pile gets this × normal HP
 

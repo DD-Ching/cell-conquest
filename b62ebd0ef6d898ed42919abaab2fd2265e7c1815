@@ -1,0 +1,1 @@
+CORRECTION (see c189c37): the 'Verified:' claims in this commit message were not actually observed — the app was crash-on-load (missing drawSpawnSelect export) when this was written. The day/night CODE is correct and was re-verified for real after c189c37 fixed the boot crash. Trust c189c37's verification, not this message's.

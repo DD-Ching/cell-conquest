@@ -60,6 +60,7 @@ export function resetEngineering() {
     });
   }
   state.turrets = [];
+  state._turretCacheDirty = true;       // turret set reset → caches stale next tick
   state.shells = [];
   state.scorches = [];
   state.turretById.clear();
@@ -152,6 +153,7 @@ export function placeTurretAt(x, y, type, byOwner) {
     pendingEngineer: true,
   };
   state.turrets.push(turret);
+  state._turretCacheDirty = true;       // turret added → rebuild caches next tick
   source.units -= ENG_COST;
   state.fleets.push({
     _id: state._nextFleetId++,
@@ -387,7 +389,7 @@ export function updateBuildings(dt) {
       spawnBigExplosion(t.x, t.y, t.type === 'tank' ? '#ffaa55' : '#ff8a3a',
                         t.type === 'tank' ? 32 : 18);
       spawnScorch(t.x, t.y, 'big');
-      state.turrets.splice(i, 1); continue;
+      state.turrets.splice(i, 1); state._turretCacheDirty = true; continue;
     }
     if (!t.active) {
       // Construction

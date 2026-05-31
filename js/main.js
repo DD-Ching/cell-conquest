@@ -242,28 +242,37 @@ function simulate(dt, combatDt = dt) {
   // O(N) array.find. (Splices during this tick may leave deleted entries
   // in the map; consumers gate on falsy result, which is the same check
   // they already did before.)
-  state.turretById.clear();
-  // Reuse bucket arrays across rebuilds — zero each instead of dropping it
-  // (.clear() churns GC ×20/frame at fast-forward). Contents are still rebuilt
-  // every sub-step so freshness is identical; an empty bucket that lingers for a
-  // now-unoccupied owner/type/cell reads the same as an absent key — every
-  // consumer uses `.get()||[]` or guards n===0 (see drones.rebuildLoiterCenters).
-  for (const b of state.turretsByOwner.values()) b.length = 0;
-  for (const b of state.turretsByType.values()) b.length = 0;
-  for (const b of state.turretGrid.values()) b.length = 0;
+  const P = state._perfPhaseOn;            // per-phase profiling (opt-in; ~0 cost off)
+  let _pt = P ? performance.now() : 0;
   const GRID_CELL = 250;
-  for (const t of state.turrets) {
-    state.turretById.set(t.id, t);
-    let oBucket = state.turretsByOwner.get(t.owner);
-    if (!oBucket) { oBucket = []; state.turretsByOwner.set(t.owner, oBucket); }
-    oBucket.push(t);
-    let tBucket = state.turretsByType.get(t.type);
-    if (!tBucket) { tBucket = []; state.turretsByType.set(t.type, tBucket); }
-    tBucket.push(t);
-    const gKey = Math.floor(t.x / GRID_CELL) * 10000 + Math.floor(t.y / GRID_CELL);
-    let gBucket = state.turretGrid.get(gKey);
-    if (!gBucket) { gBucket = []; state.turretGrid.set(gKey, gBucket); }
-    gBucket.push(t);
+  // Turret-derived caches rebuild ONLY when the turret set changed. Turrets never
+  // move (x/y fixed) and never change owner, so when _turretCacheDirty is clear the
+  // previous sub-step's caches are already identical — skipping the all-turrets
+  // scan here is the same result, 20×/frame cheaper at high time-scale. The flag is
+  // raised by engineering.js on every turret add / remove / reset.
+  if (state._turretCacheDirty) {
+    state.turretById.clear();
+    // Reuse bucket arrays across rebuilds — zero each instead of dropping it
+    // (.clear() churns GC). Contents are rebuilt below so freshness is identical;
+    // an empty bucket that lingers for a now-unoccupied owner/type/cell reads the
+    // same as an absent key — every consumer uses `.get()||[]` or guards n===0.
+    for (const b of state.turretsByOwner.values()) b.length = 0;
+    for (const b of state.turretsByType.values()) b.length = 0;
+    for (const b of state.turretGrid.values()) b.length = 0;
+    for (const t of state.turrets) {
+      state.turretById.set(t.id, t);
+      let oBucket = state.turretsByOwner.get(t.owner);
+      if (!oBucket) { oBucket = []; state.turretsByOwner.set(t.owner, oBucket); }
+      oBucket.push(t);
+      let tBucket = state.turretsByType.get(t.type);
+      if (!tBucket) { tBucket = []; state.turretsByType.set(t.type, tBucket); }
+      tBucket.push(t);
+      const gKey = Math.floor(t.x / GRID_CELL) * 10000 + Math.floor(t.y / GRID_CELL);
+      let gBucket = state.turretGrid.get(gKey);
+      if (!gBucket) { gBucket = []; state.turretGrid.set(gKey, gBucket); }
+      gBucket.push(t);
+    }
+    state._turretCacheDirty = false;
   }
   state.fleetById.clear();
   state.droneCountByOwner.clear();
@@ -291,6 +300,7 @@ function simulate(dt, combatDt = dt) {
       bucket.push(f);
     }
   }
+  if (P) state._pSumCache += performance.now() - _pt;
 
   // Stripped-owner tally: an owner is "stripped" (not worth dumping a suicide
   // salvo into) when they have ZERO active production turrets AND low total
@@ -342,14 +352,18 @@ function simulate(dt, combatDt = dt) {
   // whole damage pass for this sub-step. Movement / production / drone
   // updates still run every sub-step so the world doesn't visually stutter.
   // DPS × dt is preserved because the active combat ticks use a doubled dt.
+  if (P) _pt = performance.now();
   if (combatDt > 0) {
     updateAntiAir(combatDt);
     updateGroundTanks(combatDt);
     updateArtillery(combatDt);
     updateShells(combatDt);
   }
+  if (P) { state._pSumCombat += performance.now() - _pt; _pt = performance.now(); }
   updateDrones(dt);
+  if (P) { state._pSumDrones += performance.now() - _pt; _pt = performance.now(); }
   simulateFleets(dt);
+  if (P) state._pSumFleets += performance.now() - _pt;
 }
 
 function loop() {
@@ -441,6 +455,7 @@ function loop() {
   // pause / gameOver (so the HUD keeps updating with FPS even when paused).
   state._perfFrameMs[state._perfIdx] = realDt * 1000;
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
+  if (state._perfPhaseOn) state._pFrames++;
   updateSnow(realDt);
   updateAudio(realDt);     // drone-swarm buzz + AA gunfire, spatialised by the live view
   updateHUD();

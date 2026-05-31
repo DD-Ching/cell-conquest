@@ -90,6 +90,12 @@ export const state = {
   // path that needs "give me X by id" is an O(1) Map.get instead of an O(N)
   // array.find / .some. Stale only between simulate() calls — never used
   // outside the sim window.
+  // Turret-derived caches (turretById/ByOwner/ByType/Grid) only change when the
+  // turret SET changes: turrets never move (x/y fixed) and never change owner, so
+  // a rebuild every sub-step (20×/frame at 40×) re-derives an identical result.
+  // simulate() rebuilds them only when this flag is set; engineering.js raises it
+  // on every turret add / remove / reset. Starts true so the first tick builds.
+  _turretCacheDirty: true,
   turretById:     new Map(), // id -> turret
   turretsByOwner: new Map(), // owner -> turret[] — used by AI hub-loop so each
                              //   hub iterates only its own turrets instead of
@@ -180,6 +186,12 @@ export const state = {
                                         //   (~0 when the render worker owns the
                                         //   canvas — that IS the offload signal)
   _perfIdx: 0,
+  // Per-phase sim profiling (opt-in via ?perf → toggled by the harness through
+  // _perfPhaseOn). Each is a running sum of milliseconds; _pFrames counts frames
+  // since the last reset, so avg-per-frame = sum / _pFrames. Zero overhead when
+  // _perfPhaseOn is false (the timers are skipped). Reset by the harness.
+  _perfPhaseOn: false,
+  _pSumCache: 0, _pSumCombat: 0, _pSumDrones: 0, _pSumFleets: 0, _pFrames: 0,
   startTime: 0,
   elapsed: 0,
   lastTime: 0,

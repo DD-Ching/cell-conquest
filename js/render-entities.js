@@ -18,6 +18,8 @@ import {
 import {
   drawNodeCompounds, drawRadarSweeps, drawNodeBuildings, drawNodeIcons,
 } from './render-node-detail.js';
+// Cartographic compact node markers (default look for non-debug map modes).
+import { drawNodesCarto, cartoHoveredId, importanceOf, cartoMarkerR } from './render-node-carto.js';
 // Fleet layers live in render-fleets.js (split out to stay under the line cap);
 // re-exported below so importers keep getting them from render-entities.js.
 export { drawTroopFleets, drawDroneFleets } from './render-fleets.js';
@@ -92,6 +94,15 @@ export function drawNodes(ctx, zoom, now) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    return;
+  }
+
+  // CARTOGRAPHIC modes (cinematic / strategic / detailed): compact map markers
+  // instead of the big "fortified compound" token discs — a node reads as a
+  // place pin, not a board-game piece. Only 'debug' falls through to the full
+  // compound rendering below (the raw-graph diagnostic view).
+  if (state.mapMode !== 'debug') {
+    drawNodesCarto(ctx, zoom, now);
     return;
   }
 
@@ -344,65 +355,84 @@ export function drawTurrets(ctx, zoom, now) {
 
 // ---- Always-on-top node count labels (drawn last to beat any sprite) ----
 export function drawNodeLabelsOnTop(ctx, zoom) {
+  if (state.mapMode !== 'debug') { drawCartoLabels(ctx, zoom); return; }
+  // ---- DEBUG: original big centered numbers on every qualifying node ----
   const { vL, vT, vR, vB } = state._view;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Big-map declutter: at strategic zoom hundreds of per-node numbers overlap
-  // into noise. Show a label only where it carries glance-value — selected,
-  // a major hub (size), or a meaningful owned garrison. Everything else stays a
-  // coloured dot until you zoom in. (Spec: numbers on hover / selection / high
-  // zoom only.) The 0.6 cutoff matches the LOD-1 dot-mode threshold.
   const declutter = zoom < 0.6;
-  // Cartographic modes hide raw unit counts harder at strategic zoom — only
-  // MAJOR places (owned bases + typed landmarks) keep a number, so the overview
-  // reads as a map of places, not a field of figures. detailed keeps the
-  // size-based declutter; debug shows all. (Spec: numbers secondary/hidden.)
-  const mode = state.mapMode;
-  const cartoDemote = (mode === 'cinematic' || mode === 'strategic') && zoom < 0.6;
   for (const n of state.nodes) {
     if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
     if (!state.selectedIds.has(n.id)) {
-      if (cartoDemote) {
-        // Strategic map: only OWNED garrisons (your + enemy holdings) show a
-        // count — neutral places read as dots/icons, not a field of figures.
-        // Keeps the overview about terrain + territory, not every garrison.
-        if (n.owner === 'neutral') continue;
-      } else if (declutter &&
-          n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
+      if (declutter && n.size < 48 && !(n.owner !== 'neutral' && n.units >= 30)) continue;
     }
-    catchUpRegen(n);                         // fresh units for the top-layer label
+    catchUpRegen(n);
     const screenFont = Math.max(15, Math.min(28, n.size * 0.85 * zoom));
     const worldFont = screenFont / zoom;
     ctx.font = `bold ${worldFont}px -apple-system, system-ui, sans-serif`;
-    // Dark halo so the number reads on any background (troop columns,
-    // scorches, bright glow). Faction colour fill on top — packed strategic
-    // zoom is unreadable when every node label is white, but instantly
-    // legible when each owner's nodes pop in their own hue.
     ctx.lineWidth = Math.max(2, 3 / zoom);
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
     const txt = String(Math.floor(n.units));
     ctx.strokeText(txt, n.x, n.y);
     ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
     ctx.fillText(txt, n.x, n.y);
-    // Auto-control underline for Lieutenant bases (same colour as label so
-    // it reads as a typographic mark). Outline first for legibility against
-    // bright glow / scorch backgrounds, then fill.
     if (n.owner === 'ally1') {
-      const w = ctx.measureText(txt).width;
-      const half = w / 2;
-      const uy = n.y + worldFont * 0.45;
+      const w = ctx.measureText(txt).width, half = w / 2, uy = n.y + worldFont * 0.45;
       ctx.lineWidth = Math.max(2.4, 3 / zoom);
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.beginPath();
-      ctx.moveTo(n.x - half, uy);
-      ctx.lineTo(n.x + half, uy);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(n.x - half, uy); ctx.lineTo(n.x + half, uy); ctx.stroke();
       ctx.strokeStyle = COLOR[n.owner];
       ctx.lineWidth = Math.max(1.4, 1.8 / zoom);
-      ctx.beginPath();
-      ctx.moveTo(n.x - half, uy);
-      ctx.lineTo(n.x + half, uy);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(n.x - half, uy); ctx.lineTo(n.x + half, uy); ctx.stroke();
+    }
+  }
+}
+
+// Cartographic labels: COMPACT value tags below the marker, FIXED screen size
+// (not a giant centered token number), shown only where they carry glance-value:
+//   • selected / hovered  → always (info on demand)
+//   • capital (HQ)        → always (the anchor place)
+//   • owned garrisons     → only at close / detailed zoom
+//   • neutral / minor     → never (icon + colour already say what they are)
+// So the default map reads as places + ownership, with numbers appearing the way
+// a digital map reveals detail as you lean in.
+function drawCartoLabels(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
+  const mode = state.mapMode;
+  const hoveredId = cartoHoveredId();
+  // "Lean in" threshold: detailed mode (or any mode zoomed in close) shows owned
+  // garrison values; cinematic/strategic keep them hidden until you select/hover.
+  const closeEnough = mode === 'detailed' || zoom >= 1.0;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const fontPx = 11;                      // FIXED screen px — labels don't balloon
+  const worldFont = fontPx / zoom;
+  ctx.font = `600 ${worldFont}px -apple-system, system-ui, sans-serif`;
+  ctx.lineWidth = Math.max(1.6, 2.4 / zoom);
+  for (const n of state.nodes) {
+    if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+    const selected = state.selectedIds.has(n.id);
+    const hovered = n.id === hoveredId;
+    const isCapital = n.nodeType === 'capital';
+    const show = selected || hovered || isCapital ||
+                 (closeEnough && n.owner !== 'neutral');
+    if (!show) continue;
+    catchUpRegen(n);                       // fresh units for the label
+    const mr = cartoMarkerR(n, zoom);
+    const ly = n.y + mr + 3 / zoom;        // sit just BELOW the marker, not inside it
+    const txt = String(Math.floor(n.units));
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(txt, n.x, ly);
+    ctx.fillStyle = n.owner === 'neutral' ? '#cfc6b6' : COLOR[n.owner];
+    ctx.fillText(txt, n.x, ly);
+    // Lieutenant underline mark under the compact value.
+    if (n.owner === 'ally1') {
+      const half = ctx.measureText(txt).width / 2;
+      const uy = ly + worldFont + 0.5 / zoom;
+      ctx.strokeStyle = COLOR[n.owner];
+      ctx.lineWidth = Math.max(1.2, 1.6 / zoom);
+      ctx.beginPath(); ctx.moveTo(n.x - half, uy); ctx.lineTo(n.x + half, uy); ctx.stroke();
+      ctx.lineWidth = Math.max(1.6, 2.4 / zoom);   // restore for next label's halo
     }
   }
 }

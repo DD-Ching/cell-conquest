@@ -138,20 +138,33 @@ function aaScreenDivisor(x, y, owner) {
 // compute them ONCE per faction per tick and reuse. Live units / inbound /
 // distance still read per-drone, and the score arithmetic is byte-for-byte the
 // original, so target picks are identical. Cleared at the top of updateDrones.
-const _nodeScan = new Map();   // owner -> { aa: Float64Array, fr: Uint8Array }; aa[i]<0 = ally/neutral skip
+// Persistent per-owner scan arrays (REUSED backing store) + a validity set
+// cleared each updateDrones tick. The old code did _nodeScan.clear() every tick,
+// which orphaned the Float64Array(N)+Uint8Array(N) per owner — ~210 KB/frame of
+// garbage at high time-scale (7 sub-steps × several owners), a real GC-stutter
+// source under dense drone load. Now we keep the arrays and just recompute INTO
+// them on the first request per owner per tick (reallocating only if the node
+// count changed). Same values, same target picks — purely allocation churn gone.
+const _nodeScanArr = new Map();   // owner -> { aa: Float64Array, fr: Uint8Array } (persistent)
+const _nodeScanValid = new Set(); // owners already computed THIS tick
 function nodeScanFor(owner) {
-  let c = _nodeScan.get(owner);
-  if (c) return c;
   const nodes = state.nodes, N = nodes.length;
-  const aa = new Float64Array(N), fr = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
+  let c = _nodeScanArr.get(owner);
+  if (c && c.aa.length === N) {
+    if (_nodeScanValid.has(owner)) return c;     // fresh this tick — reuse as-is
+  } else {
+    c = { aa: new Float64Array(N), fr: new Uint8Array(N) };   // first time / node count changed
+    _nodeScanArr.set(owner, c);
+  }
+  const aa = c.aa, fr = c.fr;
+  fr.fill(0);                                     // frontier flags only ever set to 1 below → reset first
+  for (let i = 0; i < N; i++) {                   // aa[i] is fully overwritten each i, no reset needed
     const n = nodes[i];
     if (n.owner === 'neutral' || isAlly(n.owner, owner)) { aa[i] = -1; continue; }
     aa[i] = aaScreenDivisor(n.x, n.y, owner);
     for (const nbId of state.adj.get(n.id)) { if (isAlly(nodes[nbId].owner, owner)) { fr[i] = 1; break; } }
   }
-  c = { aa, fr };
-  _nodeScan.set(owner, c);
+  _nodeScanValid.add(owner);
   return c;
 }
 
@@ -436,7 +449,7 @@ export function updateDrones(dt) {
   // Per-faction loiter rally centres (factory centroid) for the shared
   // holding-ring formation — rebuilt once per tick, read by loiterDrone.
   rebuildLoiterCenters();
-  _nodeScan.clear();             // per-call cache of node aaScreen/frontier (retarget scan)
+  _nodeScanValid.clear();        // mark per-owner node-scan caches stale this tick (arrays reused, not freed)
 
   // Anti-overkill bookkeeping. `inboundDronesByTarget` (built in simulate) is a
   // tick-TOP snapshot of how many drones are already committed to each target.

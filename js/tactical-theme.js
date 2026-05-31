@@ -47,6 +47,34 @@ export function makeRegionName(rng, used) {
   return 'Sector ' + (used.size + 1);
 }
 
+// Settlement-name parts — a place reads like a Mars colony town, distinct from
+// the wider SECTOR names (which use NAME_FEATURE). Suffixes lean "built place"
+// (City/Station/Hold/Works) so a node label reads as a settlement, not terrain.
+const PLACE_SUFFIX = {
+  capital:      ['City', 'Prime', 'Central', 'Bastion'],
+  city:         ['City', 'Town', 'Crossing', 'Heights'],
+  fortress:     ['Hold', 'Bastion', 'Redoubt', 'Watch'],
+  factory:      ['Works', 'Foundry', 'Yards', 'Forge'],
+  mine:         ['Mines', 'Pit', 'Lode', 'Dig'],
+  research_lab: ['Lab', 'Station', 'Array', 'Institute'],
+  town:         ['Town', 'Post', 'Crossing', 'Camp'],
+  outpost:      ['Outpost', 'Post', 'Camp', 'Watch'],
+  bridge:       ['Pass', 'Span', 'Gate', 'Crossing'],
+};
+
+/** Deterministic settlement name for a node: "Prefix Suffix" where the suffix
+ *  fits the node TYPE (Iron Works, Helix City, Pale Gate…). Dedupes via `used`.
+ *  Seeded rng → same map, same names; main thread + worker stay in lockstep. */
+export function makePlaceName(rng, nodeType, used) {
+  const sufs = PLACE_SUFFIX[nodeType] || PLACE_SUFFIX.outpost;
+  for (let tries = 0; tries < 60; tries++) {
+    const n = NAME_PREFIX[Math.floor(rng() * NAME_PREFIX.length)] + ' ' +
+              sufs[Math.floor(rng() * sufs.length)];
+    if (!used.has(n)) { used.add(n); return n; }
+  }
+  return 'Site ' + (used.size + 1);
+}
+
 /** "#rrggbb" + alpha → rgba() string. */
 export function rgba(hex, a) {
   const r = parseInt(hex.slice(1, 3), 16);

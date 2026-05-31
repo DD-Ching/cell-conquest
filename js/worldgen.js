@@ -37,7 +37,7 @@ import {
   PROCGEN_REGIONS_MIN, PROCGEN_REGIONS_MAX,
 } from './config.js';
 import { generateRoads, applyBarrierChokepoints } from './worldgen-roads.js';
-import { makeRegionName } from './tactical-theme.js';
+import { makeRegionName, makePlaceName } from './tactical-theme.js';
 import { pickWorldTheme, generateGeography, generateResourceBelts } from './worldgen-terrain.js';
 
 const NODE_MARGIN = 100;

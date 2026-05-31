@@ -435,4 +435,42 @@ function drawCartoLabels(ctx, zoom) {
       ctx.lineWidth = Math.max(1.6, 2.4 / zoom);   // restore for next label's halo
     }
   }
+
+  drawPlaceNames(ctx, zoom);
+}
+
+// Place names — the ATLAS layer. Major nodes carry n.name (worldgen.nameMajorNodes);
+// draw them ABOVE the marker with a size hierarchy so the map reads like a real
+// chart (capitals loud, towns quiet) instead of a flat field. Sparse by design
+// (only named nodes), so this is cheap. Smaller-tier names hide when zoomed far
+// out to avoid clutter; capitals + selected/hovered always show.
+const _PLACE_TIER = { capital: 3, city: 2, fortress: 2, factory: 1, mine: 1, research_lab: 1 };
+function drawPlaceNames(ctx, zoom) {
+  const { vL, vT, vR, vB } = state._view;
+  const hoveredId = cartoHoveredId();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  for (const n of state.nodes) {
+    if (!n.name) continue;
+    if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+    const tier = _PLACE_TIER[n.nodeType] || 1;
+    const forced = n.id === hoveredId || state.selectedIds.has(n.id) || tier === 3;
+    // Zoom gate by tier: capitals always; cities/forts from a modest zoom; minor
+    // POIs only when leaning in. Keeps the far view to a few big anchor names.
+    const minZoom = tier >= 2 ? 0.30 : 0.7;
+    if (!forced && zoom < minZoom) continue;
+    const mr = cartoMarkerR(n, zoom);
+    // Size hierarchy (fixed screen px): capital 15 · city/fort 12.5 · POI 10.5.
+    const fontPx = tier === 3 ? 15 : tier === 2 ? 12.5 : 10.5;
+    const worldFont = fontPx / zoom;
+    ctx.font = `600 ${worldFont}px -apple-system, system-ui, sans-serif`;
+    const ny = n.y - mr - 3 / zoom;          // sit just ABOVE the marker
+    const txt = n.name;
+    ctx.lineWidth = Math.max(1.8, 2.8 / zoom);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.strokeText(txt, n.x, ny);
+    // Owned places take the faction tint; neutral places a warm parchment grey.
+    ctx.fillStyle = n.owner === 'neutral' ? 'rgba(214, 206, 190, 0.92)' : COLOR[n.owner];
+    ctx.fillText(txt, n.x, ny);
+  }
 }

@@ -42,6 +42,9 @@ function fullSlimNode(n) {
     // icon pass no-ops there). Cheap string; lets the render-worker draw the
     // same nodeType designation frames.
     nodeType: n.nodeType,
+    // Settlement name on major nodes (procgen). Undefined on minors — the label
+    // pass only reads it where present, so shipping undefined is harmless + cheap.
+    name: n.name,
     // Render-side visual state. Cheap to include and lets render-worker
     // share the same shape. Initialised on every node by world / engineering
     // setup so these are always real numbers (no undefined).

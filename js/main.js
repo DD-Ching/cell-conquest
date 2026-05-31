@@ -451,7 +451,9 @@ function loop() {
   if (renderBridge.isEnabled()) {
     renderBridge.tickFrame();
   } else {
+    const rT0 = performance.now();
     render();
+    state._perfRenderMs[state._perfIdx] = performance.now() - rT0;
   }
   requestAnimationFrame(loop);
 }
@@ -495,3 +497,11 @@ loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS 
 newGame();              // rolls factions, builds HUD, generates world
 loop();
 nnLoad();
+
+// Dev profiling hook (opt-in via ?perf, the same flag render-hud.js uses for its
+// on-canvas perf overlay). Exposes the live state object so a headless harness
+// (Playwright) can read the perf ring buffers, drive timeScale, and checksum sim
+// state for outcome-neutrality tests. Off by default → nothing leaks into play.
+if (new URLSearchParams(location.search).has('perf')) {
+  window.__state = state;
+}

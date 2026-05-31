@@ -176,6 +176,9 @@ export const state = {
   // HUD reads avg() at 10 Hz. _perfIdx is the write head.
   _perfFrameMs: new Float32Array(60),   // last 60 wall-clock frame durations
   _perfSimMs:   new Float32Array(60),   // last 60 simulate() block durations
+  _perfRenderMs: new Float32Array(60),  // last 60 main-thread render() durations
+                                        //   (~0 when the render worker owns the
+                                        //   canvas — that IS the offload signal)
   _perfIdx: 0,
   startTime: 0,
   elapsed: 0,

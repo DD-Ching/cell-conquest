@@ -130,12 +130,41 @@ export const NET_PICK_R          = 36;              // world-px tolerance when c
 // (Idle engineers stationed at a node clear piles continuously at ENG_CLEAR_RATE.)
 export const NET_ENG_WRECK_CLEAR = 2;
 
-// Tank / cannon — anti-ground (and anti-drone, anti-turret) generalist tower.
-// Longer range than AA but lower DPS per target.
+// Tank FACTORY (the 'tank' building). Static depot the player/AI places like any
+// other turret, but it does NOT fire — instead it periodically rolls out a mobile
+// tank UNIT (see the mobile-tank block below). TANK_BUILD_TIME/TANK_HP are the
+// factory's build time + hull HP. TANK_RADIUS is kept because the AI build/threat
+// heuristics (ai-build.js, ai-tactical.js) still read it as a generic "tank zone"
+// proximity; TANK_DPS is retained for back-compat (the old static-turret combat is
+// gone — combat.js no longer has updateTanks; tanks.js owns tank fire now).
 export const TANK_BUILD_TIME = 12;
 export const TANK_HP = 130;
 export const TANK_RADIUS = 240;
 export const TANK_DPS = 8;
+
+// ---- Mobile tank (the unit a tank factory produces) ----
+// A tank is a GROUND fleet (kind:'tank') that auto-advances along the road graph
+// toward the nearest non-allied node — capturing neutral land and smashing into
+// enemy hubs — and guns down enemy ground fleets / sieges enemy buildings en
+// route. Movement rides fleets.simulateFleets (so tanks inherit wreck-detour +
+// curved roads); tanks.js owns production, weapons, and the arrival bombard-siege.
+//
+// A tank's `units` field IS its HP pool: every existing unit-damage path (drone
+// hunt, artillery AOE, enemy-tank fire) chips it, and it never merges into a node
+// garrison (arrival triggers a siege instead). A tank killed ON A ROAD leaves a
+// 6×-HP "death-road" hulk (TANK_WRECK_HP_MUL) that takes engineers ~6× as long to
+// clear — exactly the heavy-roadblock the design calls for.
+export const TANK_FACTORY_PRODUCTION_T = 18;  // sec between tank roll-outs per factory
+export const TANK_CAP_PER_FACTORY      = 4;   // max LIVE tanks per owned tank factory
+export const TANK_UNIT_HP    = 220;  // tank health, stored in fleet.units (tough vs drone swarms)
+export const TANK_UNIT_SPEED = 60;   // px/sec — heavy, slower than troops (FLEET_SPEED 95)
+export const TANK_UNIT_RANGE = 210;  // engage radius for en-route fire (enemy fleets + turrets)
+export const TANK_UNIT_DPS_FLEET  = 14;   // dmg/sec to enemy ground fleets in range
+export const TANK_UNIT_DPS_TURRET = 11;   // dmg/sec to enemy turrets in range (siege)
+export const TANK_UNIT_DPS_NODE   = 10;   // dmg/sec to a besieged node's garrison (bombard)
+export const TANK_NODE_RETALIATE  = 0.10; // node fires (garrison × this)/sec back at the besieging tank
+export const TANK_SIEGE_RECHECK_T = 3.0;  // sec between idle-tank target re-scans
+export const TANK_WRECK_HP_MUL    = 6;    // a road-killed tank's wreck pile gets this × normal HP
 
 // Artillery — long-range area cannon. Built by an engineer (like AA), but
 // fires AOE shells that are INACCURATE — random within a wobble circle. So

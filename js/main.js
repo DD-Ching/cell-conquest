@@ -18,8 +18,9 @@ import {
   resetEngineering,
   updateBuildings, updateTracers, updateScorches,
 } from './engineering.js';
-import { updateAntiAir, updateTanks, updateArtillery, updateShells } from './combat.js';
+import { updateAntiAir, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, runFactoryProduction } from './drones.js';
+import { updateGroundTanks, runTankProduction } from './tanks.js';
 import { aiTick } from './ai.js';
 import * as aiBridge from './ai-worker-bridge.js';
 import * as renderBridge from './render-worker-bridge.js';
@@ -339,7 +340,7 @@ function simulate(dt, combatDt = dt) {
   // DPS × dt is preserved because the active combat ticks use a doubled dt.
   if (combatDt > 0) {
     updateAntiAir(combatDt);
-    updateTanks(combatDt);
+    updateGroundTanks(combatDt);
     updateArtillery(combatDt);
     updateShells(combatDt);
   }
@@ -425,6 +426,9 @@ function loop() {
     // once-per-frame keeps the exact production cadence the per-sub-step version
     // had, with far fewer launch-decision points (less bursty).
     runFactoryProduction(gameDt);
+    // Tank factories roll out mobile tanks here too — same once-per-frame,
+    // game-time-rate cadence as drone production (see tanks.runTankProduction).
+    runTankProduction(gameDt);
     state._perfSimMs[state._perfIdx] = performance.now() - simT0;
     state.elapsed += gameDt;
     checkVictory();

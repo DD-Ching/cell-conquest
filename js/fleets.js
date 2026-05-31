@@ -4,7 +4,7 @@
 // =====================================================
 import { state } from './state.js';
 import {
-  FLEET_SPEED,
+  FLEET_SPEED, TANK_UNIT_SPEED,
   DETOUR_LOOKAHEAD, DETOUR_OFFSET, DETOUR_SPEED_MIN,
   WRECK_RENDER_R,
 } from './config.js';
@@ -16,6 +16,7 @@ import {
   ENG_SPEED, ekey,
   engineerArrivedAtTurret, engineerArrivedAtNetEdge,
 } from './engineering.js';
+import { beginTankSiege } from './tanks.js';
 import { sfxCapture } from './audio.js';
 
 // Short final-leg off-road speed (engineer→build-site, assault→turret,
@@ -155,6 +156,9 @@ export function simulateFleets(dt) {
   for (let i = state.fleets.length - 1; i >= 0; i--) {
     const f = state.fleets[i];
     if (f.kind === 'drone') continue;
+    // Parked tanks (besieging a node, or idle with no reachable frontier) are
+    // driven by tanks.updateGroundTanks, not by road movement — skip them here.
+    if (f.kind === 'tank' && (f.siegeNodeId !== undefined || f._idle)) continue;
 
     // Deploy + assault + return: off-road final leg to a world point
     if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
@@ -223,7 +227,9 @@ export function simulateFleets(dt) {
       continue;
     }
 
-    const baseSpeed = (f.kind === 'engineer' || f.kind === 'deploy') ? ENG_SPEED : FLEET_SPEED;
+    const baseSpeed = f.kind === 'tank' ? TANK_UNIT_SPEED
+                    : (f.kind === 'engineer' || f.kind === 'deploy') ? ENG_SPEED
+                    : FLEET_SPEED;
     // Detour: peek ahead on the current segment for any wreck pile in our path
     // and compute a lateral offset around it. While offset is non-zero we move
     // slower (off-road tax — natural cause of congestion behind a wreck cluster).
@@ -302,6 +308,14 @@ export function simulateFleets(dt) {
 
     if (f.segIdx >= f.path.length - 1) {
       // Road portion done.
+      if (f.kind === 'tank') {
+        // Tank reached its target node — park it and open the bombard-siege.
+        // It is NOT spliced (units = HP, never merges into a garrison); the
+        // siege / capture / re-advance all run in tanks.updateGroundTanks.
+        const node = state.nodes[f.path[f.path.length - 1]];
+        if (node) beginTankSiege(f, node);
+        continue;
+      }
       if (f.kind === 'deploy' || f.kind === 'assault') {
         // Begin off-road leg toward the world-coord target (turret site).
         const anchor = state.nodes[f.path[f.path.length - 1]];
@@ -322,6 +336,9 @@ export function simulateFleets(dt) {
     // Centerline position, then layer the detour offset on top.
     f.x = segA.x + (segB.x - segA.x) * t + lateralX;
     f.y = segA.y + (segB.y - segA.y) * t + lateralY;
+    // Tanks store a heading so the sprite faces its direction of travel (and
+    // keeps that facing while parked in a siege).
+    if (f.kind === 'tank') f.heading = Math.atan2(segB.y - segA.y, segB.x - segA.x);
   }
 }
 

@@ -109,7 +109,7 @@ export function sliceFleets(fleets) {
       targetKind: f.targetKind, targetId: f.targetId,
       targetNodeId: f.targetNodeId,
       path: f.path, segIdx: f.segIdx,
-      hp: f.hp, spawnT: f.spawnT,
+      hp: f.hp, hpMax: f.hpMax, spawnT: f.spawnT,   // hpMax: mobile tanks store HP in units; the bar needs the max
       // Drone / engineer / assault motion targets. Render uses these to
       // draw the off-road final leg + animate drones toward their target.
       tx: f.tx, ty: f.ty,

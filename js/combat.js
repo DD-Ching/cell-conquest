@@ -9,7 +9,6 @@
 import { state } from './state.js';
 import {
   AA_RADIUS, AA_DPS,
-  TANK_RADIUS, TANK_DPS,
   ARTILLERY_RANGE, ARTILLERY_MIN_RANGE, ARTILLERY_AOE, ARTILLERY_INTERVAL,
   ARTILLERY_INACCURACY, ARTILLERY_DAMAGE_TURRET, ARTILLERY_DAMAGE_FLEET,
   ARTILLERY_SHELL_FLIGHT,
@@ -17,12 +16,11 @@ import {
 } from './config.js';
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
-import { isWasmReady, wasmAaApplyDamage, wasmTankDamageFleets } from './wasm-bridge.js';
+import { isWasmReady, wasmAaApplyDamage } from './wasm-bridge.js';
 import { isAlly } from './alliance.js';
 
 // Pre-squared radii — radius comparisons use dx²+dy² < r² to skip sqrt.
 const AA_R2          = AA_RADIUS * AA_RADIUS;
-const TANK_R2        = TANK_RADIUS * TANK_RADIUS;
 const ARTILLERY_R2     = ARTILLERY_RANGE * ARTILLERY_RANGE;
 const ARTILLERY_MIN_R2 = ARTILLERY_MIN_RANGE * ARTILLERY_MIN_RANGE;   // dead-zone (too close to hit)
 const ARTILLERY_AOE2   = ARTILLERY_AOE * ARTILLERY_AOE;
@@ -137,98 +135,11 @@ export function updateAntiAir(dt) {
   }
 }
 
-// ---- Tanks — anti-ground (and slow siege of enemy turrets) ----
-// Cannot target drones — that's AA's job. Lower DPS than AA, longer range.
-export function updateTanks(dt) {
-  const tracerRate = 3;
-  const tankTurrets = state.turretsByType.get('tank');
-  if (!tankTurrets) return;
-  let anyKill = false;
-
-  // WASM FAST PATH for the per-tank ground-fleet damage scan. The siege
-  // (tank-vs-turret) pass below stays in JS — it's a smaller loop and
-  // mutates turret.hp which is harder to round-trip via typed arrays.
-  let wasmDamageHandled = false;
-  if (isWasmReady()) {
-    const activeTanks = [];
-    for (const t of tankTurrets) if (t.active) activeTanks.push(t);
-    const groundFleets = [];
-    for (const f of state.fleets) if (f.kind !== 'drone') groundFleets.push(f);
-    if (activeTanks.length > 0 && groundFleets.length > 0) {
-      const newUnits = wasmTankDamageFleets(activeTanks, groundFleets, TANK_R2, TANK_DPS * 0.6 * dt);
-      if (newUnits) {
-        // Write back + detect kills (Rust doesn't know how to spawn JS-side
-        // effects like wreck piles + explosions).
-        for (let i = 0; i < groundFleets.length; i++) {
-          const f = groundFleets[i];
-          if (f._dead) continue;
-          const nu = newUnits[i];
-          f.units = Number.isFinite(nu) ? nu : 0;   // firewall: a non-finite result becomes a kill, never a NaN fleet
-          if (f.units < 0.5) {
-            addWreckBlockage(f);
-            spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
-            spawnScorch(f.x, f.y, 'medium');
-            f._dead = true;
-            anyKill = true;
-          }
-        }
-        wasmDamageHandled = true;
-      }
-    }
-  }
-
-  for (const t of tankTurrets) {
-    if (!t.active) continue;
-    // Damage enemy ground fleets in range. Grid query skips out-of-range
-    // fleets entirely (and drones — they're in a separate grid). Kills are
-    // marked via f._dead and swept once at the end of the function so we
-    // don't splice during iteration. JS fallback only — when wasm handled
-    // damage above we skip this block (still run siege below).
-    if (!wasmDamageHandled) forGroundNear(t.x, t.y, TANK_RADIUS, (f) => {
-      if (isAlly(f.owner, t.owner)) return;
-      if (f._dead) return;
-      const dx = f.x - t.x, dy = f.y - t.y;
-      if (dx * dx + dy * dy > TANK_R2) return;
-      f.units -= TANK_DPS * 0.6 * dt;
-      if (f.units < 0.5) {
-        addWreckBlockage(f);
-        spawnBigExplosion(f.x, f.y, '#ff8a3a', 8);
-        spawnScorch(f.x, f.y, 'medium');
-        f._dead = true;
-        anyKill = true;
-        return;
-      }
-      if (Math.random() < tracerRate * dt) {
-        state.tracers.push({
-          x1: t.x, y1: t.y, x2: f.x, y2: f.y,
-          age: 0, maxAge: 0.22, color: COLOR[t.owner],
-        });
-      }
-    });
-    // Siege: slow chip damage to enemy turrets within range. Grid lookup
-    // touches a 3×3 cell window instead of scanning every turret.
-    forTurretsNear(t.x, t.y, TANK_RADIUS, (o) => {
-      if (isAlly(o.owner, t.owner)) return;
-      if (o.pendingEngineer) return;       // dirt placeholder, not real yet
-      const dx = o.x - t.x, dy = o.y - t.y;
-      if (dx * dx + dy * dy > TANK_R2) return;
-      o.hp -= TANK_DPS * 0.7 * dt;
-      if (Math.random() < tracerRate * 0.4 * dt) {
-        state.tracers.push({
-          x1: t.x, y1: t.y, x2: o.x, y2: o.y,
-          age: 0, maxAge: 0.22, color: COLOR[t.owner],
-        });
-      }
-    });
-  }
-  // Single cleanup pass for fleets killed by any tank this tick. Skipped
-  // entirely when no tank scored a kill — pure regen-only ticks pay nothing.
-  if (anyKill) {
-    for (let i = state.fleets.length - 1; i >= 0; i--) {
-      if (state.fleets[i]._dead) state.fleets.splice(i, 1);
-    }
-  }
-}
+// ---- Tanks ----
+// The static tank TURRET is gone: 'tank' is now a FACTORY building that rolls out
+// MOBILE tank units. Their weapons (gun down enemy ground fleets, siege enemy
+// turrets) + arrival bombard-siege live in tanks.updateGroundTanks, which main.js
+// calls in this same combat-gated block. (Tank movement rides fleets.simulateFleets.)
 
 // ---- Artillery — long-range INACCURATE AOE cannon ----
 // Picks the densest enemy cluster within range, applies a random wobble to

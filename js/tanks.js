@@ -1,0 +1,273 @@
+// =====================================================
+// Mobile tanks. The 'tank' BUILDING is now a tank FACTORY — a static depot that
+// rolls out mobile tank UNITS (ground fleets, kind:'tank'). This module owns the
+// tank's whole life:
+//
+//   • runTankProduction(dt)  — once per frame: each active tank factory emits a
+//                              tank (under a per-owner cap) aimed at the nearest
+//                              reachable non-allied node.
+//   • updateGroundTanks(dt)  — per sub-step: en-route weapons (gun down enemy
+//                              ground fleets, siege enemy turrets) + the arrival
+//                              bombard-siege (chip a node's garrison, take
+//                              retaliation, capture, then advance to the next
+//                              frontier node).
+//   • beginTankSiege(f,node) — called from fleets.simulateFleets when a tank's
+//                              road path completes (parks it for the siege).
+//
+// MOVEMENT is delegated to fleets.simulateFleets — tanks are ordinary path fleets,
+// so they inherit wreck-detour + curved-road rendering for free; this module only
+// special-cases their speed/arrival via the hook above. A tank's `units` field IS
+// its HP pool, so every existing unit-damage path (drone hunt, artillery AOE,
+// enemy-tank fire) chips it, and a tank that dies ON A ROAD leaves a 6×-HP
+// "death-road" hulk (engineering.addWreckBlockage keys on kind:'tank').
+//
+// No import cycle: fleets.js → tanks.js (beginTankSiege only); tanks.js never
+// imports fleets.js.
+// =====================================================
+import { state } from './state.js';
+import {
+  TANK_FACTORY_PRODUCTION_T, TANK_CAP_PER_FACTORY, TANK_UNIT_HP,
+  TANK_UNIT_RANGE, TANK_UNIT_DPS_FLEET, TANK_UNIT_DPS_TURRET, TANK_UNIT_DPS_NODE,
+  TANK_NODE_RETALIATE, TANK_SIEGE_RECHECK_T,
+} from './config.js';
+import { findPath, catchUpRegen } from './world.js';
+import { isAlly } from './alliance.js';
+import { COLOR } from './factions.js';
+import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
+import { sfxCapture } from './audio.js';
+
+const GRID_CELL = 250;
+const TANK_R2 = TANK_UNIT_RANGE * TANK_UNIT_RANGE;
+
+/** Iterate every entity in `grid` within R of (x,y). Same 250-px uniform grid
+ *  combat.js / main.js build, so a TANK_UNIT_RANGE query touches a 3×3 window. */
+function forNear(grid, x, y, R, fn) {
+  const range = Math.ceil(R / GRID_CELL);
+  const cx0 = Math.floor(x / GRID_CELL), cy0 = Math.floor(y / GRID_CELL);
+  for (let cx = cx0 - range; cx <= cx0 + range; cx++)
+    for (let cy = cy0 - range; cy <= cy0 + range; cy++) {
+      const b = grid.get(cx * 10000 + cy);
+      if (b) for (const o of b) fn(o);
+    }
+}
+
+// =====================================================
+// Target acquisition + production
+// =====================================================
+/** Nearest allied node to a world point — where a freshly-built tank rolls out
+ *  from (the factory sits at an arbitrary (x,y), but tanks travel the road graph,
+ *  which connects NODES). */
+function nearestAlliedNode(x, y, owner) {
+  let best = null, bestD2 = Infinity;
+  for (const n of state.nodes) {
+    if (!isAlly(n.owner, owner)) continue;
+    const dx = n.x - x, dy = n.y - y, d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = n; }
+  }
+  return best;
+}
+
+/** Pick the nearest reachable FRONTIER node (a non-allied node touching our
+ *  territory) for a tank starting at `fromNode`. Enemies are preferred over
+ *  neutral land (×1.5 distance penalty on neutral). Returns {node, path} or
+ *  null when nothing is reachable. Because each capture flips a node to our
+ *  side, the next frontier node becomes reachable — so tanks crawl outward,
+ *  taking neutral ground and grinding into enemy hubs. */
+function pickTankTarget(owner, fromNode) {
+  let best = null, bestScore = Infinity;
+  for (const n of state.nodes) {
+    if (isAlly(n.owner, owner)) continue;
+    let frontier = false;
+    for (const nb of state.adj.get(n.id)) {
+      if (isAlly(state.nodes[nb].owner, owner)) { frontier = true; break; }
+    }
+    if (!frontier) continue;
+    const dx = n.x - fromNode.x, dy = n.y - fromNode.y;
+    let score = Math.hypot(dx, dy);
+    if (n.owner === 'neutral') score *= 1.5;   // prefer enemy nodes over neutral land
+    if (score < bestScore) { bestScore = score; best = n; }
+  }
+  if (!best) return null;
+  const path = findPath(fromNode.id, best.id, owner);
+  if (!path || path.length < 1) return null;
+  return { node: best, path };
+}
+
+/** Launch a tank from `fromNode` toward the nearest frontier target. Returns
+ *  true if it actually rolled out (a reachable target existed). */
+function dispatchTank(owner, fromNode) {
+  const tgt = pickTankTarget(owner, fromNode);
+  if (!tgt) return false;
+  state.fleets.push({
+    _id: state._nextFleetId++,
+    kind: 'tank', owner,
+    units: TANK_UNIT_HP,           // units doubles as HP — every unit-damage path chips it
+    hpMax: TANK_UNIT_HP,
+    path: tgt.path, segIdx: 0, segTraveled: 0,
+    x: fromNode.x, y: fromNode.y,
+    heading: 0,
+    targetNodeId: tgt.node.id,
+    _homeNodeId: fromNode.id,
+  });
+  return true;
+}
+
+/** Per-frame: every active tank factory rolls out a tank when its cooldown is up
+ *  and the owner is under the per-factory live-tank cap. Called once per frame
+ *  from main.js (parallel to drones.runFactoryProduction). */
+export function runTankProduction(dt) {
+  const factoryCount = new Map();        // owner -> active tank-factory count
+  for (const t of state.turrets) {
+    if (t.type === 'tank' && t.active) {
+      factoryCount.set(t.owner, (factoryCount.get(t.owner) || 0) + 1);
+    }
+  }
+  if (factoryCount.size === 0) return;
+  const liveByOwner = new Map();         // owner -> live tank fleets (the cap)
+  for (const f of state.fleets) {
+    if (f.kind === 'tank') liveByOwner.set(f.owner, (liveByOwner.get(f.owner) || 0) + 1);
+  }
+  for (const t of state.turrets) {
+    if (t.type !== 'tank' || !t.active) continue;
+    if (t.prodCooldown === undefined) t.prodCooldown = TANK_FACTORY_PRODUCTION_T;
+    t.prodCooldown -= dt;
+    if (t.prodCooldown > 0) continue;
+    t.prodCooldown = TANK_FACTORY_PRODUCTION_T;
+    const cap = TANK_CAP_PER_FACTORY * (factoryCount.get(t.owner) || 1);
+    if ((liveByOwner.get(t.owner) || 0) >= cap) continue;     // at cap — hold this cycle
+    const from = nearestAlliedNode(t.x, t.y, t.owner);
+    if (from && dispatchTank(t.owner, from)) {
+      liveByOwner.set(t.owner, (liveByOwner.get(t.owner) || 0) + 1);
+    }
+  }
+}
+
+// =====================================================
+// Weapons + siege (per sub-step)
+// =====================================================
+/** Park a tank at its destination node and open the siege. Called from
+ *  fleets.simulateFleets when the road path completes. */
+export function beginTankSiege(f, node) {
+  f.siegeNodeId = node.id;
+  f._homeNodeId = node.id;
+  f.x = node.x; f.y = node.y;
+}
+
+/** En-route weapons (run for EVERY live tank, travelling or parked): gun down
+ *  enemy ground fleets and siege enemy turrets within range. Returns true if a
+ *  ground fleet was killed (so the caller knows to sweep dead fleets). */
+function applyTankWeapons(f, dt) {
+  let kill = false;
+  forNear(state.groundFleetGrid, f.x, f.y, TANK_UNIT_RANGE, (g) => {
+    if (g === f || g._dead || isAlly(g.owner, f.owner)) return;
+    const dx = g.x - f.x, dy = g.y - f.y;
+    if (dx * dx + dy * dy > TANK_R2) return;
+    g.units -= TANK_UNIT_DPS_FLEET * dt;
+    if (g.units < 0.5) {
+      addWreckBlockage(g);                       // tank-kind enemies leave a 6× hulk
+      spawnBigExplosion(g.x, g.y, '#ff8a3a', 8);
+      spawnScorch(g.x, g.y, 'medium');
+      g._dead = true; kill = true; return;
+    }
+    if (Math.random() < 3 * dt) {
+      state.tracers.push({ x1: f.x, y1: f.y, x2: g.x, y2: g.y, age: 0, maxAge: 0.22, color: COLOR[f.owner] });
+    }
+  });
+  forNear(state.turretGrid, f.x, f.y, TANK_UNIT_RANGE, (o) => {
+    if (isAlly(o.owner, f.owner) || o.pendingEngineer) return;
+    const dx = o.x - f.x, dy = o.y - f.y;
+    if (dx * dx + dy * dy > TANK_R2) return;
+    o.hp -= TANK_UNIT_DPS_TURRET * dt;
+    if (Math.random() < 1.2 * dt) {
+      state.tracers.push({ x1: f.x, y1: f.y, x2: o.x, y2: o.y, age: 0, maxAge: 0.22, color: COLOR[f.owner] });
+    }
+  });
+  return kill;
+}
+
+/** Capture a node a besieging tank has flattened. */
+function captureNode(f, node) {
+  node.owner = f.owner;
+  node.units = 1;
+  node.flash = 1; node.pulse = 1;
+  node.lastRegenT = state.elapsed;   // new owner — reset lazy-regen baseline
+  sfxCapture(node.x, node.y);
+  for (let k = 0; k < 18; k++) {
+    const a = Math.random() * Math.PI * 2, s = 70 + Math.random() * 120;
+    state.particles.push({
+      x: node.x, y: node.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 0.8, maxLife: 0.8, color: COLOR[f.owner], kind: 'capture',
+    });
+  }
+}
+
+/** After a siege ends (captured, or the node turned friendly), pick the next
+ *  frontier target from the now-held node — or go idle and re-scan later. */
+function advanceTank(f) {
+  const home = state.nodes[f.siegeNodeId];
+  f.siegeNodeId = undefined;
+  if (home) f._homeNodeId = home.id;
+  const tgt = home ? pickTankTarget(f.owner, home) : null;
+  if (tgt) {
+    f.path = tgt.path; f.segIdx = 0; f.segTraveled = 0;
+    f.targetNodeId = tgt.node.id; f._idle = false;
+  } else {
+    f._idle = true;
+    f._nextRecheckT = state.elapsed + TANK_SIEGE_RECHECK_T;
+  }
+}
+
+/** Bombard the besieged node, take retaliation, capture / advance / die.
+ *  Returns true if the tank itself was destroyed this tick. */
+function applyTankSiege(f, dt) {
+  const node = state.nodes[f.siegeNodeId];
+  if (!node) { f.siegeNodeId = undefined; f._idle = true; return false; }
+  if (isAlly(node.owner, f.owner)) { advanceTank(f); return false; }   // ours now — move on
+  catchUpRegen(node);
+  if (node.units > 0) f.units -= node.units * TANK_NODE_RETALIATE * dt;  // defenders shoot back
+  node.units -= TANK_UNIT_DPS_NODE * dt;
+  if (Math.random() < 3 * dt) {
+    state.tracers.push({ x1: f.x, y1: f.y, x2: node.x, y2: node.y, age: 0, maxAge: 0.25, color: COLOR[f.owner] });
+  }
+  if (node.units <= 0.5) { captureNode(f, node); advanceTank(f); return false; }
+  if (f.units <= 0.5) {                       // overwhelmed at the wall — dies at the node (off-road, no hulk)
+    spawnBigExplosion(f.x, f.y, '#ffaa55', 26);
+    spawnScorch(f.x, f.y, 'big');
+    f._dead = true; return true;
+  }
+  return false;
+}
+
+/** Per sub-step tank tick: weapons for all tanks, plus siege / idle handling. */
+export function updateGroundTanks(dt) {
+  const tanks = [];
+  for (const f of state.fleets) if (f.kind === 'tank' && !f._dead) tanks.push(f);
+  if (tanks.length === 0) return;
+  let dirty = false;
+
+  for (const f of tanks) {
+    if (f._dead) continue;
+    if (applyTankWeapons(f, dt)) dirty = true;
+    if (f.siegeNodeId !== undefined) {
+      if (applyTankSiege(f, dt)) dirty = true;
+    } else if (f._idle) {
+      // Parked with no frontier — re-scan periodically so a tank re-mobilises
+      // the moment the front shifts and a fresh target becomes reachable.
+      if (state.elapsed >= (f._nextRecheckT || 0)) {
+        f._nextRecheckT = state.elapsed + TANK_SIEGE_RECHECK_T;
+        const home = state.nodes[f._homeNodeId];
+        const tgt = home ? pickTankTarget(f.owner, home) : null;
+        if (tgt) {
+          f._idle = false; f.path = tgt.path; f.segIdx = 0; f.segTraveled = 0;
+          f.targetNodeId = tgt.node.id;
+        }
+      }
+    }
+  }
+
+  if (dirty) {
+    for (let i = state.fleets.length - 1; i >= 0; i--) {
+      if (state.fleets[i]._dead) state.fleets.splice(i, 1);
+    }
+  }
+}

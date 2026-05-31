@@ -22,7 +22,7 @@ import {
   TANK_BUILD_TIME, TANK_HP, TANK_RADIUS,
   ARTILLERY_BUILD_TIME, ARTILLERY_HP, ARTILLERY_RANGE,
   NET_LEVEL_MAX, NET_CHARGES_LEVEL, NET_ENG_WRECK_CLEAR,
-  WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE,
+  WRECK_PILE_HP_INIT, WRECK_MAX_PER_EDGE, TANK_WRECK_HP_MUL,
   TRACER_CAP,
 } from './config.js';
 import { sfxExplosion } from './audio.js';
@@ -98,10 +98,11 @@ const BUILD_SPECS = {
   artillery: { time: ARTILLERY_BUILD_TIME, hp: ARTILLERY_HP },
 };
 
-/** Visible turret range — used for AA, tank, and artillery rings. */
+/** Visible turret range — used for AA and artillery rings. The 'tank' building
+ *  is a FACTORY now (it rolls out mobile tanks, see tanks.js) and has no firing
+ *  range of its own, so it gets no range ring. */
 export const TURRET_RANGES = {
   antiair:   AA_RADIUS,
-  tank:      TANK_RADIUS,
   artillery: ARTILLERY_RANGE,
 };
 
@@ -305,6 +306,13 @@ export function addWreckBlockage(f) {
   }
   // Physical pile at the death position. f.x/f.y is already the fleet's current
   // world position on the road (or near it, if it was mid-detour).
+  //
+  // A TANK dying on the road is a heavy hulk ("死亡公路"): its pile spawns with
+  // TANK_WRECK_HP_MUL× the HP of a normal vehicle wreck, so engineers need ~6×
+  // the time to clear it and the road stays blocked far longer. The `heavy` flag
+  // is carried so the renderer can draw a bigger hulk.
+  const heavy = f.kind === 'tank';
+  const hp0 = heavy ? WRECK_PILE_HP_INIT * TANK_WRECK_HP_MUL : WRECK_PILE_HP_INIT;
   if (e.wrecks.length >= WRECK_MAX_PER_EDGE) {
     // Edge is already saturated — coalesce this death into the nearest existing
     // pile instead of growing the array. Keeps the detour scan bounded even
@@ -317,14 +325,19 @@ export function addWreckBlockage(f) {
       if (d2 < bestD2) { bestD2 = d2; bestIdx = k; }
     }
     const w = e.wrecks[bestIdx];
-    w.hp    = Math.min(w.hpMax * 2, w.hp + WRECK_PILE_HP_INIT);  // grows tougher
+    // Non-heavy keeps the original 2×-hpMax growth cap; a heavy hulk is allowed
+    // to add its full pool so the roadblock genuinely persists.
+    const cap = heavy ? w.hpMax + hp0 : w.hpMax * 2;
+    w.hp    = Math.min(cap, w.hp + hp0);
     w.hpMax = Math.max(w.hpMax, w.hp);
+    if (heavy) w.heavy = true;
     return;
   }
   e.wrecks.push({
     x: f.x, y: f.y,
-    hp: WRECK_PILE_HP_INIT, hpMax: WRECK_PILE_HP_INIT,
+    hp: hp0, hpMax: hp0,
     rot: Math.random() * Math.PI,
+    heavy,
   });
 }
 

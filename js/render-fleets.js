@@ -11,12 +11,12 @@ import { state } from './state.js';
 import { DRONE_HP_AIR } from './config.js';
 import { COLOR } from './factions.js';
 import {
-  drawTroopSprite, drawEngineerSprite, drawDroneSprite,
+  drawTroopSprite, drawEngineerSprite, drawDroneSprite, drawTankTurret,
 } from './sprites.js';
 import { curveOffsetForPoint } from './road-curve.js';
 
 // ---- Ground fleets — column of vehicles trailing a leader ----
-export function drawTroopFleets(ctx, zoom) {
+export function drawTroopFleets(ctx, zoom, now) {
   const COLUMN_MAX = 8;
   const PER_VEH = 5;
   const GAP = 13;       // px between adjacent vehicles along the column
@@ -26,6 +26,32 @@ export function drawTroopFleets(ctx, zoom) {
   for (const f of state.fleets) {
     if (f.kind === 'drone') continue;
     if (f.x + 120 < vL || f.x - 120 > vR || f.y + 120 < vT || f.y - 120 > vB) continue;
+    // Mobile tanks: one heavy chassis facing its heading (rides the road curve
+    // like any ground fleet). `units` is the tank's HP pool, so show an HP bar
+    // when it's taken damage. Drawn with the same tank sprite as the factory.
+    if (f.kind === 'tank') {
+      let tx = f.x, ty = f.y;
+      if (f.path && f.segIdx < f.path.length - 1) {
+        const ca = state.nodes[f.path[f.segIdx]], cb = state.nodes[f.path[f.segIdx + 1]];
+        const o = curveOffsetForPoint(ca.x, ca.y, cb.x, cb.y, ca.id, cb.id, f.x, f.y);
+        tx += o.ox; ty += o.oy;
+      }
+      const ang = (f.heading !== undefined) ? f.heading
+        : (f.path && f.segIdx < f.path.length - 1)
+          ? Math.atan2(state.nodes[f.path[f.segIdx + 1]].y - f.y, state.nodes[f.path[f.segIdx + 1]].x - f.x)
+          : 0;
+      drawTankTurret(ctx, tx, ty, f.owner, true, zoom, ang, now);
+      const hpMax = f.hpMax || f.units || 1;
+      const frac = Math.max(0, f.units) / hpMax;
+      if (frac < 0.999) {
+        const bw = 24;
+        ctx.fillStyle = 'rgba(20,20,20,0.5)';
+        ctx.fillRect(tx - bw / 2, ty + 16, bw, 3);
+        ctx.fillStyle = '#ffd066';
+        ctx.fillRect(tx - bw / 2, ty + 16, bw * frac, 3);
+      }
+      continue;
+    }
     let angle = 0;
     if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
       angle = Math.atan2(f.finalY - f.y, f.finalX - f.x);

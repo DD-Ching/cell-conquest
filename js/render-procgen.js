@@ -156,6 +156,36 @@ function bakeTacticalMap() {
     }
   }
 
+  // 2b) DISTRICT street grid — built-up region types (city / industrial / military)
+  //     get a faint rotated block-grid clipped to their core, so a dense node
+  //     cluster reads as a SETTLEMENT (city blocks / industrial yards) instead of
+  //     a tangle of graph edges. Bake-time only; per-region angle + type spacing
+  //     keep districts distinct. Under the roads/nodes layers → texture, not clutter.
+  for (const r of state.regions) {
+    if (r.type !== 'city' && r.type !== 'industrial_zone' && r.type !== 'military_base') continue;
+    const col = REGION_TINT[r.type] || '#6a6a78';
+    const core = r.radius * 0.6;                  // grid only fills the built core
+    const ang = (r.id * 0.7) % (Math.PI / 2);     // seeded-ish per region so they don't align
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const spacing = r.type === 'industrial_zone' ? 110 : r.type === 'military_base' ? 150 : 82;
+    c.save();
+    c.beginPath(); c.arc(r.x, r.y, core, 0, Math.PI * 2); c.clip();
+    c.strokeStyle = rgba(col, r.type === 'city' ? 0.14 : 0.10);
+    c.lineWidth = 2.5;
+    for (let fam = 0; fam < 2; fam++) {           // two perpendicular line families = blocks
+      const ux = fam === 0 ? cos : -sin, uy = fam === 0 ? sin : cos;
+      const px = -uy, py = ux;
+      for (let s = -core; s <= core; s += spacing) {
+        const ox = r.x + px * s, oy = r.y + py * s;
+        c.beginPath();
+        c.moveTo(ox - ux * core, oy - uy * core);
+        c.lineTo(ox + ux * core, oy + uy * core);
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+
   // 3) Resource belts — faint kind-coloured haze (mineral/energy/rare).
   for (const b of state.resourceBelts) {
     const col = BELT_COL[b.kind] || '#999';

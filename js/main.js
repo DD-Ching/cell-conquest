@@ -269,6 +269,18 @@ export function commitPlayerSpawn(nodeId) {
   state.elapsed = 0;
 }
 window.commitPlayerSpawn = commitPlayerSpawn;
+
+/** Start-screen "Deploy to Mars" handler: dismiss the title overlay and reveal
+ *  the spawn-select beat that newGame() already set up underneath. Wired to the
+ *  #start-screen button. */
+export function startGame() {
+  const scr = document.getElementById('start-screen');
+  if (scr) scr.classList.add('dismissed');
+  // The spawn-select prompt now becomes visible (it sat behind the overlay).
+  const banner = document.getElementById('spawn-banner');
+  if (banner && state.phase === 'spawnSelect') banner.style.display = 'block';
+}
+window.startGame = startGame;
 // Expose for HTML button (Play Again)
 window.newGame = newGame;
 

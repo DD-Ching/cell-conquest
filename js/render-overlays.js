@@ -124,6 +124,50 @@ export function drawSalvoMarker(ctx, zoom, now) {
   ctx.stroke();
 }
 
+// ---- Spawn-select markers (opening "choose your town" beat) ----
+// Pulsing player-coloured reticle rings + a name label on every candidate node
+// so the player can read where they may start. Gated on state.phase; draws
+// nothing once the game is playing. World-space (called inside the world
+// transform, before the fog veil).
+export function drawSpawnSelect(ctx, zoom, now) {
+  if (state.phase !== 'spawnSelect' || !state.spawnCandidates.length) return;
+  const pc = COLOR.player || '#5cb3ff';
+  const pulse = 0.5 + 0.5 * Math.sin(now / 350);
+  ctx.save();
+  for (const id of state.spawnCandidates) {
+    const n = state.nodes[id];
+    if (!n) continue;
+    const baseR = (n.size || 30) + 26;
+    // Expanding outer pulse ring
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = pc;
+    ctx.lineWidth = 3 / zoom;
+    ctx.beginPath(); ctx.arc(n.x, n.y, baseR + pulse * 24, 0, Math.PI * 2); ctx.stroke();
+    // Steady inner ring
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath(); ctx.arc(n.x, n.y, baseR, 0, Math.PI * 2); ctx.stroke();
+    // N/E/S/W ticks → "target this" reticle feel
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 2 / zoom;
+    const t0 = baseR + 4 / zoom, t1 = baseR + 16 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(n.x, n.y - t0); ctx.lineTo(n.x, n.y - t1);
+    ctx.moveTo(n.x, n.y + t0); ctx.lineTo(n.x, n.y + t1);
+    ctx.moveTo(n.x - t0, n.y); ctx.lineTo(n.x - t1, n.y);
+    ctx.moveTo(n.x + t0, n.y); ctx.lineTo(n.x + t1, n.y);
+    ctx.stroke();
+    // Name label
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = pc;
+    ctx.font = `bold ${13 / zoom}px ui-monospace, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(n.name || 'Candidate', n.x, n.y - baseR - 8 / zoom);
+  }
+  ctx.restore();
+}
+
 // ---- Hold-Fire screen-space banner (drawn AFTER world transform restored) ----
 export function drawHoldFireBanner(ctx, W, now) {
   if (!state.holdFire) return;

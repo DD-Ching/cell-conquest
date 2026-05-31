@@ -254,6 +254,48 @@
     from { opacity: 0; transform: translate(-50%, -52%) scale(0.94); }
     to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
+  /* Start screen — full-screen title overlay shown on load, before the player
+     drops into town-selection. Dismissed by the Deploy button (JS startGame).
+     Frames the game for a first-time / store visitor. */
+  #start-screen {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background:
+      radial-gradient(ellipse at 50% 38%, rgba(60, 24, 12, 0.55), rgba(8, 5, 4, 0.92) 70%),
+      rgba(6, 4, 3, 0.96);
+    backdrop-filter: blur(6px) saturate(1.05);
+    -webkit-backdrop-filter: blur(6px) saturate(1.05);
+    text-align: center;
+    animation: start-fade-in 0.5s ease-out;
+  }
+  @keyframes start-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  #start-screen.dismissed { opacity: 0; pointer-events: none; transition: opacity 0.45s ease; }
+  #start-screen .start-title {
+    font-family: var(--font-display); font-size: 64px; font-weight: 900;
+    letter-spacing: 0.18em; text-transform: uppercase; margin: 0;
+    color: #ffd9a8;
+    text-shadow: 0 0 40px rgba(255, 140, 60, 0.5), 0 4px 0 rgba(120, 50, 20, 0.6);
+  }
+  #start-screen .start-sub {
+    margin: 10px 0 6px; font-size: 15px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  #start-screen .start-how {
+    margin: 22px auto 30px; max-width: 460px; font-size: 13px; line-height: 1.9;
+    color: var(--text-dim); letter-spacing: 0.02em;
+  }
+  #start-screen .start-how b { color: #e8c9a0; font-weight: 700; }
+  #start-screen .start-how .row { display: flex; justify-content: space-between; gap: 18px; padding: 1px 0; }
+  #start-screen .start-how .row span:first-child { color: #ffce8a; font-family: ui-monospace, monospace; }
+  #start-screen button {
+    padding: 15px 44px; font-size: 15px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    background: linear-gradient(180deg, var(--accent), #e09030);
+    color: #1a0c04; border: none; border-radius: 8px; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(255, 130, 50, 0.4), 0 1px 0 rgba(255, 220, 160, 0.45) inset;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  #start-screen button:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(255, 140, 60, 0.55), 0 1px 0 rgba(255, 220, 160, 0.5) inset; }
+
   /* Spawn-select banner — top-centre prompt during the opening "choose your
      town" beat. Non-interactive (clicks pass through to the canvas); JS shows /
      hides it via display. Warm-toned to match the HUD chrome. */
@@ -358,6 +400,18 @@
     <div>URL <code>?theme=mars</code> (default) / <code>?theme=ice-mars</code> / <code>?theme=alien-biome</code> reskins enemy factions — palette, name pool, glow. Player + Lieutenant colour stay the same. Reload to switch.</div>
     <div>URL flag <code>?preset=skirmish</code> / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. Default (no flag) is the standard 12000×9000 / 700–900-node theatre. Console logs the applied preset.</div>
   </div>
+</div>
+<div id="start-screen">
+  <h1 class="start-title">Mars Front</h1>
+  <div class="start-sub">Tactical Conquest · Red Planet</div>
+  <div class="start-how">
+    Seize the planet one town at a time. Build factories, drones, tanks and anti-air; scout through the fog and roll up your rivals before they roll up you.
+    <div class="row"><span>Drag base → base</span><span>send troops</span></div>
+    <div class="row"><span>Q / F / T / C / N</span><span>build AA / factory / tank / cannon / net</span></div>
+    <div class="row"><span>H · G · Space</span><span>hold-fire salvo · delegate base · pause</span></div>
+    <div class="row"><span>? </span><span>full controls</span></div>
+  </div>
+  <button onclick="startGame()">Deploy to Mars</button>
 </div>
 <div id="spawn-banner"><h2>Choose Your Starting Town</h2><p>Click a glowing town to deploy your HQ — your enemies have already claimed theirs.</p></div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

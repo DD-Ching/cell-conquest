@@ -99,6 +99,11 @@ function hydrate(snap) {
   state.mousePos    = snap.mousePos;
   state.painting    = snap.painting;
   if (snap.mapMode) state.mapMode = snap.mapMode;   // cartographic view mode (V key)
+  // Fog of war + spawn-select state (main thread owns the compute; worker draws).
+  state.fog       = snap.fog || null;
+  state.fogReveal = !!snap.fogReveal;
+  state.phase     = snap.phase || 'playing';
+  state.spawnCandidates = snap.spawnCandidates || [];
 
   // Rebuild the turretGrid the way main.js simulate() does — drawTurrets'
   // aim-scan uses state.turretGrid + state.groundFleetGrid to find targets

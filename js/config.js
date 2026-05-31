@@ -251,6 +251,24 @@ export const NN_N = 40;
 export const NN_F = 21;
 export const NN_HIDDEN = 96;
 
+// ---- Fog of war (vision) ----
+// A coarse vision grid (fog.js) reveals the map around your own nodes + fleets;
+// everything else starts shrouded. FOG_CELL is the world-px size of one grid
+// cell (smaller = sharper fog edges, more cells). Recompute runs on REAL time
+// (~8 Hz) so it's independent of game speed. Vision radii are world px: a town
+// shows ~1-2 hops of neighbours, the HQ a bit more, mobile units a tight bubble.
+// Player fog is render-only + outcome-neutral; the AI gets its own vision gate
+// (ai-context.js) so it can't see the whole map either.
+export const FOG_CELL         = 110;   // world px per vision-grid cell
+export const FOG_RECOMPUTE_MS = 120;   // recompute cadence (~8 Hz, real time)
+export const VISION_CAPITAL   = 1100;  // HQ sees farthest
+export const VISION_NODE      = 760;   // ordinary owned town
+export const VISION_FLEET     = 460;   // ground column / tank
+export const VISION_DRONE     = 320;   // recon drone (small radius — there are many)
+// AI vision (Pillar 3) — slightly more generous than the player so a blind AI
+// doesn't just freeze. Toggle the whole AI-fog mechanic off with ?aifog=0.
+export const AI_VISION_MUL     = 1.15;
+
 // ---- VFX FIFO caps ----
 // Hard ceilings on the cosmetic-only ephemeral arrays. Spawn sites are
 // intentionally unbounded — explosions, salvos, and burst events shouldn't

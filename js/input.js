@@ -27,7 +27,7 @@ import { toggleMute } from './audio.js';
 // cycle (main.js → input.js → main.js), which is safe: newGame is a hoisted
 // function declaration and is only *invoked* from a listener at runtime,
 // long after both module bodies have finished evaluating.
-import { newGame } from './main.js';
+import { newGame, commitPlayerSpawn } from './main.js';
 
 // =====================================================
 // HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
@@ -79,6 +79,15 @@ export function attachInput() {
     state.mouseScreen = { x: e.clientX, y: e.clientY };
     const wx = e.clientX / state.zoom + state.cameraX;
     const wy = e.clientY / state.zoom + state.cameraY;
+
+    // Spawn-select: a left click on a glowing candidate town commits the
+    // player's start there (and begins the game). Panning / zoom still work so
+    // the player can scout first; only the click-to-commit is special here.
+    if (state.phase === 'spawnSelect') {
+      const node = nodeAt(wx, wy);
+      if (node && state.spawnCandidates.includes(node.id)) commitPlayerSpawn(node.id);
+      return;
+    }
 
     // Placement mode: clicking confirms placement. Drag to PAINT a row of them.
     // Shift held at release keeps the mode active for the next placement.

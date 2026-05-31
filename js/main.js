@@ -4,7 +4,7 @@
 // =====================================================
 import { state } from './state.js';
 import {
-  WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
+  WORLD_W, WORLD_H, ZOOM_MIN, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -33,6 +33,7 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
+import { resetFog, recomputeFog } from './fog.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio } from './audio.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
@@ -137,29 +138,18 @@ export function newGame() {
   }
   adjustHubSizes();
 
-  // Faction starts. Procgen: one capital per DISTINCT high-value region, spread
-  // out + with viable expansion (worldgen.pickRegionStarts) so each faction has
-  // a geographic identity instead of a random corner. Legacy gen — or any
-  // shortfall — falls back to farthest-point from already-placed starts. Stats
-  // are applied identically regardless of how the node was chosen.
+  // Faction starts — NPC capitals only. The PLAYER no longer auto-spawns: the
+  // game opens in 'spawnSelect' (see below), where the player clicks their own
+  // home town. NPCs claim spread-out capitals now so the player can read the
+  // strategic picture before committing.
+  //
+  // Procgen: one capital per DISTINCT high-value region, spread out + with
+  // viable expansion (worldgen.pickRegionStarts). Legacy gen — or any shortfall
+  // — falls back to farthest-point from already-placed starts.
   // Skip 'ally1' — the Lieutenant is YOUR AI, not a separate faction. It starts
   // with zero bases; the player grows it by pressing G to delegate.
-  const factionOwners = ['player', ...AIS].filter(o => o !== 'ally1');
+  const npcOwners = AIS.filter(o => o !== 'ally1');
   const placed = [];
-  function applyCapitalStats(node, owner) {
-    const fs = factionStats[owner];
-    const strength = fs ? fs.strength : 1.0;
-    node.owner     = owner;
-    node.units     = Math.floor(48 * strength);
-    node.size      = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
-    node.capacity  = Math.floor(145 * strength);
-    node.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
-    node.nodeType  = 'capital';   // HQ double-ring tactical icon (both gen modes)
-    // Every capital is a named place (the atlas's loudest anchor). procgen named
-    // most major nodes already; this guarantees a name even if the capital was
-    // promoted from a smaller node. Legacy gen (no procgen names) gets one too.
-    ensureNodeName(node);
-  }
   function pickFarNode() {
     let best = null, bestD = -1;
     for (const n of state.nodes) {
@@ -171,24 +161,114 @@ export function newGame() {
     }
     return best;
   }
-  const regionStarts = state.procgen ? pickRegionStarts(factionOwners.length) : [];
-  factionOwners.forEach((owner, i) => {
+  // Ask the region picker for MORE capitals than we have NPCs — the surplus
+  // high-value region centres become the player's spawn candidates.
+  const regionStarts = state.procgen ? pickRegionStarts(npcOwners.length + 6) : [];
+  npcOwners.forEach((owner, i) => {
     let node = (regionStarts[i] != null) ? state.nodes[regionStarts[i]] : null;
     if (!node || node.owner !== 'neutral') node = pickFarNode();
     if (node) { applyCapitalStats(node, owner); placed.push(node); }
   });
 
-  // Center on player
-  const playerStart = state.nodes.find(n => n.owner === 'player');
-  if (playerStart) {
-    state.cameraX = playerStart.x - state.W / (2 * state.zoom);
-    state.cameraY = playerStart.y - state.H / (2 * state.zoom);
-    clampCamera();
-  }
+  // Player spawn candidates: good neutral towns, spread out and as far as
+  // possible from every NPC capital so the player gets a fair, scout-able set
+  // of opening positions. Surplus region centres seed it; topped up by a
+  // farthest-point sweep over well-connected neutrals.
+  state.spawnCandidates = pickSpawnCandidates(5, placed, regionStarts.slice(npcOwners.length));
+
+  // Opening camera: fit the whole theatre so every glowing candidate is on
+  // screen for the choice. (commitPlayerSpawn re-centres on the pick.)
+  const fitZoom = Math.max(ZOOM_MIN, Math.min(state.W / WORLD_W, state.H / WORLD_H));
+  state.zoom = fitZoom;
+  state.cameraX = WORLD_W / 2 - state.W / (2 * state.zoom);
+  state.cameraY = WORLD_H / 2 - state.H / (2 * state.zoom);
+  clampCamera();
 
   resetEngineering();
+  // Enter town-selection. Sim / AI / clock stay frozen until commitPlayerSpawn.
+  state.phase = 'spawnSelect';
+  state.fogReveal = false;            // whole map visible while scouting
+  resetFog();                         // clear any prior game's explored memory
+  const banner = document.getElementById('spawn-banner');
+  if (banner) banner.style.display = 'block';
   state.lastTime = performance.now();
 }
+
+/** Apply HQ capital stats to a node (shared by NPC placement + the player's
+ *  commitPlayerSpawn). Hoisted to module scope so both callers reach it. */
+function applyCapitalStats(node, owner) {
+  const fs = factionStats[owner];
+  const strength = fs ? fs.strength : 1.0;
+  node.owner     = owner;
+  node.units     = Math.floor(48 * strength);
+  node.size      = Math.floor(38 * (0.92 + (strength - 1) * 0.35));
+  node.capacity  = Math.floor(145 * strength);
+  node.regenRate = 1.5 * (0.88 + (strength - 1) * 0.6);
+  node.nodeType  = 'capital';   // HQ double-ring tactical icon (both gen modes)
+  ensureNodeName(node);
+}
+
+/** Pick `count` spawn candidates: neutral, well-connected (degree ≥ 2), spread
+ *  far from each other AND from the NPC capitals in `avoid`. `seeds` (surplus
+ *  region centres) are preferred first, then a farthest-point sweep fills up. */
+function pickSpawnCandidates(count, avoid, seeds = []) {
+  const chosen = [];
+  const isGood = n => n && n.owner === 'neutral' && (state.adj.get(n.id)?.size || 0) >= 2;
+  const minDistTo = (n, list) => {
+    let m = Infinity;
+    for (const o of list) { const d = dist(n, o); if (d < m) m = d; }
+    return m;
+  };
+  // Seed from surplus region capitals first (already high-value + spread).
+  for (const id of seeds) {
+    if (chosen.length >= count) break;
+    const n = state.nodes[id];
+    if (isGood(n) && !chosen.includes(n)) chosen.push(n);
+  }
+  // Fill the rest by farthest-point: each new pick maximises its distance to
+  // the nearest NPC capital AND already-chosen candidate (fair + spread).
+  const pool = state.nodes.filter(n => isGood(n) && !chosen.includes(n));
+  while (chosen.length < count && pool.length) {
+    let bestIdx = -1, bestScore = -Infinity;
+    for (let i = 0; i < pool.length; i++) {
+      const dEnemy = minDistTo(pool[i], avoid);                 // far from NPCs = safer
+      const dPeers = chosen.length ? minDistTo(pool[i], chosen) : dEnemy;
+      const score = Math.min(dEnemy, dPeers);                   // balance both
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    }
+    if (bestIdx < 0) break;
+    chosen.push(pool.splice(bestIdx, 1)[0]);
+  }
+  return chosen.map(n => n.id);
+}
+
+/** Commit the player's chosen starting town: apply capital stats, descend the
+ *  fog, centre the camera, and start the game clock. Called from input.js when
+ *  the player clicks a candidate during spawnSelect. */
+export function commitPlayerSpawn(nodeId) {
+  if (state.phase !== 'spawnSelect') return;
+  const node = state.nodes[nodeId];
+  if (!node || !state.spawnCandidates.includes(nodeId)) return;
+  applyCapitalStats(node, 'player');
+  state.spawnCandidates = [];
+  const banner = document.getElementById('spawn-banner');
+  if (banner) banner.style.display = 'none';
+  // Centre + sensible opening zoom on the new HQ.
+  state.zoom = Math.max(state.zoom, 0.6);
+  state.cameraX = node.x - state.W / (2 * state.zoom);
+  state.cameraY = node.y - state.H / (2 * state.zoom);
+  clampCamera();
+  // Fog descends now; reveal around the HQ immediately so the first frame
+  // shows the player's surroundings rather than a black screen.
+  state.fogReveal = true;
+  recomputeFog();
+  // Start the clock fresh from this instant.
+  state.phase = 'playing';
+  state.startTime = performance.now();
+  state.lastTime = performance.now();
+  state.elapsed = 0;
+}
+window.commitPlayerSpawn = commitPlayerSpawn;
 // Expose for HTML button (Play Again)
 window.newGame = newGame;
 
@@ -396,7 +476,7 @@ function loop() {
     state.drag.y = state.mousePos.y;
   }
 
-  if (!state.gameOver && !state.paused) {
+  if (!state.gameOver && !state.paused && state.phase === 'playing') {
     // Sub-step count is derived from a SAFE maximum dt, not a fixed cap, so a
     // faster gear never enlarges the per-step dt past the value the sim is
     // proven stable at. 20× worst case (realDt pegged at 0.05) was subDt 0.1
@@ -459,6 +539,10 @@ function loop() {
   updateSnow(realDt);
   updateAudio(realDt);     // drone-swarm buzz + AA gunfire, spatialised by the live view
   updateHUD();
+  // Fog of war: recompute the player's vision before rendering. Self-gates on
+  // state.fogReveal + a real-time throttle, so it's ~free during spawnSelect
+  // and runs ~8 Hz while playing regardless of game speed.
+  recomputeFog();
   // World canvas: either the worker renders it OR we do it locally on the
   // main thread. The worker owns the canvas after transferControlToOffscreen
   // so we must NOT call render() once it's enabled (the local main canvas

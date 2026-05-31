@@ -173,6 +173,16 @@ export const state = {
   // when target falls into owner's hands, becomes overdefended, or ages out.
   aiFocus: {},
 
+  // Lifecycle phase. 'spawnSelect' = the opening beat where the world is
+  // generated, NPCs have claimed their home towns, and the player is choosing
+  // their OWN starting node (sim frozen, fog off so they can scout). 'playing'
+  // = normal game. newGame() enters spawnSelect; commitPlayerSpawn() flips to
+  // playing. Default 'playing' so any code path that forgets to set it behaves
+  // like the old always-running game.
+  phase: 'playing',          // 'spawnSelect' | 'playing'
+  spawnCandidates: [],       // node ids the player may pick as their capital
+                             //   during spawnSelect (rendered as pulsing rings)
+
   // Time
   gameOver: false,
   paused: false,             // Space toggles. Render + HUD keep running; sim,
@@ -213,4 +223,21 @@ export const state = {
   // all-nodes-equal graph for diagnostics. Shipped in the render snapshot so the
   // render worker honors it too.
   mapMode: 'cinematic',
+
+  // ---- Fog of war (Pillar 2) ----
+  // Coarse vision grid over the world. `seen` is sticky (ever-explored);
+  // `vis` is recomputed each fog tick (currently visible). Both are flat
+  // Uint8Arrays of gw*gh, indexed [cy*gw + cx]. Built lazily by fog.js
+  // ensureFog() on first use / world change. Render reads them; sim never
+  // does (player fog is render-only + outcome-neutral). cell = world px per
+  // cell. fogReveal=false during spawnSelect (whole map visible to scout).
+  fog: null,                 // { gw, gh, cell, seen:Uint8Array, vis:Uint8Array } | null
+  fogReveal: false,          // true once playing — gates drawFog + recompute
+  _fogLastT: 0,              // perf.now() of last recompute (throttle ~8 Hz)
+
+  // ---- Day/night ambiance (Pillar 4, visual only) ----
+  // Slow 0..1 phase advanced on REAL time (never game time → never read by
+  // sim/AI). 0=dawn, 0.25=noon, 0.5=dusk, 0.75=night. drawBackground tints by
+  // it. Pure cosmetic.
+  dayPhase: 0.18,
 };

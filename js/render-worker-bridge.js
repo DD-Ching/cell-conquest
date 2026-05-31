@@ -154,6 +154,14 @@ function buildSnapshot() {
     mousePos:    state.mousePos,
     painting:    state.painting,
     mapMode:     state.mapMode,    // cartographic view mode (V key) — worker honors it
+    // Fog of war: the grid is recomputed on the MAIN thread (it reads
+    // nodes/fleets); the worker only needs the resulting masks + flag to draw.
+    // ~9 KB×2 of Uint8 per frame — cheap. spawnCandidates ride along so the
+    // worker can draw the opening "choose your town" rings too.
+    fog:         state.fog,
+    fogReveal:   state.fogReveal,
+    phase:       state.phase,
+    spawnCandidates: state.spawnCandidates,
 
     // Faction colours: COLOR/GLOW are populated by rollFactions() on the MAIN
     // thread; the worker's own factions.js module starts empty, so without this

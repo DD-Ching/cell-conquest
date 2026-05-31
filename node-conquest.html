@@ -254,6 +254,31 @@
     from { opacity: 0; transform: translate(-50%, -52%) scale(0.94); }
     to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
+  /* Spawn-select banner — top-centre prompt during the opening "choose your
+     town" beat. Non-interactive (clicks pass through to the canvas); JS shows /
+     hides it via display. Warm-toned to match the HUD chrome. */
+  #spawn-banner {
+    position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
+    display: none; z-index: 40; pointer-events: none; text-align: center;
+    padding: 14px 30px; border-radius: 10px;
+    background: var(--bg-panel-strong);
+    border: 1px solid var(--border-warm-strong);
+    box-shadow: 0 0 50px rgba(90, 179, 255, 0.25), 0 12px 40px rgba(0,0,0,0.6);
+    backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.1);
+    animation: spawn-banner-pulse 2.2s ease-in-out infinite;
+  }
+  #spawn-banner h2 {
+    margin: 0 0 4px; font-family: var(--font-display);
+    font-size: 20px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
+    color: #8fcaff; text-shadow: 0 0 18px rgba(90, 179, 255, 0.5);
+  }
+  #spawn-banner p { margin: 0; font-size: 12.5px; letter-spacing: 0.04em; color: var(--text-dim); }
+  @keyframes spawn-banner-pulse {
+    0%, 100% { box-shadow: 0 0 40px rgba(90, 179, 255, 0.18), 0 12px 40px rgba(0,0,0,0.6); }
+    50%      { box-shadow: 0 0 70px rgba(90, 179, 255, 0.42), 0 12px 40px rgba(0,0,0,0.6); }
+  }
+
   #message h1 { margin: 0 0 10px; font-family: var(--font-display); font-size: 34px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; }
   #message p#msg-sub { margin: 0 0 22px; color: var(--text-dim); font-size: 14px; letter-spacing: 0.02em; }
   #message.victory #msg-sub { color: #ffd066; }
@@ -334,6 +359,7 @@
     <div>URL flag <code>?preset=skirmish</code> / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. Default (no flag) is the standard 12000×9000 / 700–900-node theatre. Console logs the applied preset.</div>
   </div>
 </div>
+<div id="spawn-banner"><h2>Choose Your Starting Town</h2><p>Click a glowing town to deploy your HQ — your enemies have already claimed theirs.</p></div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
 
 <script type="module" src="./js/main.js"></script>

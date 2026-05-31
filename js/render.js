@@ -36,7 +36,7 @@ import {
 } from './render-world.js';
 import {
   drawPlacementPreview, drawSalvoMarker, drawHoldFireBanner,
-  drawDragPreview, drawHomeIndicators,
+  drawDragPreview, drawHomeIndicators, drawSpawnSelect,
 } from './render-overlays.js';
 import { renderMinimap } from './render-minimap.js';
 import {
@@ -46,6 +46,7 @@ import {
 import { drawTerritory } from './render-territory.js';
 import { drawTerritoryBorders } from './render-borders.js';
 import { drawProcgen } from './render-procgen.js';
+import { drawFog } from './render-fog.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -111,10 +112,16 @@ export function render() {
   drawDroneFleets(ctx, zoom, now);
   drawParticles(ctx, zoom);
   if (state.drag && state.drag.moved) drawDragPreview(ctx, zoom);
+  drawSpawnSelect(ctx, zoom, now);    // opening "choose your town" rings (no-op once playing)
   drawSalvoMarker(ctx, zoom, now);
   // Always-on-top: node unit counts. Massed troop columns or drone swarms
   // parked on a node would otherwise completely hide the number.
   drawNodeLabelsOnTop(ctx, zoom);
+
+  // Fog of war veil — LAST world-space layer so it shrouds terrain + entities +
+  // labels uniformly. Visible/owned areas sit at alpha 0 (crisp); only enemy /
+  // unexplored ground is darkened. No-op until the game is playing.
+  drawFog(ctx, zoom);
 
   ctx.restore();
   // --- end world space ----------------------------------------

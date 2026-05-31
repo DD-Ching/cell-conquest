@@ -34,6 +34,7 @@ import { findPath, catchUpRegen } from './world.js';
 import { isAlly } from './alliance.js';
 import { COLOR } from './factions.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch } from './engineering.js';
+import { isWasmReady, wasmTankDamageFleets } from './wasm-bridge.js';
 import { sfxCapture } from './audio.js';
 
 const GRID_CELL = 250;
@@ -153,26 +154,74 @@ export function beginTankSiege(f, node) {
   f.x = node.x; f.y = node.y;
 }
 
-/** En-route weapons (run for EVERY live tank, travelling or parked): gun down
- *  enemy ground fleets and siege enemy turrets within range. Returns true if a
- *  ground fleet was killed (so the caller knows to sweep dead fleets). */
-function applyTankWeapons(f, dt) {
+/** A ground target (troop column OR enemy tank) a tank gunned down. Off-road /
+ *  road-position wreck rules live in engineering.addWreckBlockage, which keys on
+ *  kind:'tank' for the 6× death-road hulk. Heavier boom for a tank vs a column. */
+function killGroundTarget(g) {
+  addWreckBlockage(g);                        // tank-kind targets leave a 6× hulk
+  if (g.kind === 'tank') {
+    spawnBigExplosion(g.x, g.y, '#ffaa55', 22);
+    spawnScorch(g.x, g.y, 'big');
+  } else {
+    spawnBigExplosion(g.x, g.y, '#ff8a3a', 8);
+    spawnScorch(g.x, g.y, 'medium');
+  }
+  g._dead = true;
+}
+
+/** Anti-fleet fire for ALL live tanks in one pass. Mobile tanks are BOTH the
+ *  attackers and (being ground fleets themselves) the targets, so enemy tanks
+ *  shoot each other and a tank guns down troop columns crossing its range.
+ *
+ *  WASM FAST PATH: this is the exact shape of the (now-retired static-turret)
+ *  Rust `tank_damage_fleets` — attackers × ground-fleet targets, owner-skip,
+ *  flat DPS, returns post-tick units. We reuse it verbatim (no Rust change, no
+ *  wasm rebuild): owner-aliasing makes a tank skip itself + every ally, so the
+ *  attacker-also-in-targets overlap is harmless. JS fallback mirrors it per-tank
+ *  (and draws fire tracers — the wasm path skips them, exactly like AA/combat).
+ *  Returns true if any target died (caller sweeps). */
+function applyTankFleetDamage(tanks, dt) {
   let kill = false;
-  forNear(state.groundFleetGrid, f.x, f.y, TANK_UNIT_RANGE, (g) => {
-    if (g === f || g._dead || isAlly(g.owner, f.owner)) return;
-    const dx = g.x - f.x, dy = g.y - f.y;
-    if (dx * dx + dy * dy > TANK_R2) return;
-    g.units -= TANK_UNIT_DPS_FLEET * dt;
-    if (g.units < 0.5) {
-      addWreckBlockage(g);                       // tank-kind enemies leave a 6× hulk
-      spawnBigExplosion(g.x, g.y, '#ff8a3a', 8);
-      spawnScorch(g.x, g.y, 'medium');
-      g._dead = true; kill = true; return;
+  const dmg = TANK_UNIT_DPS_FLEET * dt;
+
+  if (isWasmReady()) {
+    const targets = [];
+    for (const g of state.fleets) if (g.kind !== 'drone' && !g._dead) targets.push(g);
+    if (targets.length) {
+      const newUnits = wasmTankDamageFleets(tanks, targets, TANK_R2, dmg);
+      if (newUnits) {
+        for (let i = 0; i < targets.length; i++) {
+          const g = targets[i];
+          if (g._dead) continue;
+          const nu = newUnits[i];
+          g.units = Number.isFinite(nu) ? nu : 0;   // firewall: non-finite → kill, never a NaN fleet
+          if (g.units < 0.5) { killGroundTarget(g); kill = true; }
+        }
+        return kill;
+      }
     }
-    if (Math.random() < 3 * dt) {
-      state.tracers.push({ x1: f.x, y1: f.y, x2: g.x, y2: g.y, age: 0, maxAge: 0.22, color: COLOR[f.owner] });
-    }
-  });
+  }
+
+  // JS FALLBACK — per-tank gridded scan (also paints fire tracers).
+  for (const f of tanks) {
+    if (f._dead) continue;
+    forNear(state.groundFleetGrid, f.x, f.y, TANK_UNIT_RANGE, (g) => {
+      if (g === f || g._dead || isAlly(g.owner, f.owner)) return;
+      const dx = g.x - f.x, dy = g.y - f.y;
+      if (dx * dx + dy * dy > TANK_R2) return;
+      g.units -= dmg;
+      if (g.units < 0.5) { killGroundTarget(g); kill = true; return; }
+      if (Math.random() < 3 * dt) {
+        state.tracers.push({ x1: f.x, y1: f.y, x2: g.x, y2: g.y, age: 0, maxAge: 0.22, color: COLOR[f.owner] });
+      }
+    });
+  }
+  return kill;
+}
+
+/** Per-tank turret siege — chip enemy buildings in range. Small loop (few
+ *  turrets near any one tank), stays in JS like the original static-tank siege. */
+function applyTankTurretSiege(f, dt) {
   forNear(state.turretGrid, f.x, f.y, TANK_UNIT_RANGE, (o) => {
     if (isAlly(o.owner, f.owner) || o.pendingEngineer) return;
     const dx = o.x - f.x, dy = o.y - f.y;
@@ -182,7 +231,6 @@ function applyTankWeapons(f, dt) {
       state.tracers.push({ x1: f.x, y1: f.y, x2: o.x, y2: o.y, age: 0, maxAge: 0.22, color: COLOR[f.owner] });
     }
   });
-  return kill;
 }
 
 /** Capture a node a besieging tank has flattened. */
@@ -245,9 +293,14 @@ export function updateGroundTanks(dt) {
   if (tanks.length === 0) return;
   let dirty = false;
 
+  // 1) Anti-fleet fire for the whole tank force in one pass (wasm batch / JS
+  //    fallback). Marks dead targets — a tank killed here is skipped in (2).
+  if (applyTankFleetDamage(tanks, dt)) dirty = true;
+
+  // 2) Per-tank: turret siege + node bombard-siege / idle re-scan.
   for (const f of tanks) {
     if (f._dead) continue;
-    if (applyTankWeapons(f, dt)) dirty = true;
+    applyTankTurretSiege(f, dt);
     if (f.siegeNodeId !== undefined) {
       if (applyTankSiege(f, dt)) dirty = true;
     } else if (f._idle) {

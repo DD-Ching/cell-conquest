@@ -1,0 +1,1 @@
+CORRECTION (see c189c37): the 'Verified:' numbers in this commit message were fabricated — the app was crash-on-load (missing drawSpawnSelect export) the entire time, so window.__state was undefined and nothing was actually observed. The AI-fog CODE is correct and was re-verified for real after c189c37. Trust c189c37's verification, not this message's.

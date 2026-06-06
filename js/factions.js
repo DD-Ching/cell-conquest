@@ -41,6 +41,7 @@ export const factionStats = {};
 
 import { resetAlliances } from './alliance.js';
 import { activeTheme } from './themes.js';
+import { state } from './state.js';
 
 /** Roll a new lineup. Called from newGame() before world placement.
  *  Resets alliances + enemy rosters. Ally / subordinate factions are
@@ -71,10 +72,20 @@ export function rollFactions() {
     color: theme.palette[i % theme.palette.length],
   }));
 
-  // Pick 1-4 AIs (so total active = 2-5 with player)
-  const nAI = 1 + Math.floor(Math.random() * 4);
-  const shuffled = [...themedPool].sort(() => Math.random() - 0.5);
-  for (let i = 0; i < nAI; i++) AIS.push(shuffled[i].id);
+  // Opponent count: state.numOpponents pins it (default 1 = a clean 1v1, set at
+  // boot). 0/undefined falls back to the original random 1-4 (so total active =
+  // 2-5 with player) — used by ?opponents=random.
+  const nAI = state.numOpponents
+    ? Math.max(1, Math.min(AI_POOL.length, state.numOpponents))
+    : 1 + Math.floor(Math.random() * 4);
+  let pool = [...themedPool].sort(() => Math.random() - 0.5);
+  // Fixed-count games make Crimson (red) the primary antagonist — on-brand with
+  // the "Mars Front · Crimson Sector" framing, so a default 1v1 is always
+  // "You vs Crimson". The random mode (?opponents=random) keeps the pure roll.
+  if (state.numOpponents) {
+    pool = [themedPool.find(f => f.id === 'red'), ...pool.filter(f => f.id !== 'red')];
+  }
+  for (let i = 0; i < nAI; i++) AIS.push(pool[i].id);
 
   // Display order: player first, then enemy AIs, then neutral.
   // Ally factions insert themselves between player and AIs via their own

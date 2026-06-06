@@ -5,6 +5,18 @@ league/
 *.zip
 # Playwright test-run artifacts
 .playwright-mcp/
-# Local screenshots taken during dev / debugging
+# Local screenshots taken during dev / debugging — these are NOT part of the
+# shippable game and must stay out of the CrazyGames upload bundle (the game is
+# node-conquest.html + js/ + assets/ + the onnx files only). Scoped to repo root
+# so real sprite assets under assets/ are never ignored.
 ally1-*.png
 render-worker-*.png
+/*.jpeg
+/cg-*.jpeg
+/dev-live.png
+/kenney-*.png
+/tint-*.png
+/turrets-*.png
+/visual-combined.png
+/perf-result.txt
+.claude/

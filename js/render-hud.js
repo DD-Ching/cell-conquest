@@ -109,7 +109,13 @@ export function updateHUD() {
     if (u) u.textContent = Math.floor(c[f.id][0]);
     if (ns) ns.textContent = c[f.id][1];
   }
-  if (_hudEls.timer) _hudEls.timer.textContent = formatTime(state.elapsed);
+  // Timed matches (skirmish default + sized presets) count DOWN — the remaining
+  // time is the tension. Untimed (standard theatre) keeps the elapsed count-up.
+  if (_hudEls.timer) {
+    _hudEls.timer.textContent = state.timeLimit > 0
+      ? formatTime(Math.max(0, state.timeLimit - state.elapsed))
+      : formatTime(state.elapsed);
+  }
   if (_hudEls.zoom)  _hudEls.zoom.textContent  = `${Math.round(state.zoom * 100)}%`;
   if (_hudEls.speed) _hudEls.speed.textContent = `Speed ${state.timeScale}×`;
   if (_hudEls.perf) {

@@ -26,18 +26,31 @@ export function nnResetGame() {
   }
 }
 
+/** The trained ONNX policy is a local-dev nicety; the SHIPPED opponent is the
+ *  heuristic v3 AI, which plays fine without any model. So we only attempt the
+ *  NN load on localhost. Off localhost (e.g. inside the CrazyGames iframe) the
+ *  badge stays hidden and nothing is loaded — no "model not loaded" error text
+ *  and no console noise ever reaches a real player. */
+function isLocalhost() {
+  const h = (typeof location !== 'undefined' && location.hostname) || '';
+  return h === '' || h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+
 export async function nnLoad() {
   const badge = document.getElementById('nn-badge');
-  if (typeof ort === 'undefined') { if (badge) badge.textContent = 'NN: ort.js missing'; return; }
+  // Hidden by default in the HTML; only a SUCCESSFUL load reveals it.
+  if (!isLocalhost() || typeof ort === 'undefined') return;
   ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/';
   ort.env.wasm.numThreads = 1;
   try {
     nnSession = await ort.InferenceSession.create(NN_MODEL_URL, { executionProviders: ['wasm'] });
     nnReady = true;
-    if (badge) { badge.classList.remove('loading'); badge.textContent = 'NPC: Crimson is the trained policy'; }
+    if (badge) { badge.classList.remove('loading'); badge.style.display = 'block'; badge.textContent = 'NPC: Crimson is the trained policy'; }
   } catch (e) {
-    if (badge) badge.textContent = 'NPC model not loaded (need local server)';
-    console.error('NPC model load:', e);
+    // localhost-dev only (skipped off localhost), so this is never seen by a
+    // real player — a warn keeps the dev console tidy without an error.
+    if (badge) badge.style.display = 'none';
+    console.warn('NPC model not loaded (heuristic AI in use):', e && e.message ? e.message : e);
   }
 }
 

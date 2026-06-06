@@ -36,6 +36,10 @@ import { applyPreset } from './game-presets.js';
 import { resetFog, recomputeFog } from './fog.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio } from './audio.js';
+import {
+  initAds, loadingStart, loadingStop, gameplayStart, gameplayStop,
+  happytime, requestMidgameAd,
+} from './ads.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
 // its own module now. main.js calls attachInput() once at boot and reuses
 // updateHudFade() to prime panel opacity in newGame().
@@ -267,6 +271,8 @@ export function commitPlayerSpawn(nodeId) {
   state.startTime = performance.now();
   state.lastTime = performance.now();
   state.elapsed = 0;
+  // CrazyGames: active play begins now (powers ad timing + engagement metrics).
+  gameplayStart();
 }
 window.commitPlayerSpawn = commitPlayerSpawn;
 
@@ -284,8 +290,38 @@ window.startGame = startGame;
 // Expose for HTML button (Play Again)
 window.newGame = newGame;
 
+/** "Play Again" handler: the end-of-match screen is the one natural break in a
+ *  conquest game, so this is where the single sanctioned midgame ad goes. The
+ *  ad (when available) plays with audio muted; either way the callback fires and
+ *  the next match starts. With no SDK / on adblock it's an instant newGame(). */
+export function playAgain() {
+  requestMidgameAd(() => newGame());
+}
+window.playAgain = playAgain;
+
 function checkVictory() {
   if (state.gameOver) return;
+  // Time-limit decision (skirmish + sized presets). Without this the only way a
+  // match ends is total elimination — which on a stalemate or a long mop-up can
+  // run indefinitely. When the clock runs out we award the match on TERRITORY:
+  // your side wins by holding strictly more towns than the strongest enemy.
+  if (state.timeLimit > 0 && state.elapsed >= state.timeLimit) {
+    let yourTowns = 0;
+    const enemyTowns = new Map();
+    for (const n of state.nodes) {
+      if (n.owner === 'neutral') continue;
+      if (isAlly(n.owner, 'player')) yourTowns++;
+      else enemyTowns.set(n.owner, (enemyTowns.get(n.owner) || 0) + 1);
+    }
+    let enemyBest = 0;
+    for (const c of enemyTowns.values()) if (c > enemyBest) enemyBest = c;
+    if (yourTowns > enemyBest) {
+      endGame(true, `Time's up — you held the most ground: ${yourTowns} towns.`);
+    } else {
+      endGame(false, `Time's up — an enemy held more ground (${enemyBest} vs your ${yourTowns}).`);
+    }
+    return;
+  }
   const owners = new Set(state.nodes.map(n => n.owner));
   for (const f of state.fleets) owners.add(f.owner);
   owners.delete('neutral');
@@ -305,6 +341,10 @@ function checkVictory() {
 
 function endGame(win, sub) {
   state.gameOver = true;
+  // CrazyGames: active play has stopped (lets the platform run an ad on the
+  // upcoming Play-Again break); a win triggers the site confetti.
+  gameplayStop();
+  if (win) happytime();
   const m = document.getElementById('message');
   const title = document.getElementById('msg-title');
   title.textContent = win ? 'Victory' : 'Defeat';
@@ -580,8 +620,16 @@ function loop() {
 // placement, camera clamp, scorch buffer alloc) imports those values too.
 // ESM live bindings carry the new values to importers automatically once
 // applyPreset mutates the `let` exports in config.js.
-const presetName = new URLSearchParams(location.search).get('preset');
-applyPreset(presetName);
+// DEFAULT is now `skirmish` (a fast 10–18-node, ~minutes-long 1v1) instead of
+// the 830-node ~90-minute theatre — the small map is what a cold web visitor
+// (CrazyGames) should land in. The big map is still one URL flag away
+// (?preset=standard|long|kingofthehill).
+const presetName = new URLSearchParams(location.search).get('preset') || 'skirmish';
+const appliedPreset = applyPreset(presetName);
+// Match time limit (seconds) per preset — checkVictory awards on territory when
+// it's reached so a match always resolves. 0 = no limit (elimination only).
+const TIME_LIMITS = { skirmish: 360, kingofthehill: 480, long: 900, standard: 0 };
+state.timeLimit = TIME_LIMITS[appliedPreset] ?? 360;
 
 // Procedural map generation — now the DEFAULT (geography-first generator + the
 // tactical command-map art). ?procgen=0 falls back to the legacy world.js
@@ -599,6 +647,13 @@ state.worldThemeKey = _mapParams.get('world') || null;
 // AI fog of war (Pillar 3): NPCs get limited vision too. ?aifog=0 disables it
 // (omniscient AI) for debugging / balance comparison.
 state.aiFog = _mapParams.get('aifog') !== '0';
+// Opponent count. Default 1 = a clean 1v1 vs Crimson (the right cold-start for a
+// casual portal — a brand-new player isn't dropped into a 5-way melee). 0 (via
+// ?opponents=random) re-rolls 1–4 each match; an explicit ?opponents=N pins it.
+const _oppParam = _mapParams.get('opponents');
+state.numOpponents = _oppParam === 'random' ? 0
+  : _oppParam != null ? Math.max(1, Math.min(4, parseInt(_oppParam, 10) || 1))
+  : 1;
 
 // Render worker MUST be enabled before resize() (which would otherwise
 // touch canvas.width and before initWorldCtx() gets called by anything).
@@ -614,6 +669,10 @@ loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS 
 newGame();              // rolls factions, builds HUD, generates world
 loop();
 nnLoad();
+// CrazyGames SDK (async; no-ops when the script is absent / outside the iframe).
+// The game is interactive immediately, so we just signal loading-complete once
+// the SDK finishes initializing. gameplayStart fires later in commitPlayerSpawn.
+initAds().then(() => loadingStop());
 
 // Dev profiling hook (opt-in via ?perf, the same flag render-hud.js uses for its
 // on-canvas perf overlay). Exposes the live state object so a headless harness

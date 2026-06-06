@@ -287,6 +287,15 @@ export function toggleMute() {
 }
 export function isAudioMuted() { return muted; }
 
+/** Force mute on/off (used to silence audio while a CrazyGames ad plays, then
+ *  restore). Unlike toggleMute() this sets an explicit state so the caller can
+ *  snapshot-and-restore around the ad without flipping the player's own choice. */
+export function setMuted(flag) {
+  muted = !!flag;
+  if (master && actx) master.gain.setTargetAtTime(muted ? 0 : MASTER_VOL, actx.currentTime, 0.05);
+  return muted;
+}
+
 /** Internal: snapshot of the audio graph for diagnostics / tests. */
 export function _audioDebug() {
   return {

@@ -285,6 +285,13 @@
     color: var(--text-dim); letter-spacing: 0.02em;
   }
   #start-screen .start-how b { color: #e8c9a0; font-weight: 700; }
+  #start-screen .start-obj {
+    margin: 4px auto 16px; padding: 9px 14px; max-width: 460px;
+    background: rgba(255, 179, 67, 0.08);
+    border: 1px solid rgba(255, 179, 67, 0.28); border-radius: 7px;
+    color: #ffd9a8; font-size: 13px; letter-spacing: 0.02em; line-height: 1.55;
+  }
+  #start-screen .start-obj b { color: var(--accent); }
   #start-screen .start-how .row { display: flex; justify-content: space-between; gap: 18px; padding: 1px 0; }
   #start-screen .start-how .row span:first-child { color: #ffce8a; font-family: ui-monospace, monospace; }
   #start-screen button {
@@ -356,8 +363,12 @@
     box-shadow: 0 0 24px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 200, 140, 0.08) inset;
   }
 
-  /* ---- NPC load badge ---- */
+  /* ---- NPC load badge ----
+     Hidden by default. js/nn.js reveals it ONLY after the trained policy loads
+     (localhost dev). A real player (e.g. in the CrazyGames iframe) never sees a
+     "model loading / not loaded" state — the shipped opponent is heuristic v3. */
   #nn-badge {
+    display: none;
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     padding: 5px 14px;
     background: var(--bg-panel);
@@ -369,6 +380,10 @@
   }
   #nn-badge.loading { color: var(--text-faint); }
 </style>
+<!-- CrazyGames SDK (ads + session lifecycle). The one external script the
+     platform allows. Loaded async; the game runs fine if it's blocked/absent —
+     js/ads.js degrades to no-ops. See js/ads.js for the integration. -->
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
 </head>
 <body>
@@ -393,28 +408,29 @@
     <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a building (Anti-Air / Tank Factory → mobile tanks / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
     <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
     <div><kbd>G</kbd> = hand the base under the cursor (or every selected base) to your Lieutenant 🤖 — an allied NPC that uses the full enemy AI brain. Press G on a Lieutenant base to take it back. Box-select first to delegate many at once.</div>
-    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>?</kbd> toggle this help</div>
+    <div><kbd>Space</kbd> or <kbd>P</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>?</kbd> toggle this help &middot; right-click cancels build / selection</div>
     <div><kbd>M</kbd> = mute / unmute sound. Drone buzz pans left/right and grows louder as you zoom in close; AA machine-guns, explosions + captures are positional. Custom sounds (later): list names in <code>assets/sfx-manifest.json</code>, drop files in <code>assets/sfx/</code>.</div>
     <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
     <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
     <div>URL <code>?theme=mars</code> (default) / <code>?theme=ice-mars</code> / <code>?theme=alien-biome</code> reskins enemy factions — palette, name pool, glow. Player + Lieutenant colour stay the same. Reload to switch.</div>
-    <div>URL flag <code>?preset=skirmish</code> / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. Default (no flag) is the standard 12000×9000 / 700–900-node theatre. Console logs the applied preset.</div>
+    <div>URL flag <code>?preset=skirmish</code> (default) / <code>?preset=standard</code> (the big 12000×9000 / 700–900-node theatre) / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. <code>?opponents=N</code> sets the enemy count (default 1; <code>?opponents=random</code> re-rolls 1–4). Console logs the applied preset.</div>
   </div>
 </div>
 <div id="start-screen">
   <h1 class="start-title">Mars Front</h1>
   <div class="start-sub">Tactical Conquest · Red Planet</div>
   <div class="start-how">
-    Seize the planet one town at a time. Build factories, drones, tanks and anti-air; scout through the fog and roll up your rivals before they roll up you.
-    <div class="row"><span>Drag base → base</span><span>send troops</span></div>
+    A fast 1v1 for the red planet. Pick a starting town, then drag from your towns to nearby ones to send troops and capture them.
+    <div class="start-obj"><b>Goal —</b> take every enemy town, or hold the most ground when the timer runs out, to win.</div>
+    <div class="row"><span>Drag base → base</span><span>send troops &amp; capture</span></div>
     <div class="row"><span>Q / F / T / C / N</span><span>build AA / factory / tank / cannon / net</span></div>
-    <div class="row"><span>H · G · Space</span><span>hold-fire salvo · delegate base · pause</span></div>
+    <div class="row"><span>H · G · Space/P</span><span>hold-fire salvo · delegate base · pause</span></div>
     <div class="row"><span>? </span><span>full controls</span></div>
   </div>
   <button onclick="startGame()">Deploy to Mars</button>
 </div>
 <div id="spawn-banner"><h2>Choose Your Starting Town</h2><p>Click a glowing town to deploy your HQ — your enemies have already claimed theirs.</p></div>
-<div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
+<div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="playAgain()">Play Again</button></div>
 
 <script type="module" src="./js/main.js"></script>
 </body>

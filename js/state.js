@@ -185,7 +185,10 @@ export const state = {
 
   // Time
   gameOver: false,
-  paused: false,             // Space toggles. Render + HUD keep running; sim,
+  timeLimit: 0,              // seconds; >0 = match resolves on territory when
+                             // reached (set per preset at boot). 0 = no limit.
+  numOpponents: 1,           // enemy AI count (set at boot; 0 = random 1-4).
+  paused: false,             // Space/P toggles. Render + HUD keep running; sim,
                              // AI, particles, and elapsed clock are frozen.
   // Rolling perf samples shown in the HUD so wasm / optimisation changes
   // are visible without DevTools. Each is a small circular buffer; the

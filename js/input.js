@@ -23,6 +23,7 @@ import * as aiBridge from './ai-worker-bridge.js';
 import { toggleDelegationAt } from './subordinate.js';
 import { toggleWasm } from './wasm-bridge.js';
 import { toggleMute } from './audio.js';
+import { gameplayStart, gameplayStop } from './ads.js';
 // newGame lives in main.js (the entry module). Importing it here closes a
 // cycle (main.js → input.js → main.js), which is safe: newGame is a hoisted
 // function declaration and is only *invoked* from a listener at runtime,
@@ -58,7 +59,18 @@ export function updateHudFade(mx, my) {
 // =====================================================
 export function attachInput() {
   const c = state.canvas;
-  c.addEventListener('contextmenu', e => e.preventDefault());
+  // Right-click: suppress the browser menu AND use it as a CANCEL gesture —
+  // drops build/place mode, the hold-fire salvo target, and the current
+  // selection. Gives a pointer-only escape (Escape is a CrazyGames-reserved
+  // key, so we don't depend on it for this).
+  c.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    state.placeMode = null;
+    state.painting = null;
+    state.salvoTarget = null;
+    state.holdFire = false;
+    state.selectedIds.clear();
+  });
 
   c.addEventListener('wheel', e => {
     e.preventDefault();
@@ -298,12 +310,18 @@ export function attachInput() {
     // when the player needs the area under a panel.
     if (e.key === 'Tab')  { e.preventDefault(); document.body.classList.toggle('hud-hidden'); }
     if (e.key === '?' || e.key === '/') { e.preventDefault(); document.body.classList.toggle('help-open'); }
-    // Pause toggle (Space). Sim, AI, particles, and elapsed clock freeze;
-    // camera + render + HUD keep working so the player can survey + plan.
-    if (e.key === ' ' || e.code === 'Space') {
+    // Pause toggle (Space or P). Sim, AI, particles, and elapsed clock freeze;
+    // camera + render + HUD keep working so the player can survey + plan. P is
+    // added because CrazyGames guidance flags Escape/odd keys; P is the portal
+    // convention for pause.
+    if (e.key === ' ' || e.code === 'Space' || k === 'p') {
       e.preventDefault();
       state.paused = !state.paused;
       document.body.classList.toggle('paused', state.paused);
+      // CrazyGames session signal: a pause is a break, resume re-enters play.
+      if (state.phase === 'playing' && !state.gameOver) {
+        if (state.paused) gameplayStop(); else gameplayStart();
+      }
     }
     // M — mute / unmute all sound (the M key is free now the minimap is gone;
     // the bottom-right minimap canvas + its replot-every-frame cost are gone).

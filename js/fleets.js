@@ -38,6 +38,10 @@ export function sendFleet(from, to, amount) {
     return false;
   }
   from.units -= amount;
+  // First successful PLAYER send dismisses the onboarding coachmark (the player
+  // has demonstrated the drag-to-send verb). Lieutenant ('ally1') / AI sends
+  // don't count — the hint is teaching the human.
+  if (from.owner === 'player') state.firstMoveHint = false;
   state.fleets.push({
     _id: state._nextFleetId++,
     owner: from.owner, units: amount,

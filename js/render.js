@@ -38,6 +38,7 @@ import {
   drawPlacementPreview, drawSalvoMarker, drawHoldFireBanner,
   drawDragPreview, drawHomeIndicators, drawSpawnSelect,
 } from './render-overlays.js';
+import { drawFirstMoveHint } from './render-tutorial.js';
 import { renderMinimap } from './render-minimap.js';
 import {
   drawNodes, drawTurrets, drawTroopFleets, drawDroneFleets,
@@ -114,6 +115,7 @@ export function render() {
   drawParticles(ctx, zoom);
   if (state.drag && state.drag.moved) drawDragPreview(ctx, zoom);
   drawSpawnSelect(ctx, zoom, now);    // opening "choose your town" rings (no-op once playing)
+  drawFirstMoveHint(ctx, zoom, now);  // first-move coachmark (no-op after first player send)
   drawSalvoMarker(ctx, zoom, now);
   // Always-on-top: node unit counts. Massed troop columns or drone swarms
   // parked on a node would otherwise completely hide the number.

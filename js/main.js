@@ -266,6 +266,12 @@ export function commitPlayerSpawn(nodeId) {
   // shows the player's surroundings rather than a black screen.
   state.fogReveal = true;
   recomputeFog();
+  // First-move coachmark: a pulsing "drag this base to a nearby town" arrow
+  // (render-tutorial.js) shows from the new HQ until the player sends their
+  // first fleet — fleets.sendFleet clears it on the first player send. Without
+  // it, a cold visitor who doesn't know the drag-to-send verb just sits and
+  // gets overrun (the opening grace buys the time; this teaches the verb).
+  state.firstMoveHint = true;
   // Start the clock fresh from this instant.
   state.phase = 'playing';
   state.startTime = performance.now();

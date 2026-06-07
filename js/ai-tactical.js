@@ -18,7 +18,7 @@
 import { state } from './state.js';
 import { dist } from './util.js';
 import { isAlly } from './alliance.js';
-import { FLEET_SPEED, TANK_RADIUS } from './config.js';
+import { FLEET_SPEED, TANK_RADIUS, OPENING_GRACE_SEC } from './config.js';
 // Side effects (sendFleet, assaultTurret) come through ctx — see ai-effects.js.
 
 /** Phase 1: defensive reinforcement.
@@ -113,12 +113,21 @@ export function tryCoordinatedAttack(ctx) {
   const { owner, myNodes, aggression, fleetsByTarget, attackerAvail, turretThreatTo,
           eliminationOwners, sendFleet, assaultTurret } = ctx;
 
+  // Opening grace: shield the player's side for the first OPENING_GRACE_SEC
+  // game-seconds so a new player can learn the controls + expand before the AI
+  // attacks (see config.OPENING_GRACE_SEC). Only matters when WE are an enemy of
+  // the player; AI-vs-neutral / AI-vs-AI capture is unaffected.
+  const inGrace = state.elapsed < OPENING_GRACE_SEC && !isAlly(owner, 'player');
+
   const targetMap = new Map();
   for (const my of myNodes) {
     if (attackerAvail(my) < 5) continue;
     for (const nbId of state.adj.get(my.id)) {
       const target = state.nodes[nbId];
       if (isAlly(target.owner, owner)) continue;
+      // During the opening grace, don't pick player-side towns as targets —
+      // but still pursue neutral land so the AI keeps developing.
+      if (inGrace && isAlly(target.owner, 'player')) continue;
       if (!targetMap.has(nbId)) targetMap.set(nbId, []);
       targetMap.get(nbId).push(my);
     }

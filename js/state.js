@@ -182,6 +182,9 @@ export const state = {
   phase: 'playing',          // 'spawnSelect' | 'playing'
   spawnCandidates: [],       // node ids the player may pick as their capital
                              //   during spawnSelect (rendered as pulsing rings)
+  // Onboarding coachmark: true from commitPlayerSpawn until the player's first
+  // send (fleets.sendFleet clears it). Drives render-tutorial.drawFirstMoveHint.
+  firstMoveHint: false,
 
   // Time
   gameOver: false,

@@ -269,6 +269,17 @@ export const VISION_DRONE     = 320;   // recon drone (small radius — there ar
 // doesn't just freeze. Toggle the whole AI-fog mechanic off with ?aifog=0.
 export const AI_VISION_MUL     = 1.15;
 
+// ---- Opening grace (new-player onboarding) ----
+// For the first OPENING_GRACE_SEC game-seconds after the player commits their
+// spawn, the AI will NOT launch attacks at the player's side (player + the
+// Lieutenant 'ally1') — it lands-grabs neutral towns and fights other AIs
+// instead. A brand-new portal visitor needs a moment to learn "drag a base to
+// send troops" (see render-tutorial.js) and put down a few towns before the
+// Crimson AI comes knocking; without this they get rushed and wiped in <60 s
+// and bounce. Only player-side nodes are shielded, only at the very start —
+// AI-vs-neutral and AI-vs-AI are untouched. Gated in ai-tactical.js.
+export const OPENING_GRACE_SEC = 45;
+
 // ---- VFX FIFO caps ----
 // Hard ceilings on the cosmetic-only ephemeral arrays. Spawn sites are
 // intentionally unbounded — explosions, salvos, and burst events shouldn't

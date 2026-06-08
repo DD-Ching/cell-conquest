@@ -177,6 +177,11 @@ export const state = {
   gameOver: false,
   paused: false,             // Space toggles. Render + HUD keep running; sim,
                              // AI, particles, and elapsed clock are frozen.
+  // Front-of-game flow (lobby.js). inLobby freezes the sim behind the start
+  // screen until the player picks START or TUTORIAL. tutorial holds the active
+  // guided-tutorial state machine (null when not in a tutorial).
+  inLobby: true,
+  tutorial: null,
   // Rolling perf samples shown in the HUD so wasm / optimisation changes
   // are visible without DevTools. Each is a small circular buffer; the
   // HUD reads avg() at 10 Hz. _perfIdx is the write head.

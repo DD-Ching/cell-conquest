@@ -35,6 +35,7 @@ import { loadWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
+import { initLobby, tutorialTick } from './lobby.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
 // its own module now. main.js calls attachInput() once at boot and reuses
 // updateHudFade() to prime panel opacity in newGame().
@@ -398,7 +399,7 @@ function loop() {
     state.drag.y = state.mousePos.y;
   }
 
-  if (!state.gameOver && !state.paused) {
+  if (!state.gameOver && !state.paused && !state.inLobby) {
     // Sub-step count is derived from a SAFE maximum dt, not a fixed cap, so a
     // faster gear never enlarges the per-step dt past the value the sim is
     // proven stable at. 20× worst case (realDt pegged at 0.05) was subDt 0.1
@@ -472,6 +473,7 @@ function loop() {
     render();
     state._perfRenderMs[state._perfIdx] = performance.now() - rT0;
   }
+  tutorialTick();          // guided-tutorial step machine (self-gates on state.tutorial)
   requestAnimationFrame(loop);
 }
 
@@ -512,6 +514,7 @@ initAudio();            // arm Web Audio (context starts on first click/key — 
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
 loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS until ready
 newGame();              // rolls factions, builds HUD, generates world
+initLobby();            // show the start screen over the frozen game (sim gated on state.inLobby)
 loop();
 nnLoad();
 

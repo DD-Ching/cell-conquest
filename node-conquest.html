@@ -301,6 +301,44 @@
     backdrop-filter: blur(6px);
   }
   #nn-badge.loading { color: var(--text-faint); }
+  /* ---- Lobby (start screen / training-ground menu) ---- */
+  #lobby { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 34%, rgba(40,18,8,.55), rgba(8,4,2,.93));
+    backdrop-filter: blur(6px) saturate(1.1); -webkit-backdrop-filter: blur(6px) saturate(1.1); }
+  body.in-lobby #lobby { display: flex; }
+  #lobby .card { text-align: center; padding: 40px 52px; max-width: 580px;
+    background: var(--bg-panel-strong); border: 1px solid var(--border-warm-strong); border-radius: 14px;
+    box-shadow: 0 30px 90px rgba(0,0,0,.7), 0 0 80px rgba(255,130,50,.16), 0 1px 0 rgba(255,200,140,.1) inset; }
+  #lobby .logo { font-family: var(--font-display); font-weight: 900; font-size: 42px; letter-spacing: .16em; }
+  #lobby .logo .accent { color: var(--accent); margin-left: 6px; }
+  #lobby .tagline { color: var(--text-dim); font-size: 12px; letter-spacing: .22em; text-transform: uppercase; margin: 8px 0 26px; }
+  #lobby .btns { display: flex; gap: 14px; justify-content: center; margin-bottom: 26px; }
+  #lobby button { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: .06em;
+    padding: 14px 28px; border-radius: 9px; cursor: pointer; color: #1a0e04; border: 0;
+    background: linear-gradient(180deg, var(--accent), #e09030); box-shadow: 0 6px 22px rgba(255,150,60,.3); }
+  #lobby button.ghost { background: transparent; color: var(--accent); border: 1px solid rgba(200,140,80,.4); box-shadow: none; }
+  #lobby button:hover { filter: brightness(1.08); }
+  #lobby .keys { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; text-align: left; font-size: 12px;
+    color: var(--text-faint); border-top: 1px solid rgba(200,140,80,.16); padding-top: 18px; line-height: 1.4; }
+  #lobby .keys b { color: var(--accent); font-family: ui-monospace, monospace; font-weight: 600; white-space: nowrap; }
+  /* ---- Tutorial coach (finger pointer + instruction bubble) ---- */
+  #tutorial-coach { position: fixed; inset: 0; z-index: 40; pointer-events: none; display: none; }
+  #tutorial-coach.show { display: block; }
+  #tutorial-coach .tut-finger { position: absolute; left: -100px; font-size: 34px; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+  #tutorial-coach .tut-finger.mode-drag { animation: tut-drag 1.6s ease-in-out infinite; }
+  #tutorial-coach .tut-finger.mode-point { animation: tut-point 1.1s ease-in-out infinite; }
+  @keyframes tut-drag { 0% { transform: translate(0,0); } 50% { transform: translate(58px,40px); } 100% { transform: translate(0,0); } }
+  @keyframes tut-point { 0%,100% { transform: translate(0,0); } 50% { transform: translate(5px,8px); } }
+  #tutorial-coach .tut-bubble { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); pointer-events: auto;
+    min-width: 300px; max-width: 80vw; text-align: center; background: var(--bg-panel-strong);
+    border: 1px solid var(--border-warm-strong); border-radius: 12px; padding: 16px 24px 18px; box-shadow: 0 18px 60px rgba(0,0,0,.6); }
+  #tutorial-coach .tut-step { font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent); letter-spacing: .1em; }
+  #tutorial-coach .tut-zh { font-size: 16px; margin: 7px 0 2px; color: var(--text-base); }
+  #tutorial-coach .tut-en { font-size: 12px; color: var(--text-dim); }
+  #tutorial-coach .tut-key { display: inline-block; margin-top: 11px; font-family: ui-monospace, monospace; font-weight: 700;
+    background: rgba(30,16,8,.85); color: var(--accent); border: 1px solid rgba(200,140,80,.4); border-radius: 6px; padding: 4px 14px; font-size: 15px; }
+  #tutorial-coach #tut-skip { position: absolute; top: 8px; right: 12px; font-size: 11px; color: var(--text-faint); cursor: pointer; pointer-events: auto; }
+  #tutorial-coach #tut-skip:hover { color: var(--accent); }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
 </head>
@@ -335,6 +373,36 @@
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
+
+<div id="lobby">
+  <div class="card">
+    <div class="logo">MARS<span class="accent">FRONT</span></div>
+    <div class="tagline">Crimson Sector · Tactical Command</div>
+    <div class="btns">
+      <button id="lobby-start">▶ START</button>
+      <button id="lobby-tutorial" class="ghost">🎓 TUTORIAL</button>
+    </div>
+    <div class="keys">
+      <b>Drag</b><span>from your base to a town — send troops &amp; capture</span>
+      <b>Q / F / T / C</b><span>build Anti-Air / Drone Factory / Tank Factory / Cannon</span>
+      <b>N</b><span>+ click a road — engineer drone-net</span>
+      <b>Shift</b><span>hold while placing to drop a whole row at once</span>
+      <b>G</b><span>delegate the base under the cursor to your Lieutenant 🤖</span>
+      <b>H</b><span>hold-fire drone salvo · click an enemy to aim · H to launch</span>
+      <b>1–7</b><span>game speed · <b>Space</b> pause · <b>Tab</b> hide HUD · <b>?</b> all controls</span>
+    </div>
+  </div>
+</div>
+<div id="tutorial-coach">
+  <div class="tut-finger">👆</div>
+  <div class="tut-bubble">
+    <span id="tut-skip">Skip ✕</span>
+    <div class="tut-step"></div>
+    <div class="tut-zh"></div>
+    <div class="tut-en"></div>
+    <div class="tut-key" style="display:none"></div>
+  </div>
+</div>
 
 <script type="module" src="./js/main.js"></script>
 </body>

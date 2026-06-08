@@ -119,6 +119,11 @@ export function tryCoordinatedAttack(ctx) {
     for (const nbId of state.adj.get(my.id)) {
       const target = state.nodes[nbId];
       if (isAlly(target.owner, owner)) continue;
+      // Tutorial: the foe NEVER attacks the player's side — it defends + holds its
+      // own ground so the lesson can't be overrun and the new player can't be
+      // wiped. It still fights for its forward node + HQ, so the player gets real
+      // resistance on offense (and the enemy can't advance into your territory).
+      if (state.tutorial && isAlly(target.owner, 'player')) continue;
       if (!targetMap.has(nbId)) targetMap.set(nbId, []);
       targetMap.get(nbId).push(my);
     }

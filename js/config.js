@@ -159,7 +159,7 @@ export const TANK_CAP_PER_FACTORY      = 4;   // max LIVE tanks per owned tank f
 export const TANK_UNIT_HP    = 220;  // tank health, stored in fleet.units (tough vs drone swarms)
 export const TANK_UNIT_SPEED = 60;   // px/sec — heavy, slower than troops (FLEET_SPEED 95)
 export const TANK_UNIT_RANGE = 210;  // engage radius for en-route fire (enemy fleets + turrets)
-export const TANK_UNIT_DPS_FLEET  = 14;   // dmg/sec to enemy ground fleets in range
+export const TANK_UNIT_DPS_FLEET  = 22;   // dmg/sec to enemy ground fleets in range (incl. tank-vs-tank: bumped so duels actually read)
 export const TANK_UNIT_DPS_TURRET = 11;   // dmg/sec to enemy turrets in range (siege)
 // Node suppression is RANGED cannon fire, not a melee drain: a tank HALTS the
 // moment its target node enters TANK_NODE_RANGE, then lobs a shell every

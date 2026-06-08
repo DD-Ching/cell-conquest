@@ -272,8 +272,14 @@ function applyTankSiege(f, dt) {
   if (!node) { f.siegeNodeId = undefined; f._idle = true; return false; }
   if (isAlly(node.owner, f.owner)) { advanceTank(f); return false; }   // infantry took it — move on
   catchUpRegen(node);
-  // Defenders return fire continuously while the tank is in the fight.
-  if (node.units > 0) f.units -= node.units * TANK_NODE_RETALIATE * dt;
+  // Defenders return fire while the tank is in the fight — but only the
+  // UN-SUPPRESSED garrison above the floor fights back, and the effective force
+  // is CAPPED so a big garrison can't melt the tank in seconds (the old uncapped
+  // node.units*0.10/sec killed tanks on any real base — they read as
+  // self-destructing). As the tank's shells suppress the garrison toward the
+  // floor, retaliation tapers to 0, so the tank wins the siege instead of dying.
+  const retaliators = Math.min(40, node.units - TANK_SUPPRESS_UNITS);
+  if (retaliators > 0) f.units -= retaliators * TANK_NODE_RETALIATE * dt;
   // RANGED CANNON: hold fire until the cooldown elapses, then lob ONE shell that
   // removes a fixed chunk of garrison ("遠距離開炮 + 冷卻"). Effective suppression
   // rate = SHELL_DAMAGE / FIRE_INTERVAL, tuned in config to match the old drain.

@@ -31,7 +31,10 @@ export function initLobby() {
   $('lobby-start')?.addEventListener('click', startSkirmish);
   $('lobby-tutorial')?.addEventListener('click', startTutorial);
   $('tut-skip')?.addEventListener('click', () => finishTutorial('skipped'));
-  $('tut-continue')?.addEventListener('click', () => { if (state.tutorial) state.tutorial.acked = true; });
+  $('tut-continue')?.addEventListener('click', () => {
+    state.paused = false; document.body.classList.remove('paused');   // resume (for the paused build lesson)
+    if (state.tutorial) state.tutorial.acked = true;
+  });
 }
 
 /** Re-enter the lobby: freeze the sim behind it, show the menu. */
@@ -137,9 +140,14 @@ function spawnTutorialDroneWave() {
   const aa = state.turrets.find(t => t.owner === 'player' && t.type === 'antiair');
   const tx = aa ? aa.x : state.nodes[HQ].x, ty = aa ? aa.y : state.nodes[HQ].y;
   const tId = aa ? aa.id : HQ, tKind = aa ? 'turret' : 'node';
-  const src = state.nodes[ENEMY_HQ];
+  // Spawn the wave ~720px out (toward the enemy) in a line, so it flies in slowly
+  // over ~5-6s — clearly telegraphed, so the player watches the flak gun shred it.
+  const ehq = state.nodes[ENEMY_HQ];
+  const dx = ehq.x - tx, dy = ehq.y - ty, d = Math.hypot(dx, dy) || 1;
+  const sx = tx + (dx / d) * 720, sy = ty + (dy / d) * 720;
+  const perpx = -dy / d, perpy = dx / d;
   for (let i = 0; i < 5; i++) {
-    const ox = src.x + (i - 2) * 30, oy = src.y - 90 + (i % 2) * 30;
+    const ox = sx + perpx * (i - 2) * 34, oy = sy + perpy * (i - 2) * 34;
     state.fleets.push({
       _id: state._nextFleetId++, kind: 'drone', owner: enemy, units: 1,
       x: ox, y: oy, tx, ty, targetKind: tKind, targetId: tId,
@@ -190,10 +198,11 @@ const STEPS = [
     onEnter: () => { state.aiTimers[state._tutEnemy] = 0; },   // unleash the enemy: combat starts here
     done: () => state.nodes[FORWARD].owner === 'player', hold: 999 },
 
-  { id: 'build', mode: 'key', keys: 'Q', point: HQ, unlock: 'build',
-    zh: 'DDCHING 要放無人機了!選一個基地,按 Q 蓋防空炮,再點地圖把它放下。',
-    en: 'DDCHING is launching drones! Select a base, press Q for an anti-air gun, then click to place it.',
-    done: () => hasTurret('antiair'), hold: 999 },
+  { id: 'build', mode: 'key', keys: 'Q', point: HQ, unlock: 'build', pause: true,
+    zh: 'DDCHING 要放無人機了!已自動暫停 ⏸ —— 暫停時一樣能下令。按 Q、點基地旁放下防空炮,再按「繼續」恢復,它就會建好。',
+    en: 'DDCHING is launching drones! Auto-paused ⏸ — you can still give orders while paused. Press Q, click beside your base to place an anti-air gun, then press Resume and it builds.',
+    onEnter: () => { state.paused = true; document.body.classList.add('paused'); },
+    done: () => state.turrets.some(t => t.owner === 'player' && t.type === 'antiair' && t.active), hold: 999 },
 
   { id: 'defend', mode: 'point', point: HQ,
     zh: '來了!看你的防空炮把無人機一架架打下來。',
@@ -272,7 +281,7 @@ export function tutorialTick() {
 
   // Live helpers: force the just-placed AA active (no 10s wait / soft-lock), and
   // mark the wave as spawned for the defend gate.
-  if (step.id === 'build') {
+  if (step.id === 'build' && !state.paused) {        // only once RESUMED (the paused-place lesson)
     const aa = state.turrets.find(x => x.owner === 'player' && x.type === 'antiair');
     if (aa && !aa.active) { aa.active = true; aa.pendingEngineer = false; }
   }
@@ -313,7 +322,10 @@ function renderStep() {
   if (step.mode === 'key') { chip.style.display = ''; chip.textContent = step.keys; }
   else chip.style.display = 'none';
   const cont = coach.querySelector('#tut-continue');
-  if (cont) cont.style.display = (step.mode === 'ack') ? '' : 'none';
+  if (cont) {
+    cont.style.display = (step.mode === 'ack' || step.pause) ? '' : 'none';
+    cont.textContent = step.pause ? '繼續 / Resume ▸' : '繼續 / Continue ▸';
+  }
 }
 
 function positionFinger(step) {

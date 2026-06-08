@@ -15,6 +15,28 @@ import {
 } from './sprites.js';
 import { curveOffsetForPoint, curveHeadingForPoint } from './road-curve.js';
 
+/** Walk BACK along a fleet's road path by world-distance `d` from the leader's
+ *  centerline position, returning the centerline point + the segment it lands on
+ *  (so the caller can ride the road curve there). A column trails ≤ ~100 px, so
+ *  this crosses 1-2 segments — cheap. Stays on the straight centerline; the
+ *  render-only curve offset is applied by the caller. */
+function backPointAlongPath(f, d) {
+  let seg = f.segIdx;
+  let a = state.nodes[f.path[seg]], b = state.nodes[f.path[seg + 1]];
+  let segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  let fromA = Math.hypot(f.x - a.x, f.y - a.y);     // leader's distance from `a`
+  let rem = d;
+  while (rem > fromA && seg > 0) {
+    rem -= fromA;
+    seg--;
+    a = state.nodes[f.path[seg]]; b = state.nodes[f.path[seg + 1]];
+    segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    fromA = segLen;                                 // reference point is now b (segment end)
+  }
+  const t = Math.max(0, fromA - rem) / segLen;      // fraction from a toward b
+  return { cx: a.x + (b.x - a.x) * t, cy: a.y + (b.y - a.y) * t, a, b };
+}
+
 // ---- Ground fleets — column of vehicles trailing a leader ----
 export function drawTroopFleets(ctx, zoom, now) {
   const COLUMN_MAX = 8;
@@ -111,22 +133,33 @@ export function drawTroopFleets(ctx, zoom, now) {
       ctx.fillText('⚙', fx, fy - 18);
       continue;
     }
-    // TROOPS / ASSAULT: column of individual vehicles (1 sprite ≈ 5 units, max 8)
+    // TROOPS / ASSAULT: column of vehicles FOLLOWING the (possibly curved) road.
+    // Each vehicle is placed by walking back along the path by its arc-length and
+    // riding the same Bézier the road is painted on — so the column hugs the bend
+    // instead of sticking out straight off the road. This runs only at LOD ≥ 2
+    // (zoomed in enough to see it); at overview the cheap oriented rect above is
+    // used, so there's no large-scale cost. Off-road legs / path-less fleets fall
+    // back to the straight tangent column.
     const totalUnits = Math.max(1, Math.floor(f.units));
     const showCount = Math.min(COLUMN_MAX, Math.max(1, Math.ceil(totalUnits / PER_VEH)));
     const perVehUnits = totalUnits / showCount;
-    const backX = -Math.cos(angle), backY = -Math.sin(angle);
-    const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+    const onRoad = f.path && f.segIdx < f.path.length - 1 && !f.offroad;
     for (let k = 0; k < showCount; k++) {
-      // Alternating lateral jitter so it doesn't look like a comb
-      const jitter = (k % 2 === 0 ? 1 : -1) * (k > 0 ? 1.6 : 0);
-      const vx = fx + backX * (k * GAP) + perpX * jitter;
-      const vy = fy + backY * (k * GAP) + perpY * jitter;
-      if (f.kind === 'assault') {
-        drawTroopSprite(ctx, vx, vy, angle, Math.max(40, perVehUnits), f.owner, zoom);
+      let vx, vy, vAng = angle;
+      if (onRoad) {
+        const bp = backPointAlongPath(f, k * GAP);
+        const o = curveOffsetForPoint(bp.a.x, bp.a.y, bp.b.x, bp.b.y, bp.a.id, bp.b.id, bp.cx, bp.cy);
+        vx = bp.cx + o.ox; vy = bp.cy + o.oy;       // read _off immediately
+        vAng = curveHeadingForPoint(bp.a.x, bp.a.y, bp.b.x, bp.b.y, bp.a.id, bp.b.id, bp.cx, bp.cy);
       } else {
-        drawTroopSprite(ctx, vx, vy, angle, perVehUnits, f.owner, zoom);
+        vx = fx - Math.cos(angle) * (k * GAP);
+        vy = fy - Math.sin(angle) * (k * GAP);
       }
+      // Alternating lateral jitter, perpendicular to the LOCAL heading.
+      const jitter = (k % 2 === 0 ? 1 : -1) * (k > 0 ? 1.6 : 0);
+      vx += -Math.sin(vAng) * jitter; vy += Math.cos(vAng) * jitter;
+      if (f.kind === 'assault') drawTroopSprite(ctx, vx, vy, vAng, Math.max(40, perVehUnits), f.owner, zoom);
+      else drawTroopSprite(ctx, vx, vy, vAng, perVehUnits, f.owner, zoom);
     }
     // Total-count label above the column leader
     ctx.fillStyle = COLOR[f.owner];

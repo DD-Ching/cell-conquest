@@ -12,7 +12,7 @@ import { ARTILLERY_AOE, ARTILLERY_MIN_RANGE } from './config.js';
 import { COLOR } from './factions.js';
 import { getEdge, edgeVisualBlockage, TURRET_RANGES } from './engineering.js';
 import { drawRoadStyled } from './sprites.js';
-import { roadBow, curveOffsetForPoint } from './road-curve.js';
+import { roadBow, curveOffsetForPoint, curveHeadingForPoint } from './road-curve.js';
 
 // ---- Roads (TD-style path with sand-tint blockage readout) ----
 export function drawRoads(ctx, zoom, now = 0) {
@@ -107,37 +107,67 @@ export function drawNets(ctx, zoom) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     if (len < 1) continue;
-    const ux = dx / len, uy = dy / len;
-    const px = -uy, py = ux;                    // perpendicular unit vector
-    const off = 6;
-    const x1 = a.x + px * off, y1 = a.y + py * off;
-    const x2 = b.x + px * off, y2 = b.y + py * off;
+    const off = 6;                              // net sits this far off the road centerline
+    const bow = roadBow(a.id, b.id, len);       // 0 on a straight road
     const maxCh = 60;                           // NET_CHARGES_LEVEL[NET_LEVEL_MAX] = 60
     const chargeFrac = Math.max(0.25, Math.min(1, e.netCharges / maxCh));
     ctx.strokeStyle = NET_COLOR;
     ctx.globalAlpha = 0.55 + 0.4 * chargeFrac;
-    // World-space width matches roads — fence thickness scales with the map.
-    ctx.lineWidth = 1.1 + e.netLevel * 0.6;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    ctx.stroke();
-    // Fence-post ticks along the net
-    const tickSpacing = 22;
-    const nTicks = Math.max(1, Math.floor(len / tickSpacing));
+    ctx.lineWidth = 1.1 + e.netLevel * 0.6;     // world-space width matches roads
     const tickH = 2 + e.netLevel * 0.6;
-    for (let k = 0; k < nTicks; k++) {
-      const t = (k + 0.5) / nTicks;
-      const cx = a.x * (1 - t) + b.x * t + px * off;
-      const cy = a.y * (1 - t) + b.y * t + py * off;
+
+    if (!bow) {
+      // STRAIGHT road → straight net.
+      const ux = dx / len, uy = dy / len;
+      const px = -uy, py = ux;
       ctx.beginPath();
-      ctx.moveTo(cx + px * tickH, cy + py * tickH);
-      ctx.lineTo(cx - px * tickH, cy - py * tickH);
+      ctx.moveTo(a.x + px * off, a.y + py * off);
+      ctx.lineTo(b.x + px * off, b.y + py * off);
       ctx.stroke();
+      const nTicks = Math.max(1, Math.floor(len / 22));
+      for (let k = 0; k < nTicks; k++) {
+        const t = (k + 0.5) / nTicks;
+        const cx = a.x * (1 - t) + b.x * t + px * off;
+        const cy = a.y * (1 - t) + b.y * t + py * off;
+        ctx.beginPath();
+        ctx.moveTo(cx + px * tickH, cy + py * tickH);
+        ctx.lineTo(cx - px * tickH, cy - py * tickH);
+        ctx.stroke();
+      }
+    } else {
+      // CURVED road → the net follows the SAME Bézier, offset by `off` along the
+      // local curve normal so the fence bends exactly with the road (a curved
+      // road never gets a straight net). Sampled polyline; cheap (nets are few).
+      const N = Math.max(6, Math.min(28, Math.round(len / 16)));
+      const pts = new Array(N + 1);
+      for (let k = 0; k <= N; k++) {
+        const t = k / N;
+        const cx = a.x + dx * t, cy = a.y + dy * t;          // chord point at t
+        const o = curveOffsetForPoint(a.x, a.y, b.x, b.y, a.id, b.id, cx, cy);
+        const rx = cx + o.ox, ry = cy + o.oy;                // on the road curve (read _off now)
+        const h = curveHeadingForPoint(a.x, a.y, b.x, b.y, a.id, b.id, cx, cy);
+        const nx = -Math.sin(h), ny = Math.cos(h);           // curve normal
+        pts[k] = { x: rx + nx * off, y: ry + ny * off, nx, ny };
+      }
+      ctx.beginPath();
+      for (let k = 0; k <= N; k++) { if (k === 0) ctx.moveTo(pts[k].x, pts[k].y); else ctx.lineTo(pts[k].x, pts[k].y); }
+      ctx.stroke();
+      const stride = Math.max(1, Math.round(N / Math.max(1, Math.floor(len / 22))));
+      for (let k = Math.floor(stride / 2); k <= N; k += stride) {
+        const p = pts[k];
+        ctx.beginPath();
+        ctx.moveTo(p.x + p.nx * tickH, p.y + p.ny * tickH);
+        ctx.lineTo(p.x - p.nx * tickH, p.y - p.ny * tickH);
+        ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
-    // Compact label near the midpoint
-    const mx = (a.x + b.x) / 2 + px * (off + 10);
-    const my = (a.y + b.y) / 2 + py * (off + 10);
+    // Compact label near the (curve-shifted) midpoint.
+    const mcx = (a.x + b.x) / 2, mcy = (a.y + b.y) / 2;
+    const mo = curveOffsetForPoint(a.x, a.y, b.x, b.y, a.id, b.id, mcx, mcy);
+    const mh = curveHeadingForPoint(a.x, a.y, b.x, b.y, a.id, b.id, mcx, mcy);
+    const mx = mcx + mo.ox + (-Math.sin(mh)) * (off + 10);
+    const my = mcy + mo.oy + (Math.cos(mh)) * (off + 10);
     ctx.fillStyle = NET_COLOR;
     ctx.font = `bold ${10 / zoom}px ui-monospace, monospace`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

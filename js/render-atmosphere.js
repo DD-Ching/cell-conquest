@@ -224,11 +224,14 @@ export function drawWorldBoundary(ctx, zoom) {
 
 // ---- AA tracer beams (drawn before nodes/turrets so beams pass behind icons) ----
 export function drawTracers(ctx, zoom) {
-  // Tracers are sub-frame flashes — at low zoom they're a single pixel of dust
-  // and not worth the per-frame draw cost.
-  if (state._lod < 2) return;
+  // Tracers are sub-frame flashes. The cheap beam tracers (tank/drone) aren't
+  // worth drawing at low zoom (single pixel of dust) — but AA machine-gun rounds
+  // are the readable "the flak guns are FIRING" signal the player wants to see,
+  // so those keep drawing even zoomed out (just view-culled).
+  const lowLod = state._lod < 2;
   const { vL, vT, vR, vB } = state._view;
   for (const t of state.tracers) {
+    if (lowLod && t.kind !== 'aa') continue;
     if (Math.max(t.x1, t.x2) < vL || Math.min(t.x1, t.x2) > vR ||
         Math.max(t.y1, t.y2) < vT || Math.min(t.y1, t.y2) > vB) continue;
     const p = t.age / t.maxAge;          // 0 at muzzle → 1 at target

@@ -29,6 +29,14 @@ import { toggleMute } from './audio.js';
 // long after both module bodies have finished evaluating.
 import { newGame } from './main.js';
 
+// Tutorial progressive-unlock gate. Outside a tutorial everything is allowed;
+// inside one, a capability ('build' / 'speed') is locked until its lesson adds
+// it to state.tutorial.unlocked (see lobby.js). Read straight off state so this
+// module needs no import from lobby.js (avoids a load-time cycle).
+function tutAllows(cap) {
+  return !state.tutorial || state.tutorial.unlocked.has(cap);
+}
+
 // =====================================================
 // HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
 // gets near them so they don't block the world the player is reaching for.
@@ -327,23 +335,28 @@ export function attachInput() {
     if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
     if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
     if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);
-    if (e.key === '1') state.timeScale = SPEEDS[0];
-    if (e.key === '2') state.timeScale = SPEEDS[1];
-    if (e.key === '3') state.timeScale = SPEEDS[2];
-    if (e.key === '4') state.timeScale = SPEEDS[3];
-    if (e.key === '5') state.timeScale = SPEEDS[4];
-    if (e.key === '6') state.timeScale = SPEEDS[5];   // 30× fast-forward
-    if (e.key === '7') state.timeScale = SPEEDS[6];   // 40× fast-forward
-    if (e.key === ']') {
-      const i = SPEEDS.indexOf(state.timeScale);
-      state.timeScale = SPEEDS[Math.min(SPEEDS.length - 1, (i < 0 ? 0 : i + 1))];
-    }
-    if (e.key === '[') {
-      const i = SPEEDS.indexOf(state.timeScale);
-      state.timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
+    // Speed keys are gated during the tutorial until the "speed" lesson unlocks
+    // them (tutAllows → always true outside a tutorial).
+    if (tutAllows('speed')) {
+      if (e.key === '1') state.timeScale = SPEEDS[0];
+      if (e.key === '2') state.timeScale = SPEEDS[1];
+      if (e.key === '3') state.timeScale = SPEEDS[2];
+      if (e.key === '4') state.timeScale = SPEEDS[3];
+      if (e.key === '5') state.timeScale = SPEEDS[4];
+      if (e.key === '6') state.timeScale = SPEEDS[5];   // 30× fast-forward
+      if (e.key === '7') state.timeScale = SPEEDS[6];   // 40× fast-forward
+      if (e.key === ']') {
+        const i = SPEEDS.indexOf(state.timeScale);
+        state.timeScale = SPEEDS[Math.min(SPEEDS.length - 1, (i < 0 ? 0 : i + 1))];
+      }
+      if (e.key === '[') {
+        const i = SPEEDS.indexOf(state.timeScale);
+        state.timeScale = SPEEDS[Math.max(0, (i < 0 ? 0 : i - 1))];
+      }
     }
     // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net, T=Tank, C=Cannon (artillery).
-    if (k === 'q' || k === 'f' || k === 'n' || k === 't' || k === 'c') {
+    // Gated during the tutorial until the "build" lesson unlocks it.
+    if ((k === 'q' || k === 'f' || k === 'n' || k === 't' || k === 'c') && tutAllows('build')) {
       const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory'
                  : (k === 'n') ? 'net'     : (k === 't') ? 'tank' : 'artillery';
       state.placeMode = { type, byOwner: 'player' };

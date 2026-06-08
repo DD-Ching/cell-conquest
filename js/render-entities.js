@@ -80,7 +80,7 @@ export function drawNodes(ctx, zoom, now) {
     for (const n of state.nodes) {
       const owned = n.owner !== 'neutral';
       const minor = demote && nodeImportance(n) === 0;
-      if (minor && hideMinors) continue;                  // vanish at overview
+      if (minor && hideMinors && !state.selectedIds.has(n.id)) continue;   // vanish at overview — but keep SELECTED nodes
       const r = Math.max(n.size, minR) * (owned ? 1 : 0.82) * (minor ? 0.7 : 1);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
       ctx.globalAlpha = (owned ? 1 : 0.62) * (minor ? 0.5 : 1);
@@ -92,6 +92,33 @@ export function drawNodes(ctx, zoom, now) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, Math.max(2, r - 4), 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Interaction-state rings at OVERVIEW (the dot path otherwise draws none):
+    // selection (white pulse) + wounded (red). Both iterate small subsets, so
+    // they stay cheap even with 830 nodes. Keeps state visible at any zoom.
+    if (state.selectedIds.size > 0) {
+      ctx.globalAlpha = 0.65 + Math.sin(now / 180) * 0.25;
+      ctx.lineWidth = 2 / zoom;
+      ctx.strokeStyle = '#ffffff';
+      for (const id of state.selectedIds) {
+        const n = state.nodes[id];
+        if (!n) continue;
+        const r = Math.max(n.size, minR) * (n.owner !== 'neutral' ? 1 : 0.82);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 5 / zoom, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 0.3 + 0.3 * Math.sin(now / 200);
+    ctx.lineWidth = 1.4 / zoom;
+    ctx.strokeStyle = 'rgb(255, 100, 100)';
+    for (const n of state.nodes) {
+      if (n.owner === 'neutral' || n.units / n.capacity >= 0.35) continue;
+      if (n.x < vL || n.x > vR || n.y < vT || n.y > vB) continue;
+      const r = Math.max(n.size, minR) * 1;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 4 / zoom, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
     return;

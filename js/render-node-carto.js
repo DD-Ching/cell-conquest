@@ -121,7 +121,12 @@ export function drawNodesCarto(ctx, zoom, now) {
   for (const n of state.nodes) {
     const m = n.size * 2;
     if (n.x + m < vL || n.x - m > vR || n.y + m < vT || n.y - m > vB) continue;
-    if (hideMinors && importanceOf(n) === 0) continue;
+    // Demote minor outposts at overview — but NEVER a node carrying an ACTIVE
+    // STATE the player must see at any zoom: selected, wounded (<35% garrison),
+    // or mid capture-flash. Those keep their marker + state ring even zoomed out.
+    const keepState = state.selectedIds.has(n.id) || n.flash > 0 ||
+      (n.owner !== 'neutral' && n.units / n.capacity < 0.35);
+    if (hideMinors && importanceOf(n) === 0 && !keepState) continue;
     visible.push(n);
     const dx = n.x - mx, dy = n.y - my, d2 = dx * dx + dy * dy;
     if (d2 < n.size * n.size && d2 < hoverBestD2) { hoverBestD2 = d2; _hoveredId = n.id; }

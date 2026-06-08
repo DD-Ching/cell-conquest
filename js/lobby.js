@@ -303,8 +303,10 @@ function renderStep() {
   const t = state.tutorial; if (!t) return;
   const step = STEPS[t.i];
   const coach = $('tutorial-coach'); if (!coach) return;
-  coach.querySelector('.tut-zh').textContent = step.zh;
-  coach.querySelector('.tut-en').textContent = step.en;
+  // English-first by default (the game's display language); the prominent line
+  // holds English and the small subline holds the zh translation.
+  coach.querySelector('.tut-zh').textContent = step.en;
+  coach.querySelector('.tut-en').textContent = step.zh;
   coach.querySelector('.tut-step').textContent = `${t.i + 1} / ${STEPS.length}`;
   coach.querySelector('.tut-finger').className = 'tut-finger mode-' + step.mode;
   const chip = coach.querySelector('.tut-key');

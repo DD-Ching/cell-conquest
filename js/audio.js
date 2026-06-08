@@ -279,6 +279,50 @@ export function sfxCapture(x, y) {
   osc.start(now); osc.stop(now + 0.24);
 }
 
+// ---- End-of-match stingers (non-spatial UI sounds, straight to master) ----
+/** One enveloped oscillator note → master. t0 is an absolute actx time. */
+function _tone(freq, t0, dur, vol, type = 'triangle') {
+  const o = actx.createOscillator(); o.type = type;
+  o.frequency.setValueAtTime(freq, t0);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(master);
+  o.start(t0); o.stop(t0 + dur + 0.03);
+}
+
+/** Triumphant fanfare: a rising C-major arpeggio capped by a held major chord
+ *  with a bright sparkle on top. Played once on Victory. Overridable via an
+ *  uploaded `victory` sample (assets/sfx-manifest.json). */
+export function sfxVictory() {
+  if (!actx || actx.state !== 'running' || muted) return;
+  const now = actx.currentTime + 0.02;
+  if (customBuffers.victory) {
+    const src = actx.createBufferSource(); src.buffer = customBuffers.victory;
+    const g = actx.createGain(); g.gain.value = 0.9;
+    src.connect(g); g.connect(master); src.start(now); return;
+  }
+  const arp = [523.25, 659.25, 783.99, 1046.5];           // C5 E5 G5 C6
+  arp.forEach((f, i) => _tone(f, now + i * 0.12, 0.20, 0.17, 'triangle'));
+  const t = now + arp.length * 0.12;                       // resolve on a held chord
+  for (const f of [523.25, 659.25, 783.99]) _tone(f, t, 1.0, 0.12, 'triangle');
+  _tone(1046.5, t, 0.8, 0.06, 'square');                   // shimmer
+}
+
+/** Short, sombre two-note fall on Defeat. */
+export function sfxDefeat() {
+  if (!actx || actx.state !== 'running' || muted) return;
+  const now = actx.currentTime + 0.02;
+  if (customBuffers.defeat) {
+    const src = actx.createBufferSource(); src.buffer = customBuffers.defeat;
+    const g = actx.createGain(); g.gain.value = 0.9;
+    src.connect(g); g.connect(master); src.start(now); return;
+  }
+  _tone(311.13, now,        0.5, 0.14, 'sawtooth');        // Eb4
+  _tone(233.08, now + 0.28, 0.9, 0.14, 'sawtooth');        // Bb3 (falling)
+}
+
 // ---- Mute ----
 export function toggleMute() {
   muted = !muted;

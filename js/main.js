@@ -34,7 +34,7 @@ import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
-import { initAudio, updateAudio } from './audio.js';
+import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
 // its own module now. main.js calls attachInput() once at boot and reuses
 // updateHudFade() to prime panel opacity in newGame().
@@ -213,6 +213,8 @@ function checkVictory() {
 
 function endGame(win, sub) {
   state.gameOver = true;
+  // End-of-match stinger — triumphant fanfare on a win, a short fall on a loss.
+  if (win) sfxVictory(); else sfxDefeat();
   const m = document.getElementById('message');
   const title = document.getElementById('msg-title');
   title.textContent = win ? 'Victory' : 'Defeat';

@@ -20,7 +20,14 @@ import { Asset, blitSprite } from './sprites.js';
 const TAU = Math.PI * 2;
 
 // =====================================================
-// Turret: anti-air — radar dish + rotating antenna
+// Turret: anti-air — twin-barrel flak autocannon on a rotating mount.
+//
+// (Was a Kenney PNG that read as "two upright missiles" — wrong silhouette for
+// an AA GUN. Now a primitive twin-autocannon: two short elevated barrels with
+// muzzle brakes sweeping the sky, which reads unambiguously as flak/AA, never a
+// missile rack or a single tank cannon. The asset-overlay branch is kept so a
+// purpose-drawn turret_aa.png could still override it later — but turret_aa is
+// no longer in assets/manifest.json, so the primitive is the canonical look.)
 // =====================================================
 export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
   const c = active ? COLOR[owner] : '#7a6a55';
@@ -33,42 +40,47 @@ export function drawAATurret(ctx, x, y, owner, active, zoom, time) {
     return;
   }
 
-  // Base
+  // Base ring + mount disc.
   ctx.fillStyle = '#1a1206';
   ctx.beginPath(); ctx.arc(x, y, 24,    0, TAU); ctx.fill();
   ctx.fillStyle = c;
   ctx.beginPath(); ctx.arc(x, y, 20.25, 0, TAU); ctx.fill();
-  // Idle brown glow ring when inactive — signals "powering up / dormant"
+  // Idle brown glow ring when inactive — signals "powering up / dormant".
   if (!active) {
     ctx.strokeStyle = 'rgba(120, 80, 45, 0.35)';
     ctx.lineWidth = 1.5 / zoom;
     ctx.beginPath(); ctx.arc(x, y, 16, 0, TAU); ctx.stroke();
   }
   ctx.fillStyle = '#1a1206';
-  ctx.beginPath(); ctx.arc(x, y, 10.5,  0, TAU); ctx.fill();
-  // Rotating dish + antenna + sweep line (sweep lags dish by ~30°)
-  const rot = active ? (time / 700) % TAU : 0;
+  ctx.beginPath(); ctx.arc(x, y, 11, 0, TAU); ctx.fill();
+
+  // Rotating twin-barrel gun assembly. Slow sweep when active (scanning the
+  // sky); parked at a fixed elevation when dormant.
+  const rot = active ? (time / 1400) % TAU : -0.6;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rot);
+  // Breech block (the gun cradle).
+  ctx.fillStyle = '#241808';
+  ctx.fillRect(-7, -8, 13, 16);
   ctx.fillStyle = c;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.arc(0, 0, 16.5, -0.6, 0.6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#ffd066';
-  ctx.lineWidth = 2 / zoom;
-  ctx.beginPath();
-  ctx.moveTo(0, 0); ctx.lineTo(19.5, 0);
-  ctx.stroke();
-  // Sweep line — lagging radial pulse, brighter when active
-  ctx.rotate(-0.524);
-  ctx.strokeStyle = active ? 'rgba(255, 240, 200, 0.30)' : 'rgba(180, 150, 110, 0.12)';
-  ctx.lineWidth = 1.2 / zoom;
-  ctx.beginPath();
-  ctx.moveTo(0, 0); ctx.lineTo(16.5, 0);
-  ctx.stroke();
+  ctx.fillRect(-5, -6.5, 9, 13);
+  // Twin barrels — two parallel autocannon tubes pointing +x, each capped with
+  // a muzzle brake. Two barrels is the whole "this is a flak gun" read.
+  for (const off of [-4.2, 4.2]) {
+    ctx.fillStyle = '#1c1206';
+    ctx.fillRect(3, off - 1.7, 19, 3.4);            // barrel
+    ctx.fillStyle = c;
+    ctx.fillRect(20, off - 2.6, 3.2, 5.2);          // muzzle brake
+  }
+  // Sight nub on the breech.
+  ctx.fillStyle = '#ffd066';
+  ctx.beginPath(); ctx.arc(-2.5, 0, 2.2, 0, TAU); ctx.fill();
+  // Active muzzle glow at the barrel tips.
+  if (active) {
+    ctx.fillStyle = 'rgba(255, 220, 150, 0.55)';
+    for (const off of [-4.2, 4.2]) { ctx.beginPath(); ctx.arc(23, off, 1.8, 0, TAU); ctx.fill(); }
+  }
   ctx.restore();
 }
 

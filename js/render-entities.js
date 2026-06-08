@@ -81,14 +81,22 @@ export function drawNodes(ctx, zoom, now) {
       const owned = n.owner !== 'neutral';
       const minor = demote && nodeImportance(n) === 0;
       if (minor && hideMinors && !state.selectedIds.has(n.id)) continue;   // vanish at overview — but keep SELECTED nodes
-      const r = Math.max(n.size, minR) * (owned ? 1 : 0.82) * (minor ? 0.7 : 1);
+      const r = Math.max(n.size, minR) * (owned ? 1 : 0.92) * (minor ? 0.72 : 1);
       if (n.x + r < vL || n.x - r > vR || n.y + r < vT || n.y - r > vB) continue;
-      ctx.globalAlpha = (owned ? 1 : 0.62) * (minor ? 0.5 : 1);
-      ctx.fillStyle = COLOR[n.owner];
+      if (owned) {
+        ctx.globalAlpha = (minor ? 0.5 : 1);
+        ctx.fillStyle = COLOR[n.owner];
+      } else {
+        // Unclaimed node: a lighter parchment marker (higher alpha) so it reads
+        // as a distinct PLACE against the warm-dark terrain at overview instead
+        // of blending into it — still clearly secondary to owned (coloured) land.
+        ctx.globalAlpha = (minor ? 0.72 : 0.9);
+        ctx.fillStyle = '#cdbf9c';
+      }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = 'rgba(15, 8, 4, 0.6)';
+      ctx.fillStyle = 'rgba(15, 8, 4, 0.55)';
       ctx.beginPath();
       ctx.arc(n.x, n.y, Math.max(2, r - 4), 0, Math.PI * 2);
       ctx.fill();

@@ -32,6 +32,7 @@ import { newGame } from './main.js';
 // render-shroud.js). tutAllows(cap) → false while that capability is still
 // locked in a tutorial; cameraLocked() → true while pan/zoom are frozen.
 import { tutAllows, cameraLocked } from './tutorial-gate.js';
+import { startTutorial } from './lobby.js';
 
 // =====================================================
 // HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
@@ -295,7 +296,10 @@ export function attachInput() {
       if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
     }
     if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; state.painting = null; }
-    if (k === 'r') newGame();
+    if (k === 'r') {
+      if (state.tutorial) startTutorial();     // R during the tutorial = restart the lesson cleanly
+      else if (!state.inLobby) newGame();       // R in a live game = fresh map; ignored in the lobby
+    }
     // HUD management: Tab fully hides the chrome (battle-only view); ? (or /)
     // toggles the expanded controls reference. Both keep the canvas clean
     // when the player needs the area under a panel.

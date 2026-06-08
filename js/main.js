@@ -110,6 +110,12 @@ export function newGame() {
   // before the first frame snapshot of the new game arrives.
   renderBridge.notifyNewGame();
   document.getElementById('message').style.display = 'none';
+  // Defensive: any path into a fresh game clears tutorial state + its coach, so
+  // no caller (R restart, Play Again) can leave a stale tutorial gating a normal
+  // game. buildTutorialScenario re-sets state.tutorial AFTER this returns.
+  state.tutorial = null;
+  document.getElementById('tutorial-coach')?.classList.remove('show');
+  document.body.classList.remove('tut-active');
   state.startTime = performance.now();
   state.elapsed = 0;
   // Reset Mars weather alongside the clock — lastChangeT is measured against

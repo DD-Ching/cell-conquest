@@ -170,7 +170,7 @@ function traceRidge(elev, peakGx, peakGy, ridgeLevel, used) {
   function walk(dirSign) {
     const pts = [];
     let gx = peakGx, gy = peakGy, px = -dirSign, py = 0;
-    for (let step = 0; step < 80; step++) {
+    for (let step = 0; step < 120; step++) {
       const key = gy * GW + gx;
       pts.push({ x: gx2wx(gx), y: gy2wy(gy) }); used.add(key);
       // highest neighbour that isn't a sharp reversal of travel
@@ -184,7 +184,7 @@ function traceRidge(elev, peakGx, peakGy, ridgeLevel, used) {
         const e = elev[ny * GW + nx];
         if (e > best) { best = e; bgx = nx; bgy = ny; }
       }
-      if (bgx < 0 || best < ridgeLevel * 0.9) break;
+      if (bgx < 0 || best < ridgeLevel * 0.82) break;   // extend further down the flanks → longer ranges
       px = bgx - gx; py = bgy - gy; gx = bgx; gy = bgy;
     }
     return pts;
@@ -235,7 +235,10 @@ export function generateGeography(rng, theme) {
     if (e > seaLevel + 0.25 && e < ridgeLevel + 0.05 && m > 0.7) riverSeeds.push({ gx, gy, score: m * e });
   }
   riverSeeds.sort((a, b) => b.score - a.score);
-  const riverTarget = theme.waterDensity > 0.25 ? 3 : 2;
+  // More rivers → the map reads as carved into basins/valleys and frontlines
+  // hug the water. applyBarrierChokepoints funnels crossings to a few bridges,
+  // so extra rivers add structure without breaking connectivity.
+  const riverTarget = theme.waterDensity > 0.25 ? 4 : 3;
   for (const s of riverSeeds) {
     if (rivers.length >= riverTarget) break;
     // space river sources apart
@@ -254,7 +257,8 @@ export function generateGeography(rng, theme) {
   }
   peaks.sort((a, b) => b.e - a.e);
   const used = new Set();
-  const ridgeTarget = theme.mountainDensity > 1.2 ? 3 : 2;
+  // More mountain ranges → clearer natural theatre borders + pass chokepoints.
+  const ridgeTarget = theme.mountainDensity > 1.2 ? 5 : 3;
   for (const p of peaks) {
     if (ridges.length >= ridgeTarget) break;
     if (used.has(p.gy * GW + p.gx)) continue;

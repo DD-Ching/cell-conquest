@@ -63,6 +63,10 @@ function sig() {
 function bakeElevation(c, gg, pal) {
   const { GW, GH, elev, seaLevel } = gg;
   const lo = hex(pal.lo), mid = hex(pal.mid), hi = hex(pal.hi), water = hex(pal.water);
+  // Sun-lit peak band: a brightened hi so the highest crests catch light and the
+  // map gains a clear top-of-relief read (snow/rock-lit ridgelines), one more
+  // tonal step past `hi` so the elevation ramp spans water → low → high → PEAK.
+  const peak = [cl(hi[0] * 1.5 + 34), cl(hi[1] * 1.5 + 30), cl(hi[2] * 1.5 + 26)];
   const tmp = makeCanvas(GW, GH);
   const tctx = tmp.getContext('2d');
   const id = tctx.createImageData(GW, GH);
@@ -70,18 +74,30 @@ function bakeElevation(c, gg, pal) {
     const e = elev[i];
     let col;
     if (e < seaLevel) {
-      col = lerp(water, lo, Math.max(0, e / Math.max(0.001, seaLevel)));   // deeper = darker water
+      // Deeper water reads darker, and the deep end is pushed down so basins
+      // actually look like sunken water, not just slightly-darker ground.
+      const wt = Math.max(0, e / Math.max(0.001, seaLevel));
+      col = lerp(lerp(water, [0, 0, 0], 0.35), lerp(water, lo, 0.5), wt);
     } else {
+      // 4-band ramp with the mid→high split pushed earlier so highlands cover
+      // more of the map and peaks get their own lit band → far more separation
+      // between lowland basin and mountain than the old flat lo↔mid↔hi.
       const t = (e - seaLevel) / (1 - seaLevel);          // 0..1 above sea
-      col = t < 0.6 ? lerp(lo, mid, t / 0.6) : lerp(mid, hi, (t - 0.6) / 0.4);
+      if (t < 0.45)      col = lerp(lo,  mid,  t / 0.45);
+      else if (t < 0.78) col = lerp(mid, hi,  (t - 0.45) / 0.33);
+      else               col = lerp(hi,  peak, (t - 0.78) / 0.22);
     }
-    // NW-light hillshade — a strong E–W slope plus a softer N–S term gives the
-    // terrain real relief instead of a near-flat wash (the old ×1.4 E–W-only
-    // shade barely read once the command veil went over it).
+    // NW-light hillshade. Sampled over a TWO-cell stencil (not 1) so the slope
+    // signal is big enough to read once upsampled + veiled, then amplified hard
+    // and clamped. This is what turns the soft gradient into legible relief —
+    // sunward (NW) faces brighten, leeward (SE) faces fall into shadow.
     const x = i % GW, yy = (i / GW) | 0;
-    const eL = elev[i - (x > 0 ? 1 : 0)], eR = elev[i + (x < GW - 1 ? 1 : 0)];
-    const eU = elev[i - (yy > 0 ? GW : 0)], eD = elev[i + (yy < GH - 1 ? GW : 0)];
-    const sh = 1 + (eL - eR) * 2.1 + (eU - eD) * 1.1;
+    const xl = x > 1 ? x - 2 : 0, xr = x < GW - 2 ? x + 2 : GW - 1;
+    const yu = yy > 1 ? yy - 2 : 0, yd = yy < GH - 2 ? yy + 2 : GH - 1;
+    const eL = elev[yy * GW + xl], eR = elev[yy * GW + xr];
+    const eU = elev[yu * GW + x],  eD = elev[yd * GW + x];
+    let sh = 1 + (eL - eR) * 4.4 + (eU - eD) * 2.4;
+    if (sh < 0.5) sh = 0.5; else if (sh > 1.7) sh = 1.7;   // clamp: no crushed blacks / blown highlights
     const k = i * 4;
     id.data[k] = cl(col[0] * sh); id.data[k + 1] = cl(col[1] * sh); id.data[k + 2] = cl(col[2] * sh); id.data[k + 3] = 255;
   }
@@ -110,8 +126,10 @@ function bakeTacticalMap() {
   if (state.geoGrid && state.geoGrid.elev) bakeElevation(c, state.geoGrid, pal);
   // Command-map veil over the terrain — kept THIN so the elevation shade +
   // contour lines below still read (the old 0.22 veil flattened the map into a
-  // near-uniform field; that emptiness is what made it look like a graph).
-  c.fillStyle = 'rgba(8, 6, 12, 0.13)';
+  // near-uniform field; that emptiness is what made it look like a graph). Now
+  // that the relief is stronger (4-band ramp + amplified hillshade) the veil is
+  // thinned further so the mountains/valleys carry the image.
+  c.fillStyle = 'rgba(8, 6, 12, 0.08)';
   c.fillRect(0, 0, WORLD_W, WORLD_H);
 
   // 1b) Topographic contour lines + coastline (marching squares from geoGrid).
@@ -239,29 +257,57 @@ export function drawProcgen(ctx, zoom) {
   if (bakedSig !== sig() || !buf) bakeTacticalMap();
   ctx.drawImage(buf, 0, 0, WORLD_W, WORLD_H);
 
-  // Sector names — faint, tracked, uppercase; fade out as you zoom in.
-  const a = Math.max(0, Math.min(0.42, (0.55 - zoom) / 0.5));
-  if (a <= 0.01) return;
+  // Sector names — ATLAS behaviour. Three rules make this read like a real map
+  // instead of a pile of overlapping text:
+  //   1. SIZE BY IMPORTANCE — big/high-value sectors get a big name, small ones
+  //      a small name (importance ≈ radius + strategic value).
+  //   2. REVEAL BY ZOOM — the biggest sectors show even at full-theatre overview;
+  //      smaller ones only appear as you zoom in (like a city showing at country
+  //      scale but a town only when you lean in). Then ALL fade out once you're
+  //      close enough that the per-node settlement labels take over.
+  //   3. NO OVERLAP — labels are placed biggest-first; any that would collide
+  //      with an already-placed (more important) one is skipped this frame.
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.letterSpacing = (4 / zoom) + 'px';
-  for (const r of state.regions) {
-    if (!r.name) continue;
-    // Size hierarchy — big sprawling / high-value sectors get a BIG name, small
-    // outposts a small one, so the map reads like a real atlas (capitals louder
-    // than villages) instead of a flat field of identical labels. Drives off the
-    // region's physical radius + strategic value; bigger names also sit a touch
-    // more opaque so the eye lands on them first.
-    const importance = (r.radius || 600) * 0.014 + (r.value || 1) * 3.5;   // ≈ 10–34
-    const f = (14 + importance) / zoom;                                    // ≈ 24–48 px
-    const aMul = Math.min(1.25, 0.8 + importance / 40);                    // big names pop more
+  const { vL, vT, vR, vB } = state._view;
+  // Rank biggest-first so important names win the collision contest.
+  const ranked = state.regions
+    .filter(r => r.name)
+    .map(r => ({ r, imp: (r.radius || 600) * 0.014 + (r.value || 1) * 3.5 }))   // ≈ 10–34
+    .sort((a, b) => b.imp - a.imp);
+  const placed = [];                       // screen-space bboxes drawn so far
+  for (const { r, imp } of ranked) {
+    // Importance → the zoom at which this name STARTS showing. imp 34 → ~0.07
+    // (overview); imp 8 → ~0.62 (must lean in). Linear between.
+    const showZoom = 0.62 - Math.min(0.55, ((imp - 8) / 26) * 0.55);
+    if (zoom < showZoom) continue;
+    if (r.x < vL || r.x > vR || r.y < vT || r.y > vB) continue;   // off-screen cull
+    const f = (13 + imp) / zoom;                                  // world font px (≈ 23–47 screen)
     ctx.font = `600 ${f}px -apple-system, system-ui, sans-serif`;
     const txt = r.name.toUpperCase();
+    // Screen-space bbox for the collision test (+ margin for the letter-spacing
+    // that measureText doesn't fully account for).
+    const sx = (r.x - state.cameraX) * zoom, sy = (r.y - state.cameraY) * zoom;
+    const hw = (ctx.measureText(txt).width * 0.5 + 10);
+    const hh = (f * zoom * 0.5 + 5);
+    let collide = false;
+    for (const p of placed) {
+      if (Math.abs(sx - p.x) < hw + p.hw && Math.abs(sy - p.y) < hh + p.hh) { collide = true; break; }
+    }
+    if (collide) continue;
+    placed.push({ x: sx, y: sy, hw, hh });
+    // Fade in over a small band above showZoom; fade out as you zoom way in.
+    const fadeIn  = Math.min(1, (zoom - showZoom) / 0.12 + 0.25);
+    const fadeOut = Math.max(0, Math.min(1, (0.95 - zoom) / 0.3));
+    const a = 0.6 * fadeIn * fadeOut;
+    if (a <= 0.02) continue;
+    const aMul = Math.min(1.25, 0.8 + imp / 40);                  // big names pop more
     ctx.lineWidth = 4 / zoom;
     ctx.strokeStyle = `rgba(0, 0, 0, ${a * 0.85})`;
     ctx.strokeText(txt, r.x, r.y);
-    ctx.fillStyle = `rgba(220, 212, 196, ${Math.min(0.6, a * aMul)})`;
+    ctx.fillStyle = `rgba(220, 212, 196, ${Math.min(0.62, a * aMul)})`;
     ctx.fillText(txt, r.x, r.y);
   }
   ctx.restore();

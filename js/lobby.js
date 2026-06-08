@@ -64,21 +64,24 @@ const HQ = 0, BETA = 1, DRILL = 2, FORWARD = 3, ENEMY_HQ = 4, WORKS = 5;
  *  procgen graph (engineering edge cache, HUD roster). */
 function buildTutorialScenario() {
   window.newGame();
-  // The tutorial foe is ALWAYS Crimson (red) — it matches the node names and the
-  // "Crimson Sector" framing. Register it in case this game didn't roll red.
+  // The training-ground foe is "DDCHING" (the player's enemy is the boss himself).
+  // Uses the red slot; force its display name to DDCHING for the tutorial only
+  // (rollFactions rebuilds FACTIONS on the next real game, restoring Crimson).
   const enemy = 'red';
   if (!COLOR[enemy]) { COLOR[enemy] = '#ff6678'; GLOW[enemy] = hexToRgba('#ff6678', 0.5); }
   if (!factionStats[enemy]) factionStats[enemy] = { strength: 1.0, aggressionMul: 1.0, buildChanceMul: 1.0 };
-  if (!FACTIONS.find(f => f.id === enemy)) FACTIONS.push({ id: enemy, name: 'Crimson', color: COLOR[enemy] });
+  const eDef = FACTIONS.find(f => f.id === enemy);
+  if (eDef) eDef.name = 'DDCHING';
+  else FACTIONS.push({ id: enemy, name: 'DDCHING', color: COLOR[enemy] });
 
   const cx = WORLD_W / 2, cy = WORLD_H / 2;
   const defs = [
-    { name: 'Aleph Base',      dx: -780, dy:  260, owner: 'player',  size: 38, units: 60, cap: true },
-    { name: 'Beta Outpost',    dx: -780, dy: -300, owner: 'player',  size: 30, units: 30 },
-    { name: 'Drill Site',      dx: -120, dy:  -10, owner: 'neutral', size: 26, units: 12 },
-    { name: 'Vermillion Post', dx:  520, dy:  -10, owner: enemy,     size: 28, units: 22 },
-    { name: 'Crimson Picket',  dx: 1060, dy:  240, owner: enemy,     size: 36, units: 34, cap: true },
-    { name: 'Ferrous Works',   dx:  -60, dy:  470, owner: 'neutral', size: 24, units: 14 },
+    { name: 'Aleph Base',     dx: -780, dy:  260, owner: 'player',  size: 38, units: 60, cap: true },
+    { name: 'Beta Outpost',   dx: -780, dy: -300, owner: 'player',  size: 30, units: 30 },
+    { name: 'Drill Site',     dx: -120, dy:  -10, owner: 'neutral', size: 26, units: 12 },
+    { name: 'DDCHING Outpost', dx:  520, dy:  -10, owner: enemy,    size: 28, units: 22 },
+    { name: 'DDCHING HQ',     dx: 1060, dy:  240, owner: enemy,     size: 36, units: 34, cap: true },
+    { name: 'Ferrous Works',  dx:  -60, dy:  470, owner: 'neutral', size: 24, units: 14 },
   ];
   state.nodes = defs.map((d, i) => ({
     id: i, x: cx + d.dx, y: cy + d.dy, size: d.size, owner: d.owner,
@@ -152,13 +155,13 @@ function spawnTutorialDroneWave() {
 const hasTurret = (type) => state.turrets.some(t => t.owner === 'player' && t.type === type);
 const STEPS = [
   { id: 'welcome', mode: 'ack',
-    zh: '薇拉:指揮官,歡迎來到基礎訓練。四周還籠罩在戰爭迷霧裡 —— 我們一步步把你的能力解鎖。準備好就按「繼續」。',
-    en: 'Vera: Welcome to Basic Training, Commander. Everything starts locked — we unlock it one step at a time. Press Continue.',
+    zh: '歡迎來到訓練場。所有操作一開始都是鎖住的 —— 一步步解鎖。準備好就按「繼續」。',
+    en: 'Welcome to the training ground. Every control starts locked — unlocked one step at a time. Press Continue.',
     done: (t) => t.acked },
 
   { id: 'pan', mode: 'key', keys: '↑ ↓ ← →', unlock: 'view', point: HQ,
-    zh: '先把眼睛打開。用方向鍵(或 WASD)移動鏡頭,環顧戰場。',
-    en: 'Eyes up. Use the arrow keys (or WASD) to move the camera and look around.',
+    zh: '用方向鍵(或 WASD)移動鏡頭,看看戰場。',
+    en: 'Move the camera with the arrow keys (or WASD) to look around.',
     done: (t) => Math.hypot(state.cameraX - t.camStart.x, state.cameraY - t.camStart.y) > 140 },
 
   { id: 'zoom', mode: 'key', keys: '+ / −  (滾輪)',
@@ -177,19 +180,19 @@ const STEPS = [
     done: () => state.selectedIds.size >= 2 },
 
   { id: 'send', mode: 'drag', point: DRILL, unlock: 'send',
-    zh: '下令了:從你的基地拖曳到中立的「Drill Site」,派兵把它佔下來。',
-    en: 'Give an order — drag from a base onto the neutral Drill Site and capture it.',
+    zh: '從你的基地拖曳到中立的「Drill Site」,派兵把它佔下來。',
+    en: 'Drag from a base onto the neutral Drill Site to send troops and capture it.',
     done: () => state.nodes[DRILL].owner === 'player' },
 
   { id: 'push', mode: 'point', point: FORWARD, unlock: 'vision',
-    zh: '迷霧散開了。緋紅在「Vermillion 前哨」增兵 —— 集結兵力,一次送上去攻下它。',
-    en: 'Fog lifts. Crimson is reinforcing Vermillion Post — mass your troops, then take it.',
+    zh: 'DDCHING 在「DDCHING Outpost」增兵了 —— 集結兵力,一次送上去攻下它。',
+    en: 'DDCHING is reinforcing its outpost — mass your troops, then take it in one push.',
     onEnter: () => { state.aiTimers[state._tutEnemy] = 0; },   // unleash the enemy: combat starts here
     done: () => state.nodes[FORWARD].owner === 'player', hold: 999 },
 
   { id: 'build', mode: 'key', keys: 'Q', point: HQ, unlock: 'build',
-    zh: '緋紅要放無人機了!選一個基地,按 Q 蓋防空炮,再點地圖把它放下。',
-    en: 'Drones incoming! Select a base, press Q for an anti-air gun, then click to place it.',
+    zh: 'DDCHING 要放無人機了!選一個基地,按 Q 蓋防空炮,再點地圖把它放下。',
+    en: 'DDCHING is launching drones! Select a base, press Q for an anti-air gun, then click to place it.',
     done: () => hasTurret('antiair'), hold: 999 },
 
   { id: 'defend', mode: 'point', point: HQ,
@@ -220,8 +223,8 @@ const STEPS = [
     done: (t) => t.didG && t.didH && t.didPause },
 
   { id: 'final', mode: 'point', point: ENEMY_HQ,
-    zh: '全部解鎖了,指揮官!最後一課:攻下緋紅總部「Crimson Picket」,結束這場戰鬥。',
-    en: 'Everything\'s unlocked, Commander. Final lesson — capture Crimson\'s HQ to end this.',
+    zh: '全部解鎖了!最後一關:攻下「DDCHING HQ」,結束這場戰鬥。',
+    en: 'Everything\'s unlocked. Final step — capture DDCHING HQ to finish it.',
     done: () => state.nodes[ENEMY_HQ].owner === 'player', hold: 999 },
 ];
 

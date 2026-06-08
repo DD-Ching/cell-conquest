@@ -46,7 +46,6 @@ import {
 import { drawTerritory } from './render-territory.js';
 import { drawTerritoryBorders } from './render-borders.js';
 import { drawProcgen } from './render-procgen.js';
-import { drawShroud } from './render-shroud.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -120,9 +119,6 @@ export function render() {
   ctx.restore();
   // --- end world space ----------------------------------------
 
-  // Tutorial vision lock — screen-space dark veil with holes around owned nodes.
-  // No-op outside a tutorial / once the 'vision' lesson unlocks.
-  drawShroud(ctx, W, H);
   // Screen-space vignette: dark corners framing the world. Above everything
   // except the HUD, so it must sit after the world restore + before the banner.
   drawVignette(ctx, W, H);

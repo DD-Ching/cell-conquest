@@ -339,6 +339,13 @@
     background: rgba(30,16,8,.85); color: var(--accent); border: 1px solid rgba(200,140,80,.4); border-radius: 6px; padding: 4px 14px; font-size: 15px; }
   #tutorial-coach #tut-skip { position: absolute; top: 8px; right: 12px; font-size: 11px; color: var(--text-faint); cursor: pointer; pointer-events: auto; }
   #tutorial-coach #tut-skip:hover { color: var(--accent); }
+  #tutorial-coach #tut-continue { margin-top: 12px; font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .06em;
+    padding: 9px 22px; border-radius: 8px; cursor: pointer; color: #1a0e04; border: 0; pointer-events: auto;
+    background: linear-gradient(180deg, var(--accent), #e09030); box-shadow: 0 5px 18px rgba(255,150,60,.3); }
+  #tutorial-coach #tut-continue:hover { filter: brightness(1.08); }
+  /* Lobby return toast (after a tutorial) */
+  #lobby-toast { display: none; margin-top: 18px; padding: 9px 16px; font-size: 12.5px; color: var(--accent);
+    background: rgba(255, 179, 67, 0.10); border: 1px solid rgba(200, 140, 80, 0.35); border-radius: 8px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
 </head>
@@ -357,7 +364,7 @@
   <div class="help-full">
     <div><kbd>Drag</kbd> from your node to a target = send half via roads (must pass through your own territory)</div>
     <div><kbd>Shift</kbd>+drag = send all units</div>
-    <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd>/screen-edge to pan</div>
+    <div><kbd>Scroll wheel</kbd> or <kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd> to zoom &middot; <kbd>WASD</kbd>/<kbd>Arrow</kbd>/<kbd>middle-drag</kbd> to pan</div>
     <div>Lost? When none of your bases is on screen, pulsing edge arrows ➤ point back toward your nearest territory. They vanish as soon as a base is in view.</div>
     <div><kbd>1</kbd>–<kbd>7</kbd> speed (1× / 2× / 5× / 10× / 20× / 30× / 40×) &middot; <kbd>[</kbd> <kbd>]</kbd> step speed</div>
     <div><kbd>Click</kbd> select &middot; <kbd>Cmd/Ctrl</kbd>+click toggle &middot; <kbd>Drag empty</kbd> box-select &middot; <kbd>Dbl-click</kbd> all yours &middot; <kbd>Esc</kbd> deselect &middot; <kbd>R</kbd> restart</div>
@@ -391,6 +398,7 @@
       <b>H</b><span>hold-fire drone salvo · click an enemy to aim · H to launch</span>
       <b>1–7</b><span>game speed · <b>Space</b> pause · <b>Tab</b> hide HUD · <b>?</b> all controls</span>
     </div>
+    <div id="lobby-toast"></div>
   </div>
 </div>
 <div id="tutorial-coach">
@@ -401,6 +409,7 @@
     <div class="tut-zh"></div>
     <div class="tut-en"></div>
     <div class="tut-key" style="display:none"></div>
+    <button id="tut-continue" style="display:none">繼續 ▸</button>
   </div>
 </div>
 

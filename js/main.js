@@ -36,6 +36,7 @@ import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
 import { initLobby, tutorialTick } from './lobby.js';
+import { cameraLocked } from './tutorial-gate.js';
 // Input layer (pointer / wheel / keyboard listeners + HUD auto-fade) lives in
 // its own module now. main.js calls attachInput() once at boot and reuses
 // updateHudFade() to prime panel opacity in newGame().
@@ -195,6 +196,10 @@ window.newGame = newGame;
 
 function checkVictory() {
   if (state.gameOver) return;
+  // During the tutorial the lesson owns its own ending (finishTutorial) — the
+  // normal Victory/Defeat modal must NOT fire (e.g. if a drone wave clips the
+  // base, or capturing the enemy HQ eliminates them).
+  if (state.tutorial) return;
   const owners = new Set(state.nodes.map(n => n.owner));
   for (const f of state.fleets) owners.add(f.owner);
   owners.delete('neutral');
@@ -376,18 +381,17 @@ function loop() {
   const gameDt = realDt * state.timeScale;
 
   if (!state.gameOver) {
-    // Camera input
-    const sp = 1 / state.zoom;
-    if (state.panKeys.up)    state.cameraY -= PAN_SPEED * realDt * sp;
-    if (state.panKeys.down)  state.cameraY += PAN_SPEED * realDt * sp;
-    if (state.panKeys.left)  state.cameraX -= PAN_SPEED * realDt * sp;
-    if (state.panKeys.right) state.cameraX += PAN_SPEED * realDt * sp;
-    if (state.mouseScreen.x >= 0 && state.mouseScreen.y >= 0 &&
-        state.mouseScreen.x < state.W && state.mouseScreen.y < state.H) {
-      if (state.mouseScreen.x < EDGE_PAN_MARGIN) state.cameraX -= EDGE_PAN_SPEED * realDt * sp;
-      else if (state.mouseScreen.x > state.W - EDGE_PAN_MARGIN) state.cameraX += EDGE_PAN_SPEED * realDt * sp;
-      if (state.mouseScreen.y < EDGE_PAN_MARGIN) state.cameraY -= EDGE_PAN_SPEED * realDt * sp;
-      else if (state.mouseScreen.y > state.H - EDGE_PAN_MARGIN) state.cameraY += EDGE_PAN_SPEED * realDt * sp;
+    // Camera input — frozen during the tutorial's vision-lock window (the 'view'
+    // lesson unlocks it). clampCamera still runs so a resize stays valid.
+    // NOTE: screen-edge auto-pan was REMOVED — it slid the view off-target
+    // whenever the cursor drifted to an edge (especially bad on the tiny tutorial
+    // cluster). Pan is now keys (WASD/arrows) + middle-drag only.
+    if (!cameraLocked()) {
+      const sp = 1 / state.zoom;
+      if (state.panKeys.up)    state.cameraY -= PAN_SPEED * realDt * sp;
+      if (state.panKeys.down)  state.cameraY += PAN_SPEED * realDt * sp;
+      if (state.panKeys.left)  state.cameraX -= PAN_SPEED * realDt * sp;
+      if (state.panKeys.right) state.cameraX += PAN_SPEED * realDt * sp;
     }
     clampCamera();
   }

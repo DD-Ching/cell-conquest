@@ -28,14 +28,10 @@ import { toggleMute } from './audio.js';
 // function declaration and is only *invoked* from a listener at runtime,
 // long after both module bodies have finished evaluating.
 import { newGame } from './main.js';
-
-// Tutorial progressive-unlock gate. Outside a tutorial everything is allowed;
-// inside one, a capability ('build' / 'speed') is locked until its lesson adds
-// it to state.tutorial.unlocked (see lobby.js). Read straight off state so this
-// module needs no import from lobby.js (avoids a load-time cycle).
-function tutAllows(cap) {
-  return !state.tutorial || state.tutorial.unlocked.has(cap);
-}
+// Tutorial progressive-unlock gates (one definition, shared with main.js +
+// render-shroud.js). tutAllows(cap) → false while that capability is still
+// locked in a tutorial; cameraLocked() → true while pan/zoom are frozen.
+import { tutAllows, cameraLocked } from './tutorial-gate.js';
 
 // =====================================================
 // HUD auto-fade (inverted version) — overlay panels fade OUT when the mouse
@@ -70,6 +66,7 @@ export function attachInput() {
 
   c.addEventListener('wheel', e => {
     e.preventDefault();
+    if (cameraLocked()) return;                 // zoom frozen during the tutorial vision-lock
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     zoomBy(factor, e.clientX, e.clientY);
   }, { passive: false });
@@ -77,6 +74,7 @@ export function attachInput() {
   c.addEventListener('mousedown', e => {
     if (e.button === 1) {
       e.preventDefault();
+      if (cameraLocked()) return;               // no middle-drag pan while view is locked
       state.middlePan = {
         startSX: e.clientX, startSY: e.clientY,
         startCamX: state.cameraX, startCamY: state.cameraY,
@@ -222,20 +220,22 @@ export function attachInput() {
           return;
         }
       }
-      if (!d.originNode) {
-        if (!d.shift && !d.ctrl) state.selectedIds.clear();
-      } else if (isAlly(d.originNode.owner, 'player')) {
-        // Player + Lieutenant nodes are selectable / command-able from the
-        // player's UI (the Lieutenant is the player's AI agent — same side).
-        if (d.ctrl) {
-          if (state.selectedIds.has(d.originNode.id)) state.selectedIds.delete(d.originNode.id);
-          else state.selectedIds.add(d.originNode.id);
-        } else {
-          state.selectedIds.clear();
-          state.selectedIds.add(d.originNode.id);
+      if (tutAllows('select')) {            // selection is gated until the tutorial 'select' lesson
+        if (!d.originNode) {
+          if (!d.shift && !d.ctrl) state.selectedIds.clear();
+        } else if (isAlly(d.originNode.owner, 'player')) {
+          // Player + Lieutenant nodes are selectable / command-able from the
+          // player's UI (the Lieutenant is the player's AI agent — same side).
+          if (d.ctrl) {
+            if (state.selectedIds.has(d.originNode.id)) state.selectedIds.delete(d.originNode.id);
+            else state.selectedIds.add(d.originNode.id);
+          } else {
+            state.selectedIds.clear();
+            state.selectedIds.add(d.originNode.id);
+          }
         }
       }
-    } else if (d.mode === 'send') {
+    } else if (d.mode === 'send' && tutAllows('send')) {   // sending orders gated until the 'send' lesson
       const releaseNode = nodeAt(wx, wy);
       // First check: did we release on an enemy turret? → assault dispatch.
       // Pending sites (engineer en route) are dirt placeholders, not real
@@ -258,7 +258,7 @@ export function attachInput() {
           sendFleet(from, releaseNode, amt);
         }
       }
-    } else if (d.mode === 'lasso') {
+    } else if (d.mode === 'lasso' && tutAllows('select')) {   // box/lasso select gated with 'select'
       if (!d.shift && !d.ctrl) state.selectedIds.clear();
       const pts = d.points;
       pts.push({ x: wx, y: wy });          // close the loop on the release point
@@ -275,6 +275,7 @@ export function attachInput() {
   });
 
   c.addEventListener('dblclick', () => {
+    if (!tutAllows('select')) return;        // select-all gated with the 'select' lesson
     state.selectedIds.clear();
     // Double-click selects ALL friendly bases (player + Lieutenant).
     for (const n of state.nodes) if (isAlly(n.owner, 'player')) state.selectedIds.add(n.id);
@@ -286,10 +287,13 @@ export function attachInput() {
 
   addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
-    if (k === 'w' || k === 'arrowup')    { state.panKeys.up = true; e.preventDefault(); }
-    if (k === 's' || k === 'arrowdown')  { state.panKeys.down = true; e.preventDefault(); }
-    if (k === 'a' || k === 'arrowleft')  { state.panKeys.left = true; e.preventDefault(); }
-    if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
+    // Pan keys frozen during the tutorial vision-lock (the 'view' lesson unlocks them).
+    if (!cameraLocked()) {
+      if (k === 'w' || k === 'arrowup')    { state.panKeys.up = true; e.preventDefault(); }
+      if (k === 's' || k === 'arrowdown')  { state.panKeys.down = true; e.preventDefault(); }
+      if (k === 'a' || k === 'arrowleft')  { state.panKeys.left = true; e.preventDefault(); }
+      if (k === 'd' || k === 'arrowright') { state.panKeys.right = true; e.preventDefault(); }
+    }
     if (e.key === 'Escape') { state.selectedIds.clear(); state.placeMode = null; state.salvoTarget = null; state.painting = null; }
     if (k === 'r') newGame();
     // HUD management: Tab fully hides the chrome (battle-only view); ? (or /)
@@ -299,10 +303,11 @@ export function attachInput() {
     if (e.key === '?' || e.key === '/') { e.preventDefault(); document.body.classList.toggle('help-open'); }
     // Pause toggle (Space). Sim, AI, particles, and elapsed clock freeze;
     // camera + render + HUD keep working so the player can survey + plan.
-    if (e.key === ' ' || e.code === 'Space') {
+    if ((e.key === ' ' || e.code === 'Space') && tutAllows('command')) {
       e.preventDefault();
       state.paused = !state.paused;
       document.body.classList.toggle('paused', state.paused);
+      if (state.tutorial) state.tutorial.didPause = true;   // tutorial "you tried pause" flag
     }
     // M — mute / unmute all sound (the M key is free now the minimap is gone;
     // the bottom-right minimap canvas + its replot-every-frame cost are gone).
@@ -329,12 +334,16 @@ export function attachInput() {
     // selection flips in one keystroke; otherwise just the hovered base.
     // Lieutenant is a real faction running the full enemy AI brain — you
     // two are allies, neither side attacks the other.
-    if (k === 'g') {
+    if (k === 'g' && tutAllows('command')) {
       toggleDelegationAt(nodeAt(state.mousePos.x, state.mousePos.y));
+      if (state.tutorial) state.tutorial.didG = true;       // tutorial "you tried delegate" flag
     }
-    if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
-    if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
-    if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);
+    // Step-zoom keys frozen during the tutorial vision-lock.
+    if (!cameraLocked()) {
+      if (e.key === '=' || e.key === '+') zoomBy(1.18, state.W / 2, state.H / 2);
+      if (e.key === '-' || e.key === '_') zoomBy(1 / 1.18, state.W / 2, state.H / 2);
+      if (e.key === '0') zoomBy(1 / state.zoom, state.W / 2, state.H / 2);
+    }
     // Speed keys are gated during the tutorial until the "speed" lesson unlocks
     // them (tutAllows → always true outside a tutorial).
     if (tutAllows('speed')) {
@@ -363,13 +372,14 @@ export function attachInput() {
     }
     // Hold-Fire toggle: H stockpiles drones at your factories; pressing again
     // launches the entire stockpile as one saturation salvo.
-    if (k === 'h') {
+    if (k === 'h' && tutAllows('command')) {
       if (state.holdFire) {
         releasePlayerStockpile();
         state.holdFire = false;
       } else {
         state.holdFire = true;
       }
+      if (state.tutorial) state.tutorial.didH = true;       // tutorial "you tried hold-fire" flag
     }
     // AI Worker toggle: Y moves the per-faction aiTick off the main thread.
     // Main thread keeps rendering / sim / combat / drones; the worker just

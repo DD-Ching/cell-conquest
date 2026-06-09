@@ -42,6 +42,12 @@ let count = 0;              // high-water mark of slots in use (dead slots inclu
 // never bounded; we only reclaim slots once they're provably empty. (Pure-flight
 // demo drones never detonate, so a live demo vortex correctly blocks the reset.)
 let _spawned = 0, _detonated = 0;
+// Generation token: bumped on every reset / node-count change. A hit readback
+// captures the gen at submit; if it no longer matches when the async map resolves
+// (a new game started during the ~1-frame latency), the callback is dropped — so
+// a prior game's detonation tally can never corrupt the new game's counters or
+// damage its nodes. (Found by the P1 adversarial review.)
+let _gen = 0;
 const gbuf = {};            // field -> GPUBuffer (the live, GPU-owned state)
 let movePipeline = null;
 let simBuf = null;          // uniform: dt, speed, turnR, count, arriveR, hitsCount
@@ -161,13 +167,20 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
 
   var h = heading[i];
-  var dh = atan2(dy, dx) - h;
+  // atan2(0,0) is undefined in WGSL (NaN on some backends); JS Math.atan2(0,0)=0,
+  // so match the CPU path — only steer toward the target when it isn't exactly on
+  // top of us (otherwise NaN would poison this drone's position forever).
+  let ang = select(0.0, atan2(dy, dx), (dx * dx + dy * dy) > 1e-6);
+  var dh = ang - h;
   if (dh > PI) { dh = dh - 2.0 * PI; } else if (dh < -PI) { dh = dh + 2.0 * PI; }
 
   let turnR = clamp(d * 0.7, sim.turnR * 0.3, sim.turnR);
   let maxTurn = (sim.speed / turnR) * sim.dt;
   dh = clamp(dh, -maxTurn, maxTurn);
   h = h + dh;
+  // Wrap heading into [-PI,PI) so an indefinitely-long orbit can't drift f32
+  // sin/cos precision as the angle accumulates (behaviour-neutral for cos/sin).
+  h = h - 2.0 * PI * floor((h + PI) / (2.0 * PI));
 
   posX[i] = x + cos(h) * sim.speed * sim.dt;
   posY[i] = y + sin(h) * sim.speed * sim.dt;
@@ -205,8 +218,22 @@ function getRB(dev, bytes) {
 }
 
 /** Number of nodes (sizes the per-node hit buffer). Set per game from
- *  state.nodes.length. */
-export function setSwarmNodeCount(n) { nodeCount = n | 0; if (isGpuReady()) ensureHits(Math.max(1, nodeCount)); }
+ *  state.nodes.length. A change invalidates in-flight readbacks (new map layout)
+ *  and prunes now-too-small pooled readback buffers so they don't leak. */
+export function setSwarmNodeCount(n) {
+  n = n | 0;
+  if (n !== nodeCount) {
+    _gen++;
+    // Drop pooled readback buffers too small for the new node count — getRB would
+    // otherwise leave them stranded (it only ever reuses bytes >= want or grows).
+    for (let i = _rbPool.length - 1; i >= 0; i--) {
+      const o = _rbPool[i];
+      if (!o.busy && o.bytes < n * 4) { o.buf.destroy(); _rbPool.splice(i, 1); }
+    }
+  }
+  nodeCount = n;
+  if (isGpuReady()) ensureHits(Math.max(1, nodeCount));
+}
 /** Register the CPU damage applier: (Uint32Array hitsPerNode, n) => void. */
 export function setSwarmHitHandler(fn) { _hitHandler = fn; }
 
@@ -248,22 +275,28 @@ export function stepSwarm(dt) {
   pass.dispatchWorkgroups(Math.ceil(count / 64));
   pass.end();
   // Copy this frame's hits to a readback buffer (same submit → ordered after the
-  // compute), then map it async and apply damage on the CPU.
+  // compute), then map it async and apply damage on the CPU. Capture the node
+  // count AND the generation at submit time — the callback must not read the live
+  // module values (a new game could change them during the map latency).
   let rb = null;
-  if (_hitHandler && nodeCount > 0) {
-    rb = getRB(dev, nodeCount * 4);
-    if (!rb.busy) { rb.busy = true; enc.copyBufferToBuffer(hitsBuf, 0, rb.buf, 0, nodeCount * 4); }
+  const nSub = nodeCount;
+  if (_hitHandler && nSub > 0) {
+    rb = getRB(dev, nSub * 4);
+    if (!rb.busy) { rb.busy = true; enc.copyBufferToBuffer(hitsBuf, 0, rb.buf, 0, nSub * 4); }
     else rb = null;
   }
   dev.queue.submit([enc.finish()]);
   if (rb) {
+    const gen = _gen;
     rb.buf.mapAsync(GPUMapMode.READ).then(() => {
       const arr = new Uint32Array(rb.buf.getMappedRange().slice(0));
       rb.buf.unmap(); rb.busy = false;
+      if (gen !== _gen) return;        // stale (a new game reset the swarm) — drop it
+      const lim = Math.min(nSub, arr.length);
       let sum = 0;
-      for (let i = 0; i < nodeCount; i++) sum += arr[i];
-      _detonated += sum;
-      _hitHandler(arr, nodeCount);
+      for (let i = 0; i < lim; i++) sum += arr[i];
+      if (Number.isFinite(sum)) _detonated += sum;
+      _hitHandler(arr, lim);
       // Whole pool spent (every spawned drone has detonated) → reclaim the slots
       // for the next strike. Buffers stay allocated; only the high-water mark
       // resets. NOT a cap — this only fires when nothing is left alive.
@@ -287,5 +320,7 @@ export function setSwarmTarget(tx, ty) {
 export function swarmBuffers() { return gbuf; }
 /** Live slot high-water mark (instances the renderer + compute walk). */
 export function swarmCount() { return count; }
-/** Reset the swarm (new game). Keeps the allocated buffers, drops the count. */
-export function resetSwarm() { count = 0; _spawned = 0; _detonated = 0; }
+/** Reset the swarm (new game). Keeps the allocated buffers, drops the count.
+ *  Bumps the generation so any in-flight readback from the prior game is dropped
+ *  when it resolves (no cross-game counter corruption / phantom damage). */
+export function resetSwarm() { count = 0; _spawned = 0; _detonated = 0; _gen++; }

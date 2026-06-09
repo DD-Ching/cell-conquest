@@ -123,13 +123,25 @@ function syncSize() {
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
+// Tear down a half-built init so a cold failure leaves NO residue (orphan overlay
+// canvas in the DOM, or a GPUCanvasContext configured against the device) — then
+// the CPU drone layer owns drawing cleanly. _failed stays set so we don't retry.
+function abortInit(e) {
+  if (e) console.warn('[gpu] drone render init failed — CPU render fallback', e);
+  try { if (ctx) ctx.unconfigure(); } catch (_) {}
+  ctx = null;
+  if (canvas) { canvas.remove(); canvas = null; }
+  pipeline = null;
+  _failed = true;
+}
+
 function init() {
   if (pipeline || _initing || _failed) return;
   _initing = true;
   try {
-    if (!ensureCanvas()) { _failed = true; return; }
+    if (!ensureCanvas()) { abortInit(); return; }
     ctx = canvas.getContext('webgpu');
-    if (!ctx) { console.warn('[gpu] no webgpu canvas context — drones stay on CPU render'); _failed = true; return; }
+    if (!ctx) { console.warn('[gpu] no webgpu canvas context — drones stay on CPU render'); abortInit(); return; }
     const dev = getDevice();
     format = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device: dev, format, alphaMode: 'premultiplied' });
@@ -145,8 +157,7 @@ function init() {
     camBuf = dev.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     console.log('[gpu] drone render pipeline ready — instanced delta-wings straight from the SoA buffers (P1a)');
   } catch (e) {
-    console.warn('[gpu] drone render init failed — CPU render fallback', e);
-    _failed = true;
+    abortInit(e);
   } finally {
     _initing = false;
   }

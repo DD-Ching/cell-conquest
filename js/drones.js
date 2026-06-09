@@ -1007,10 +1007,14 @@ function resolveSalvoTarget(s, salvoOwner, respectValue = true) {
 }
 
 // ---- GPU swarm amplifier (?gpu=1) -------------------------------------------
-// Drones-per-factory in a GPU swarm strike. UNCAPPED by design (the GPU pool
-// grows ×1.5, never caps) — this is just the per-press magnitude, scaled by the
-// factory's banked stockpile so a longer hold = a bigger wall (越聚越大).
-const GPU_SWARM_BASE_PER_FACTORY = 1500;
+// Magnitude SCALES with what the player actually mustered (PERF_ROADMAP.md P1):
+// each banked drone (stockpile at release + hold-fire overflow) is worth
+// GPU_SWARM_PER_BANK GPU drones, plus a small floor so a quick strike still
+// reads. UNCAPPED — the GPU pool grows ×1.5 and never caps; this only sets the
+// per-press count, so a longer hold = a bigger wall (越聚越大) instead of a flat
+// blob regardless of intent.
+const GPU_SWARM_FLOOR = 200;
+const GPU_SWARM_PER_BANK = 150;
 
 function nearestEnemyNode(x, y) {
   let best = null, bd = Infinity;
@@ -1024,17 +1028,25 @@ function nearestEnemyNode(x, y) {
 
 /** Unleash an uncapped GPU-resident swarm from every player factory — flown and
  *  detonated entirely on the GPU (PERF_ROADMAP.md P1). Each drone carries a node
- *  id so the GPU can tally detonations per node (applied as CPU damage). Targets
- *  the clicked salvo node if any, else each factory's nearest enemy node. The
- *  banked stockpile is folded into the count so holding fire builds a bigger wall. */
+ *  id so the GPU can tally detonations per node (applied as CPU damage).
+ *  Targeting: a clicked NODE steers the whole wall there; a clicked TURRET steers
+ *  it to the enemy node NEAREST that turret (the GPU path can't damage turrets yet
+ *  — P3 — so it converges on the region the player aimed at rather than silently
+ *  flying somewhere else); no click → each factory hits its own nearest enemy. */
 function launchGpuSwarmStrike(fixedTarget) {
   const list = [];
+  // One aim node for the whole strike when the player clicked a target.
+  let aimNode = null;
+  if (fixedTarget && fixedTarget.kind === 'node') aimNode = state.nodes[fixedTarget.id];
+  else if (fixedTarget) aimNode = nearestEnemyNode(fixedTarget.x, fixedTarget.y);
   for (const t of state.turrets) {
     if (t.owner !== 'player' || t.type !== 'factory') continue;
-    let node = (fixedTarget && fixedTarget.kind === 'node') ? state.nodes[fixedTarget.id] : null;
-    if (!node) node = nearestEnemyNode(t.x, t.y);
+    const node = aimNode || nearestEnemyNode(t.x, t.y);
     if (!node) continue;
-    const N = GPU_SWARM_BASE_PER_FACTORY + Math.round((t._gpuBank || 0) * 200);
+    // banked = stockpile snapshot taken before the CPU drain (releasePlayerStockpile)
+    //          + hold-fire overflow accrued while holding. Scales the wall to muster.
+    const banked = (t._gpuStrikeStock || 0) + (t._gpuBank || 0);
+    const N = GPU_SWARM_FLOOR + Math.round(banked * GPU_SWARM_PER_BANK);
     for (let i = 0; i < N; i++) {
       // golden-angle muster ring around the factory; each drone aims at the node
       // from ITS OWN position (not the factory's) so the stream converges and
@@ -1047,6 +1059,7 @@ function launchGpuSwarmStrike(fixedTarget) {
       });
     }
     t._gpuBank = 0;
+    t._gpuStrikeStock = 0;
   }
   if (list.length) spawnSwarm(list);
 }
@@ -1064,6 +1077,12 @@ function launchGpuSwarmStrike(fixedTarget) {
 export function releasePlayerStockpile() {
   const fixedTarget = resolveSalvoTarget(state.salvoTarget, 'player', false);
   let launched = 0;
+  // 0) Snapshot each player factory's banked stockpile BEFORE the drain loop
+  //    below zeroes dronesReady — the GPU swarm magnitude scales off this so it
+  //    reflects what was actually mustered, not a flat blob (?gpu=1).
+  for (const t of state.turrets) {
+    if (t.owner === 'player' && t.type === 'factory') t._gpuStrikeStock = t.dronesReady || 0;
+  }
   // 1) Flush the banked stockpile — fresh drones off every player factory.
   for (const t of state.turrets) {
     if (t.owner !== 'player' || t.type !== 'factory' || !t.dronesReady) continue;

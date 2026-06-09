@@ -212,10 +212,11 @@ export function newGame() {
 window.newGame = newGame;
 
 // GPU-resident swarm damage applier (?gpu=1). The GPU tallies, per enemy node,
-// how many drones detonated this frame; we apply that as node-unit damage on the
-// CPU (authoritative for node state). Same math as drones.js droneHit (a drone
-// chips units by DRONE_DAMAGE*0.3). Skips own/neutral nodes so a node captured
-// mid-flight is never friendly-fired. Registered once at boot.
+// how many drones detonated this frame; we apply that as node damage on the CPU
+// (authoritative for node state). Mirrors drones.js droneHit: each drone chips
+// units by DRONE_DAMAGE*0.3 AND has a 0.3 chance to kill a garrisoned engineer
+// (here applied as the expected value over c detonations, since c can be large).
+// Skips own/neutral nodes so a node captured mid-flight is never friendly-fired.
 function applySwarmHits(hits, n) {
   const nodes = state.nodes;
   const lim = Math.min(n, nodes.length);
@@ -225,6 +226,7 @@ function applySwarmHits(hits, n) {
     const node = nodes[i];
     if (!node || node.owner === 'neutral' || isAlly(node.owner, 'player')) continue;
     node.units = Math.max(0, node.units - c * DRONE_DAMAGE * 0.3);
+    if (node.engineers > 0) node.engineers = Math.max(0, node.engineers - Math.round(c * 0.3));
     node.flash = 1;                        // brief hit flash (decayed in simulate)
   }
 }

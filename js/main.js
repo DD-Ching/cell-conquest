@@ -402,10 +402,18 @@ function simulate(dt, combatDt = dt) {
   // DPS × dt is preserved because the active combat ticks use a doubled dt.
   if (P) _pt = performance.now();
   if (combatDt > 0) {
-    updateAntiAir(combatDt);
-    updateGroundTanks(combatDt);
-    updateArtillery(combatDt);
-    updateShells(combatDt);
+    if (P) {
+      let a = performance.now();
+      updateAntiAir(combatDt);     const b = performance.now(); state._pSumAA   += b - a;
+      updateGroundTanks(combatDt); const c = performance.now(); state._pSumTank += c - b;
+      updateArtillery(combatDt);   const d = performance.now(); state._pSumArty += d - c;
+      updateShells(combatDt);                                   state._pSumShell += performance.now() - d;
+    } else {
+      updateAntiAir(combatDt);
+      updateGroundTanks(combatDt);
+      updateArtillery(combatDt);
+      updateShells(combatDt);
+    }
   }
   if (P) { state._pSumCombat += performance.now() - _pt; _pt = performance.now(); }
   updateDrones(dt);
@@ -502,7 +510,19 @@ function loop() {
   // pause / gameOver (so the HUD keeps updating with FPS even when paused).
   state._perfFrameMs[state._perfIdx] = realDt * 1000;
   state._perfIdx = (state._perfIdx + 1) % state._perfFrameMs.length;
-  if (state._perfPhaseOn) state._pFrames++;
+  if (state._perfPhaseOn) {
+    state._pFrames++;
+    // Live combat-split readout (?perf): every ~3s log per-frame ms so the split
+    // can be read on a FOREGROUND tab (a headless/background tab throttles rAF, so
+    // this is the reliable way to see which combat pass owns the budget).
+    if (state._pFrames >= 180) {
+      const f = state._pFrames, r = (x) => (x / f).toFixed(1);
+      console.log(`[perf]/frame combat ${r(state._pSumCombat)}ms (AA ${r(state._pSumAA)} tank ${r(state._pSumTank)} arty ${r(state._pSumArty)} shell ${r(state._pSumShell)}) · drones ${r(state._pSumDrones)} · cache ${r(state._pSumCache)} · fleetMove ${r(state._pSumFleets)} — F${state.fleets.length} T${state.turrets.length}`);
+      state._pSumCache = state._pSumCombat = state._pSumDrones = state._pSumFleets = 0;
+      state._pSumAA = state._pSumTank = state._pSumArty = state._pSumShell = 0;
+      state._pFrames = 0;
+    }
+  }
   updateSnow(realDt);
   updateAudio(realDt);     // drone-swarm buzz + AA gunfire, spatialised by the live view
   updateHUD();
@@ -568,4 +588,5 @@ nnLoad();
 // state for outcome-neutrality tests. Off by default → nothing leaks into play.
 if (new URLSearchParams(location.search).has('perf')) {
   window.__state = state;
+  state._perfPhaseOn = true;     // start the phase counters so the live split logs
 }

@@ -197,6 +197,9 @@ export const state = {
   // _perfPhaseOn is false (the timers are skipped). Reset by the harness.
   _perfPhaseOn: false,
   _pSumCache: 0, _pSumCombat: 0, _pSumDrones: 0, _pSumFleets: 0, _pFrames: 0,
+  // Finer combat split (only summed when _perfPhaseOn) — pinpoints which of the
+  // four combat passes owns the ~52ms before porting any of it to WASM.
+  _pSumAA: 0, _pSumTank: 0, _pSumArty: 0, _pSumShell: 0,
   startTime: 0,
   elapsed: 0,
   lastTime: 0,

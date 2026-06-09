@@ -40,7 +40,10 @@ python3 serve.py 8770
 
 ## Repo
 
-- GitHub: https://github.com/DD-Ching/cell-conquest (private)
+- GitHub: https://github.com/DD-Ching/cell-conquest (**public**) — live on GitHub
+  Pages at https://dd-ching.github.io/cell-conquest/ (serves `main` root; the
+  index.html redirect preserves `?seed`/`?world`/`?gpu` query params). NOTE: repo
+  is PUBLIC — never commit secrets.
 - Branches: `main` (stable), `dev` (work-in-progress)
 - Multi-machine setup: same user, two checkouts (MacBook + Intel NUC).
   Always pull before starting work — the other machine may have pushed

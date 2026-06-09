@@ -36,6 +36,12 @@ const ALL_FIELDS = [...F32_FIELDS, ...U32_FIELDS];
 
 let cap = 0;                 // per-field element capacity
 let count = 0;              // high-water mark of slots in use (dead slots included)
+// Auto-recycle bookkeeping: total drones ever spawned vs total ever detonated.
+// When they're equal the pool is entirely dead, so we reset count→0 and reuse
+// the slots for the next strike. This is housekeeping, NOT a cap — live count is
+// never bounded; we only reclaim slots once they're provably empty. (Pure-flight
+// demo drones never detonate, so a live demo vortex correctly blocks the reset.)
+let _spawned = 0, _detonated = 0;
 const gbuf = {};            // field -> GPUBuffer (the live, GPU-owned state)
 let movePipeline = null;
 let simBuf = null;          // uniform: dt, speed, turnR, count, arriveR, hitsCount
@@ -111,6 +117,7 @@ export function spawnSwarm(list) {
   // Upload only the appended [count, count+n) slice of each field buffer.
   for (const f of ALL_FIELDS) dev.queue.writeBuffer(gbuf[f], count * 4, a[f], 0, n);
   count += n;
+  _spawned += n;
   return count;
 }
 
@@ -253,7 +260,14 @@ export function stepSwarm(dt) {
     rb.buf.mapAsync(GPUMapMode.READ).then(() => {
       const arr = new Uint32Array(rb.buf.getMappedRange().slice(0));
       rb.buf.unmap(); rb.busy = false;
+      let sum = 0;
+      for (let i = 0; i < nodeCount; i++) sum += arr[i];
+      _detonated += sum;
       _hitHandler(arr, nodeCount);
+      // Whole pool spent (every spawned drone has detonated) → reclaim the slots
+      // for the next strike. Buffers stay allocated; only the high-water mark
+      // resets. NOT a cap — this only fires when nothing is left alive.
+      if (count > 0 && _detonated >= _spawned) { count = 0; _spawned = 0; _detonated = 0; }
     }).catch(() => { rb.busy = false; });
   }
 }
@@ -274,4 +288,4 @@ export function swarmBuffers() { return gbuf; }
 /** Live slot high-water mark (instances the renderer + compute walk). */
 export function swarmCount() { return count; }
 /** Reset the swarm (new game). Keeps the allocated buffers, drops the count. */
-export function resetSwarm() { count = 0; }
+export function resetSwarm() { count = 0; _spawned = 0; _detonated = 0; }

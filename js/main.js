@@ -35,6 +35,7 @@ import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
 import { loadGPU, isGpuReady, gpuRequested } from './gpu/gpu-device.js';
 import { syncDronesToGPU, gpuDroneCount, verifyRoundTrip } from './gpu/drone-buffers.js';
+import { renderGPUDrones } from './gpu/drone-render.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
@@ -538,6 +539,14 @@ function loop() {
     const rT0 = performance.now();
     render();
     state._perfRenderMs[state._perfIdx] = performance.now() - rT0;
+  }
+  // GPU drone overlay (P1, ?gpu=1): pack the swarm into the SoA buffers and draw
+  // it instanced on its own canvas — one draw call for the whole swarm, no
+  // per-drone JS render. drawDroneFleets() stood aside above. Only in the
+  // main-thread render path (the render worker draws its own drones); when the
+  // GPU path is off this is a cheap no-op and the 2D layer drew the drones.
+  if (isGpuReady() && !renderBridge.isEnabled()) {
+    renderGPUDrones(syncDronesToGPU());
   }
   tutorialTick();          // guided-tutorial step machine (self-gates on state.tutorial)
   requestAnimationFrame(loop);

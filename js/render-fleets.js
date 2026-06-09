@@ -14,6 +14,7 @@ import {
   drawTroopSprite, drawEngineerSprite, drawDroneSprite, drawTankTurret,
 } from './sprites.js';
 import { curveOffsetForPoint, curveHeadingForPoint } from './road-curve.js';
+import { gpuDronesRendered } from './gpu/drone-render.js';
 
 /** Walk BACK along a fleet's road path by world-distance `d` from the leader's
  *  centerline position, returning the centerline point + the segment it lands on
@@ -171,6 +172,10 @@ export function drawTroopFleets(ctx, zoom, now) {
 
 // ---- Drones (delta-wing sprite + HP bar when damaged) ----
 export function drawDroneFleets(ctx, zoom, now) {
+  // GPU render path (P1, ?gpu=1) draws the whole swarm instanced on its own
+  // overlay canvas — stand aside so the swarm isn't drawn twice. Falls through
+  // to the 2D path whenever the GPU overlay is off / failed / not yet armed.
+  if (gpuDronesRendered()) return;
   const { vL, vT, vR, vB } = state._view;
   // Low LOD: paint drones as oriented triangles matching the full-LOD
   // delta-wing sprite size (~28 px tip-to-tail) so the swarm doesn't

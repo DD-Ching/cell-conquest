@@ -217,6 +217,12 @@ export function startLevel(idx) {
   const level = LEVELS[idx];
   if (!level) { graduate(); return; }
   buildLevelScenario(level);
+  // Drop the lobby overlay + un-freeze the sim (it's gated on !state.inLobby).
+  // Self-contained so EVERY entry path — lobby button, Next-Level, R restart —
+  // reliably leaves the menu. (The old tutorial relied on lobby.hideLobby();
+  // doing it here means a missing call can't strand the player behind the card.)
+  document.body.classList.remove('in-lobby');
+  state.inLobby = false;
   state.tutorial = {
     campaign: true, levelIdx: idx, i: 0,
     unlocked: new Set(level.unlock),

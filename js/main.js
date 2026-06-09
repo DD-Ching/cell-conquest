@@ -34,8 +34,11 @@ import {
 import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
 import { loadGPU, isGpuReady, gpuRequested } from './gpu/gpu-device.js';
-import { syncDronesToGPU, gpuDroneCount, verifyRoundTrip } from './gpu/drone-buffers.js';
+import { syncDronesToGPU, gpuDroneCount, verifyRoundTrip, gpuBuffers } from './gpu/drone-buffers.js';
 import { renderGPUDrones } from './gpu/drone-render.js';
+import {
+  stepSwarm, spawnSwarm, setSwarmTarget, swarmBuffers, swarmCount, resetSwarm,
+} from './gpu/swarm.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
@@ -107,6 +110,7 @@ export function newGame() {
   // start fading only once the cursor approaches them.
   updateHudFade(-9999, -9999);
   state.fleets = [];
+  resetSwarm();                     // drop any GPU-resident swarm from the prior game (?gpu=1)
   state.particles = [];
   state.selectedIds.clear();
   state.gameOver = false;
@@ -540,13 +544,19 @@ function loop() {
     render();
     state._perfRenderMs[state._perfIdx] = performance.now() - rT0;
   }
-  // GPU drone overlay (P1, ?gpu=1): pack the swarm into the SoA buffers and draw
-  // it instanced on its own canvas — one draw call for the whole swarm, no
-  // per-drone JS render. drawDroneFleets() stood aside above. Only in the
-  // main-thread render path (the render worker draws its own drones); when the
-  // GPU path is off this is a cheap no-op and the 2D layer drew the drones.
+  // GPU drone overlay (P1, ?gpu=1). Two swarms drawn instanced on one overlay:
+  //   1. the CPU-sim drones (state.fleets) packed via syncDronesToGPU — rendered
+  //      on GPU but still simulated on the CPU (the existing game, unchanged),
+  //   2. the GPU-RESIDENT swarm — flown entirely on the GPU (stepSwarm) with no
+  //      JS object per drone, so its count is unbounded (PERF_ROADMAP.md).
+  // drawDroneFleets() stood aside above. Off / worker-render → cheap no-op and
+  // the 2D layer drew the drones.
   if (isGpuReady() && !renderBridge.isEnabled()) {
-    renderGPUDrones(syncDronesToGPU());
+    if (!state.paused && !state.gameOver && !state.inLobby) stepSwarm(gameDt);
+    renderGPUDrones([
+      { buffers: gpuBuffers(),   count: syncDronesToGPU() },
+      { buffers: swarmBuffers(), count: swarmCount() },
+    ]);
   }
   tutorialTick();          // guided-tutorial step machine (self-gates on state.tutorial)
   requestAnimationFrame(loop);
@@ -610,10 +620,32 @@ if (new URLSearchParams(location.search).has('perf')) {
 //   __gpu.verify()  → pack + read posX back + confirm it matches the JS fleets
 // P0 changes nothing in the sim; this is purely a verification surface.
 if (gpuRequested()) {
+  // Scatter `n` GPU-resident drones in a ring around (cx,cy) all aimed at a
+  // single target — they bank in and form an orbiting vortex (proves the
+  // steerDrone port + UNBOUNDED count). Defaults to the current view centre.
+  const spawnSwarmDemo = (n = 20000, opts = {}) => {
+    const cx = opts.cx ?? (state.cameraX + (state.W || innerWidth) / (2 * state.zoom));
+    const cy = opts.cy ?? (state.cameraY + (state.H || innerHeight) / (2 * state.zoom));
+    const spread = opts.spread ?? 1400;
+    const tx = opts.tx ?? cx, ty = opts.ty ?? cy;
+    const owner = opts.owner ?? 'player';
+    const list = new Array(n);
+    for (let i = 0; i < n; i++) {
+      // deterministic golden-angle scatter (no RNG) so the ring reads cleanly
+      const a = i * 2.39996323, r = spread * Math.sqrt((i % 997) / 997);
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      list[i] = { x, y, tgtX: tx, tgtY: ty, owner, heading: a + Math.PI / 2 };
+    }
+    return spawnSwarm(list);
+  };
   window.__gpu = {
     ready: () => isGpuReady(),
     sync: () => syncDronesToGPU(),
     count: () => gpuDroneCount(),
     verify: () => verifyRoundTrip(),
+    // P1b GPU-resident swarm controls
+    swarm: spawnSwarmDemo,
+    swarmCount: () => swarmCount(),
+    swarmTarget: (x, y) => setSwarmTarget(x, y),
   };
 }

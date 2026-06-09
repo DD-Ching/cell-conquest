@@ -21,7 +21,6 @@
 // =====================================================
 
 import { getDevice, isGpuReady } from './gpu-device.js';
-import { gpuBuffers } from './drone-buffers.js';
 import { state } from '../state.js';
 import { COLOR } from '../factions.js';
 import { ownerKey } from '../wasm-bridge.js';
@@ -175,10 +174,12 @@ function uploadColors(dev) {
   dev.queue.writeBuffer(colorBuf, 0, t, 0, n * 4);
 }
 
-/** Draw the whole swarm in one instanced call. `count` = live drones already
- *  packed into the SoA buffers this frame (caller runs syncDronesToGPU first).
- *  No-op + leaves the CPU path drawing if the GPU render path isn't ready. */
-export function renderGPUDrones(count) {
+/** Draw one or more swarms, each in a single instanced call, onto the overlay.
+ *  `swarms` = [{ buffers, count }] where `buffers` has posX/posY/heading/owner
+ *  GPUBuffers (the drone-buffers.js SoA set, the GPU-resident swarm set, …) and
+ *  `count` is its live instance count. One render pass clears the overlay then
+ *  draws every swarm. No-op + leaves the CPU path drawing if GPU isn't ready. */
+export function renderGPUDrones(swarms) {
   if (!isGpuReady() || _failed) { _active = false; return; }
   if (!pipeline) { init(); if (!pipeline) { _active = false; return; } }
   _active = true;                       // we own the drone layer now (drawDroneFleets early-returns)
@@ -199,10 +200,12 @@ export function renderGPUDrones(count) {
       loadOp: 'clear', storeOp: 'store',
     }],
   });
-  if (count > 0) {
-    const b = gpuBuffers();
-    // Rebuilt every frame so a buffer regrow (new GPUBuffer identity) is picked
-    // up transparently — one bind group, one draw, no per-drone cost.
+  pass.setPipeline(pipeline);
+  for (const sw of swarms) {
+    if (!sw || !sw.buffers || sw.count <= 0) continue;
+    const b = sw.buffers;
+    // Bind group rebuilt every frame so a buffer regrow (new GPUBuffer identity)
+    // is picked up transparently — one bind group, one draw, no per-drone cost.
     const bind = dev.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
@@ -214,9 +217,8 @@ export function renderGPUDrones(count) {
         { binding: 5, resource: { buffer: colorBuf } },
       ],
     });
-    pass.setPipeline(pipeline);
     pass.setBindGroup(0, bind);
-    pass.draw(3, count);                // 3 verts (delta-wing), `count` instances
+    pass.draw(3, sw.count);             // 3 verts (delta-wing), `count` instances
   }
   pass.end();
   dev.queue.submit([enc.finish()]);

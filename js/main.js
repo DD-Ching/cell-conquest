@@ -6,8 +6,8 @@ import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
   MAX_SKIRMISH_TIME, DRONE_DAMAGE,
-  VICTORY_MIN_CLAIMED, VICTORY_HOLD_BASE, VICTORY_HOLD_MIN, VICTORY_HOLD_EXP,
-  VICTORY_URGENCY_RAMP, VICTORY_DRAIN,
+  VICTORY_APPEAR_MIN, VICTORY_SMILE_MIN, VICTORY_FLAT_MIN,
+  VICTORY_CURVE_K, VICTORY_TILT_GAIN, VICTORY_BALL_DAMP,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -130,7 +130,8 @@ export function newGame() {
   state.startTime = performance.now();
   state.elapsed = 0;
   state._domSide = null; state._domSince = 0;   // skirmish domination-lead tracker (legacy)
-  state._victoryMeter = 0; state._victoryInfo = null; state._victoryLastT = 0;   // tug-of-war meter
+  state._ballX = 0; state._ballV = 0; state._victoryInfo = null; state._victoryLastT = 0;   // victory balance (ball)
+  state._vizTilt = 0; state._vizCurve = 0;      // smoothed HUD display values
   // Reset Mars weather alongside the clock — lastChangeT is measured against
   // state.elapsed, so leaving it stale would freeze the weather machine (and
   // any in-progress sandstorm) for minutes into the new game.
@@ -267,38 +268,43 @@ function checkVictory() {
   }
   if (total === 0) return;
 
-  // ---- Victory Meter (tug-of-war / 拔河) ----
-  // A signed rope in [-1,+1]: pulled toward whichever side holds the bigger share
-  // of the OWNED map, FASTER the bigger that share (holdTime curve: ~10 min at a
-  // bare 50%, ~5 min at 70%, a quick finish near 100%); it DRAINS back toward the
-  // middle when no side holds a majority (so a 51/49 see-saw keeps swinging and
-  // nobody wins on a hair-thin edge); and a time-urgency multiplier ramps the rate
-  // (2× @20min, 3× @40min) so a deadlock still tightens to a finish. Only judged
-  // once VICTORY_MIN_CLAIMED of the whole map is claimed. Replaces the old flat
-  // 25-second domination that ended games the instant you edged ahead.
+  // ---- Victory Balance — a ball rolling on a morphing beam (天秤) ----
+  // Appears only in the late game (VICTORY_APPEAR_MIN). The beam's CURVATURE morphs
+  // over match-time: smile (∪, ball settles centre → deadlock) → flat (any lead
+  // slides it off → decisive) → frown (∩, unstable → sudden death). The territory
+  // lead (your owned-share − rival's) is a sideways TILT force; the ball rolls under
+  // tilt + curvature; whichever END it falls off (|x|≥1) decides the match.
   const vdt = Math.max(0, state.elapsed - (state._victoryLastT ?? state.elapsed));
   state._victoryLastT = state.elapsed;
-  const claimedFrac = total / state.nodes.length;
   const yf = yours / total, ef = topEnemy / total;
-  const engaged = claimedFrac >= VICTORY_MIN_CLAIMED;
-  const urgency = 1 + state.elapsed / VICTORY_URGENCY_RAMP;
-  const holdTime = (f) => VICTORY_HOLD_MIN +
-    (VICTORY_HOLD_BASE - VICTORY_HOLD_MIN) * Math.pow(Math.max(0, (1 - f) / 0.5), VICTORY_HOLD_EXP);
-  let M = state._victoryMeter || 0;
-  let leader = null, rate = 0;
-  if (engaged && yf >= 0.5 && yf > ef)      { rate = urgency / holdTime(yf); M += vdt * rate; leader = 'you'; }
-  else if (engaged && ef >= 0.5 && ef > yf) { rate = urgency / holdTime(ef); M -= vdt * rate; leader = 'enemy'; }
-  else { M -= Math.sign(M) * Math.min(Math.abs(M), vdt * VICTORY_DRAIN); }   // no majority → recenter
-  M = Math.max(-1, Math.min(1, M));
-  state._victoryMeter = M;
-  // Live countdown from the current rate (accelerates as urgency ramps → 緊迫感).
-  let countdown = Infinity;
-  if (leader === 'you'   && rate > 0) countdown = (1 - M) / rate;
-  else if (leader === 'enemy' && rate > 0) countdown = (1 + M) / rate;
-  state._victoryInfo = { engaged, yourShare: yf, enemyShare: ef, meter: M,
-                         leader, countdown, enemyOwner: topEnemyOwner };
-  if (M >= 1) { endGame(true,  `Sector domination — you held the line (${Math.round(yf * 100)}%).`); return; }
-  if (M <= -1) { endGame(false, 'A rival faction held the sector long enough to win.'); return; }
+  const tmin = state.elapsed / 60;
+  if (tmin >= VICTORY_APPEAR_MIN) {
+    // curvature kv ∈ [-1,+1]: +1 full smile (@SMILE_MIN), 0 flat (@FLAT_MIN), -1 frown (@FROWN_MIN)
+    let kv = (VICTORY_FLAT_MIN - tmin) / (VICTORY_FLAT_MIN - VICTORY_SMILE_MIN);
+    kv = Math.max(-1, Math.min(1, kv));
+    const lead = yf - ef;                       // your side positive
+    const tilt = -VICTORY_TILT_GAIN * lead;     // you lead → ball rolls to YOUR (left, −x) end
+    const kPhys = VICTORY_CURVE_K * kv;         // >0 restoring (smile), <0 runaway (frown)
+    let bx = state._ballX || 0, bv = state._ballV || 0;
+    // sub-step the integration so a fast-forward frame (big vdt) stays stable
+    let rem = vdt;
+    while (rem > 1e-4) {
+      const h = Math.min(0.05, rem); rem -= h;
+      const accel = -2 * kPhys * bx + tilt - VICTORY_BALL_DAMP * bv;
+      bv += accel * h;
+      bx += bv * h;
+      if (bx > 1.25) { bx = 1.25; bv = 0; } else if (bx < -1.25) { bx = -1.25; bv = 0; }
+    }
+    state._ballX = bx; state._ballV = bv;
+    const phase = kv > 0.25 ? 'deadlock' : kv < -0.25 ? 'suddendeath' : 'decisive';
+    state._victoryInfo = { active: true, yourShare: yf, enemyShare: ef, ballX: bx, ballV: bv,
+                           curvature: kv, lead, phase, enemyOwner: topEnemyOwner };
+    if (bx <= -1) { endGame(true,  `Sector won — the balance tipped your way (${Math.round(yf * 100)}%).`); return; }
+    if (bx >= 1)  { endGame(false, 'The balance tipped to a rival faction.'); return; }
+  } else {
+    state._ballX = 0; state._ballV = 0;
+    state._victoryInfo = { active: false };
+  }
 
   // Time-cap backstop — at the hard limit the larger side takes it.
   if (state.elapsed >= MAX_SKIRMISH_TIME) {
@@ -679,10 +685,14 @@ if (gpuRequested()) {
       // deterministic golden-angle scatter (no RNG) so the ring reads cleanly
       const a = i * 2.39996323, r = spread * Math.sqrt((i % 997) / 997);
       const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      // Each drone aims at a slightly DIFFERENT point so the swarm reads as a
+      // cloud of distinct drones, not a solid blob collapsed onto one pixel.
+      const ja = i * 1.61803399, jr = spread * 0.22 * Math.sqrt((i % 311) / 311);
+      const txj = tx + Math.cos(ja) * jr, tyj = ty + Math.sin(ja) * jr;
       // Combat (targetId set) → head straight at the target like a real strike.
       // Pure demo → tangential launch so the swarm forms the orbiting vortex.
-      const heading = (targetId != null) ? Math.atan2(ty - y, tx - x) : a + Math.PI / 2;
-      list[i] = { x, y, tgtX: tx, tgtY: ty, owner, targetId, heading };
+      const heading = (targetId != null) ? Math.atan2(tyj - y, txj - x) : a + Math.PI / 2;
+      list[i] = { x, y, tgtX: txj, tgtY: tyj, owner, targetId, heading };
     }
     return spawnSwarm(list);
   };

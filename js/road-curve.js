@@ -56,10 +56,18 @@ function edgeHash(aId, bId) {
  *  (curves disabled, or the edge is too short to bend cleanly). */
 export function roadBow(aId, bId, len) {
   if (!roadsCurved() || len < MIN_LEN) return 0;
-  const r = edgeHash(aId, bId);                 // 0..1
+  const r = edgeHash(aId, bId);                 // 0..1 (unordered)
   const sign = r < 0.5 ? -1 : 1;
   const mag = 0.5 + Math.abs(r - 0.5);          // 0.5 .. 1.0 of the cap
-  return sign * Math.min(MAX_BOW_ABS, len * MAX_BOW_FRAC) * mag;
+  // Orientation factor: the magnitude is order-independent, but every caller
+  // derives the perpendicular from its OWN (a→b) order, and that perpendicular
+  // FLIPS when the order reverses. A fleet traversing an edge high-id→low-id
+  // would then ride the OPPOSITE side of the chord from where the road is drawn
+  // (the "road bows up but units walk the down-arc" bug). Folding the order into
+  // the sign makes bow·perp invariant: reverse the order and BOTH flip, so the
+  // curve lands on the same side no matter who asks or which way they travel.
+  const orient = aId < bId ? 1 : -1;
+  return orient * sign * Math.min(MAX_BOW_ABS, len * MAX_BOW_FRAC) * mag;
 }
 
 /** Quadratic control point placing the curve's midpoint `bow` off the chord.

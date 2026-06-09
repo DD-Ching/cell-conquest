@@ -178,6 +178,12 @@ function buildLevelScenario(level) {
   state.regions = []; state.barriers = []; state.resourceBelts = [];
   state.fleets = []; state.selectedIds.clear();
   state.gameOver = false; state.timeScale = 1; state.holdFire = false;
+  // Wipe the PREVIOUS level's battlefield residue so it doesn't bleed into this
+  // one: burn scorches, in-flight tracers/shells, particles, and (critically)
+  // edge wrecks/nets — node ids are re-indexed 0..N, so a stale ekey(a,b) would
+  // otherwise paint phantom wreck piles on this level's roads.
+  state.scorches = []; state.tracers = []; state.shells = []; state.particles = [];
+  state.edgeData.clear(); state.wrecksByEdge.clear();
 
   resetEngineering();
   const keep = new Set(['player', enemy, 'ally1', 'neutral']);
@@ -226,6 +232,10 @@ export function startLevel(idx) {
   state.tutorial = {
     campaign: true, levelIdx: idx, i: 0,
     unlocked: new Set(level.unlock),
+    // Buildable turret types this level allows — enforced in engineering.placeTurretAt
+    // for EVERY owner, so DDCHING can't field tanks/artillery before the level that
+    // introduces them (and neither can you).
+    allowedBuilds: new Set(level.unlock.filter(u => u === 'antiair' || u === 'factory' || u === 'tank' || u === 'artillery')),
     acked: false, result: null, resultShownAt: 0,
     didG: false, didH: false, didPause: false,
   };

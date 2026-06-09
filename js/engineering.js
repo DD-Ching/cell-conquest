@@ -114,6 +114,12 @@ let nextTurretId = 1;
 export function placeTurretAt(x, y, type, byOwner) {
   const spec = BUILD_SPECS[type];
   if (!spec) return false;
+  // Campaign gating: a level unlocks a specific toolset, and NO owner — player
+  // OR DDCHING — may build a type outside it. The player is also blocked at the
+  // input layer, but the AI calls placeTurretAt directly, so THIS is what stops
+  // "the enemy has tanks on the air/flak level". Outside a campaign
+  // state.tutorial is null → unrestricted normal play.
+  if (state.tutorial && state.tutorial.allowedBuilds && !state.tutorial.allowedBuilds.has(type)) return false;
   // Lazy regen: walk the world fresh so the source-candidate test below
   // sees current unit counts. Cheap (O(N), called only on placement).
   catchUpAllNodes();
@@ -194,7 +200,12 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
   if (!anchor) return false;
   const path = (source.id === anchor.id) ? [source.id] : findPath(source.id, anchor.id, byOwner);
   if (!path || path.length < 1) return false;
-  const mx = (aN.x + bN.x) / 2, my = (aN.y + bN.y) / 2;
+  // The net engineer rides ROADS to an ENDPOINT of the target edge and deploys
+  // there — the net covers the whole edge regardless of where on it the engineer
+  // stands (engineerArrivedAtNetEdge keys on the edge, not the position). Aiming
+  // the final leg at the anchor NODE (not the edge midpoint) means the off-road
+  // dash is ~zero: no more "engineer drives across open dirt to the middle of the
+  // map to plant a net". Any vehicle that CAN use roads now does.
   source.units -= ENG_COST;
   state.fleets.push({
     _id: state._nextFleetId++,
@@ -202,7 +213,7 @@ export function placeNetOnEdge(roadA, roadB, byOwner) {
     segIdx: 0, segTraveled: 0,
     x: source.x, y: source.y,
     hp: ENG_HP,
-    finalX: mx, finalY: my,
+    finalX: anchor.x, finalY: anchor.y,
     targetEdgeA: roadA, targetEdgeB: roadB,
     offroad: false,
   });

@@ -160,6 +160,27 @@ export function simulateFleets(dt) {
     // driven by tanks.updateGroundTanks, not by road movement — skip them here.
     if (f.kind === 'tank' && (f.siegeNodeId !== undefined || f._idle)) continue;
 
+    // Tank roll-out: a freshly-built tank starts at its FACTORY (an arbitrary
+    // world point) and must reach the road graph before it can follow a path.
+    // Roll it OFF-ROAD straight to the first path node, THEN hand it to the
+    // normal road traversal below. Without this the tank snapped onto path[0]
+    // on its first tick and looked like it "emerged from" that node.
+    if (f.kind === 'tank' && f._approaching) {
+      const a0 = state.nodes[f.path[0]];
+      if (!a0) { f._approaching = false; }
+      else {
+        const ax = a0.x - f.x, ay = a0.y - f.y;
+        const ad = Math.hypot(ax, ay);
+        if (ad < 10) { f._approaching = false; f.segIdx = 0; f.segTraveled = 0; }
+        else {
+          const step = TANK_UNIT_SPEED * OFFROAD_SPEED_MUL * dt;
+          f.x += (ax / ad) * step; f.y += (ay / ad) * step;
+          f.heading = Math.atan2(ay, ax);
+          continue;
+        }
+      }
+    }
+
     // Deploy + assault + return: off-road final leg to a world point
     if ((f.kind === 'deploy' || f.kind === 'assault' || f.kind === 'return') && f.offroad) {
       const dx = f.finalX - f.x, dy = f.finalY - f.y;
@@ -173,7 +194,10 @@ export function simulateFleets(dt) {
               // Engineer keeps working: walk off-road to another road that needs work.
               const aN = state.nodes[res.redirect.a], bN = state.nodes[res.redirect.b];
               f.targetEdgeA = res.redirect.a; f.targetEdgeB = res.redirect.b;
-              f.finalX = (aN.x + bN.x) / 2; f.finalY = (aN.y + bN.y) / 2;
+              // Aim at the nearer ENDPOINT (a road junction), not the edge midpoint,
+              // so the engineer hops node-to-node instead of cutting across dirt.
+              const useA = Math.hypot(f.x - aN.x, f.y - aN.y) <= Math.hypot(f.x - bN.x, f.y - bN.y);
+              f.finalX = useA ? aN.x : bN.x; f.finalY = useA ? aN.y : bN.y;
               continue;
             }
           } else {

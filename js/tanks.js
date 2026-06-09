@@ -104,19 +104,26 @@ function pickTankTarget(owner, fromNode) {
 
 /** Launch a tank from `fromNode` toward the nearest frontier target. Returns
  *  true if it actually rolled out (a reachable target existed). */
-function dispatchTank(owner, fromNode) {
+function dispatchTank(owner, fromNode, factory) {
   const tgt = pickTankTarget(owner, fromNode);
   if (!tgt) return false;
+  // Spawn at the FACTORY (its real world point), not the nearest node — then roll
+  // off-road to fromNode (path[0]) and pick up the road graph there. This is what
+  // makes a tank visibly leave its factory instead of "appearing out of" a node.
+  const sx = factory ? factory.x : fromNode.x;
+  const sy = factory ? factory.y : fromNode.y;
+  const approaching = factory && Math.hypot(factory.x - fromNode.x, factory.y - fromNode.y) > 12;
   state.fleets.push({
     _id: state._nextFleetId++,
     kind: 'tank', owner,
     units: TANK_UNIT_HP,           // units doubles as HP — every unit-damage path chips it
     hpMax: TANK_UNIT_HP,
     path: tgt.path, segIdx: 0, segTraveled: 0,
-    x: fromNode.x, y: fromNode.y,
+    x: sx, y: sy,
     heading: 0,
     targetNodeId: tgt.node.id,
     _homeNodeId: fromNode.id,
+    _approaching: approaching,
   });
   return true;
 }
@@ -145,7 +152,7 @@ export function runTankProduction(dt) {
     const cap = TANK_CAP_PER_FACTORY * (factoryCount.get(t.owner) || 1);
     if ((liveByOwner.get(t.owner) || 0) >= cap) continue;     // at cap — hold this cycle
     const from = nearestAlliedNode(t.x, t.y, t.owner);
-    if (from && dispatchTank(t.owner, from)) {
+    if (from && dispatchTank(t.owner, from, t)) {
       liveByOwner.set(t.owner, (liveByOwner.get(t.owner) || 0) + 1);
     }
   }

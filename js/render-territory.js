@@ -142,7 +142,12 @@ export function drawTerritory(ctx, zoom = 1) {
   if (owned < 3) { lastSig = sig; factions = []; return; }   // nobody holds a patch yet
 
   const nowT = state.elapsed || 0;
-  if (sig !== lastSig && (lastBakeT < 0 || nowT - lastBakeT >= REBAKE_MIN_DT)) {
+  // Rebake when ownership changed AND either the debounce window elapsed OR the
+  // clock went BACKWARDS. A new game/level resets state.elapsed to 0 while
+  // lastBakeT still holds the prior game's large timestamp, so `nowT - lastBakeT`
+  // is hugely negative and the debounce would suppress the rebake for as long as
+  // the last level ran — that's why a finished level's turf lingered into the next.
+  if (sig !== lastSig && (lastBakeT < 0 || nowT < lastBakeT || nowT - lastBakeT >= REBAKE_MIN_DT)) {
     rebuild(); lastSig = sig; lastBakeT = nowT;
   }
   if (!factions.length) return;

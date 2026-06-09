@@ -76,7 +76,11 @@ function steerDrone(f, tx, ty, dt) {
   if (f.heading === undefined) f.heading = Math.atan2(dy, dx);
   let dh = Math.atan2(dy, dx) - f.heading;
   if (dh > Math.PI) dh -= 2 * Math.PI; else if (dh < -Math.PI) dh += 2 * Math.PI;
-  const turnR = Math.min(DRONE_TURN_RADIUS, d * 0.7);   // tighten near the target
+  // Floor the turn radius: as d→0 the old `d*0.7` drove turnR→0 and the per-tick
+  // turn cap (SPEED/turnR) →∞, so a drone whose target momentarily sat on top of
+  // it span in place at zero radius (unphysical). Clamp to ≥30% of the cruise
+  // radius so the tightest turn stays sharp-but-finite.
+  const turnR = Math.max(DRONE_TURN_RADIUS * 0.3, Math.min(DRONE_TURN_RADIUS, d * 0.7));
   const maxTurn = (DRONE_SPEED / turnR) * dt;
   if (dh > maxTurn) dh = maxTurn; else if (dh < -maxTurn) dh = -maxTurn;
   f.heading += dh;
@@ -776,6 +780,13 @@ function launchWave(t, liveByOwner, factoryCount) {
   liveByOwner.set(t.owner, live);
 }
 
+// AI drone-salvo cadence: each enemy faction fires ALL its factories together on
+// this beat (a coordinated 脈衝突襲), banking between beats. Re-adds the old
+// "gather then unleash" behaviour the AI lost — but driven from runFactoryProduction
+// (per-frame + timer), NOT the budget-gated hold-fire machine that used to deadlock.
+const AI_SALVO_PERIOD = 10;            // seconds between an AI faction's pulses
+const _aiSalvoNext = new Map();        // owner -> game-time of its next salvo
+
 /** Per-frame factory production for ALL owners. Called once per frame from
  *  main.js (dt = full frame game-time). Replaces the factory block that used to
  *  live in engineering.updateBuildings + the AI hold-fire machine in
@@ -791,6 +802,24 @@ export function runFactoryProduction(dt) {
     }
   }
   const liveByOwner = new Map(state.droneCountByOwner);   // snapshot start, mutate locally
+
+  // Decide which ENEMY factions fire a coordinated salvo THIS frame (player + the
+  // Lieutenant stay on responsive rolling waves; the player owns hold-fire on H).
+  const fireNow = new Map();
+  for (const [owner] of factoryCount) {
+    if (owner === 'player' || owner === 'ally1') continue;
+    let next = _aiSalvoNext.get(owner);
+    // First sight, or the clock jumped backwards (new game/level) → arm fresh,
+    // staggered per owner so factions don't all pulse on the same beat.
+    if (next === undefined || state.elapsed < next - AI_SALVO_PERIOD * 1.5) {
+      next = state.elapsed + AI_SALVO_PERIOD + (owner.length % 5);
+      _aiSalvoNext.set(owner, next);
+    }
+    if (state.elapsed >= next) {
+      fireNow.set(owner, true);
+      _aiSalvoNext.set(owner, state.elapsed + AI_SALVO_PERIOD + (owner.length % 5));
+    }
+  }
 
   for (const t of state.turrets) {
     if (t.type !== 'factory' || !t.active) continue;
@@ -814,10 +843,19 @@ export function runFactoryProduction(dt) {
       continue;
     }
 
-    // EVERYONE ELSE (AI/Lieutenant always; player when not Hold-Firing): rolling
-    // auto-wave — once a small batch has banked, launch it toward live targets.
-    // No hold-fire state machine, so it can never dead-lock at the cap.
-    if (t.dronesReady >= DRONE_WAVE_SIZE) {
+    // PLAYER (not hold-firing) + LIEUTENANT: responsive rolling auto-waves — once a
+    // small batch has banked, launch it. Keeps the player's own side reactive.
+    if (t.owner === 'player' || t.owner === 'ally1') {
+      if (t.dronesReady >= DRONE_WAVE_SIZE) launchWave(t, liveByOwner, factoryCount);
+      continue;
+    }
+
+    // ENEMY AI: coordinated pulse — bank between beats, then on the salvo beat
+    // every factory dumps its whole bank at once to saturate the AA wall (the
+    // "gather, then unleash" pulse). Overflow past the cap bleeds out so a long
+    // lull never wastes production, and because the dump is timer+per-frame
+    // driven it can NEVER dead-lock at the cap like the old hold-fire machine.
+    if (fireNow.get(t.owner) || t.dronesReady > FACTORY_MAX_STOCKPILE) {
       launchWave(t, liveByOwner, factoryCount);
     }
   }

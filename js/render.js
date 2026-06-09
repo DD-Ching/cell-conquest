@@ -46,6 +46,7 @@ import {
 import { drawTerritory } from './render-territory.js';
 import { drawTerritoryBorders } from './render-borders.js';
 import { drawProcgen } from './render-procgen.js';
+import { drawVictoryBalance } from './render-victory.js';
 
 // Re-export the public API. main.js still does `import { ... } from './render.js'`.
 export { buildHUD, updateHUD };
@@ -123,6 +124,9 @@ export function render() {
   // except the HUD, so it must sit after the world restore + before the banner.
   drawVignette(ctx, W, H);
   drawHoldFireBanner(ctx, W, now);
+  // Tug-of-war victory balance (天秤) — top-centre HUD; self-gates until the
+  // contested-domination meter is engaged. Screen space, above the world.
+  drawVictoryBalance(ctx, W, H, now);
   // Orientation aid — edge arrows to your bases, but ONLY when none is on
   // screen (you've lost track of your territory). Auto-hides otherwise.
   drawHomeIndicators(ctx, W, H, now);

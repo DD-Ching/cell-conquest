@@ -85,10 +85,25 @@ export const TERRITORY_EDGE_W_MUL = 0.60;  // connector width = medLen·this
 // lead wins outright, and a hard game-time cap awards the territory leader.
 // Domination is only judged once at least half the map is claimed, so an early
 // "I own 4 of the 6 grabbed nodes" can't trigger a premature victory.
-export const DOM_FRAC = 0.6;            // a side holding ≥ this share of OWNED nodes…
-export const DOM_HOLD_S = 25;           // …sustained this many game-seconds = domination win
+export const DOM_FRAC = 0.6;            // (legacy) kept for reference; superseded by the Victory Meter
+export const DOM_HOLD_S = 25;           // (legacy) the old flat hold — far too short, ended games abruptly
 export const DOM_MIN_CLAIMED = 0.5;     // …but only after this fraction of the whole map is claimed
 export const MAX_SKIRMISH_TIME = 3600;  // game-seconds hard cap → larger side wins (backstop)
+
+// ---- Contested-domination "Victory Meter" (tug-of-war / 拔河) ----------------
+// Supersedes the flat DOM_FRAC/DOM_HOLD_S win (which ended the game the instant you
+// edged ahead — "才正要開始轟炸就贏了"). A signed meter in [-1,+1] is pulled toward
+// whichever side holds the bigger share of the OWNED (non-neutral) map; the bigger
+// the share the faster it fills; it DRAINS back when the lead flips (the oscillation);
+// and a time-urgency multiplier ramps the rate so a deadlock still resolves. Tuned
+// generous so the endgame is long enough to mass up and unleash the swarm. The HUD
+// (render-victory.js) shows it as a tilting balance + countdown. checkVictory drives it.
+export const VICTORY_MIN_CLAIMED  = 0.5;    // meter idles until this fraction of the WHOLE map is claimed
+export const VICTORY_HOLD_BASE    = 600;    // seconds to win at a bare 50% owned-share (10 min)
+export const VICTORY_HOLD_MIN     = 24;     // seconds to win at ~100% owned-share (≈ a quick finish, not instant)
+export const VICTORY_HOLD_EXP     = 1.5;    // curve shape between the two (≈ 5 min at 70% owned-share)
+export const VICTORY_URGENCY_RAMP = 1200;   // +1× fill rate per this many game-seconds (2× @20min, 3× @40min)
+export const VICTORY_DRAIN        = 1 / 75; // meter recenters at this /sec when no side holds a majority
 
 // ---- Time / speed presets ----
 // 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME

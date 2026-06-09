@@ -5,7 +5,9 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
-  DOM_FRAC, DOM_HOLD_S, DOM_MIN_CLAIMED, MAX_SKIRMISH_TIME, DRONE_DAMAGE,
+  MAX_SKIRMISH_TIME, DRONE_DAMAGE,
+  VICTORY_MIN_CLAIMED, VICTORY_HOLD_BASE, VICTORY_HOLD_MIN, VICTORY_HOLD_EXP,
+  VICTORY_URGENCY_RAMP, VICTORY_DRAIN,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -127,7 +129,8 @@ export function newGame() {
   document.body.classList.remove('tut-active');
   state.startTime = performance.now();
   state.elapsed = 0;
-  state._domSide = null; state._domSince = 0;   // skirmish domination-lead tracker
+  state._domSide = null; state._domSince = 0;   // skirmish domination-lead tracker (legacy)
+  state._victoryMeter = 0; state._victoryInfo = null; state._victoryLastT = 0;   // tug-of-war meter
   // Reset Mars weather alongside the clock — lastChangeT is measured against
   // state.elapsed, so leaving it stale would freeze the weather machine (and
   // any in-progress sandstorm) for minutes into the new game.
@@ -250,7 +253,7 @@ function checkVictory() {
 
   // ---- Resolution so an 800-node free-for-all can't stalemate forever ----
   // Territory tally over OWNED nodes: your side vs the single strongest rival.
-  let total = 0, yours = 0, topEnemy = 0;
+  let total = 0, yours = 0, topEnemy = 0, topEnemyOwner = null;
   const enemyCount = new Map();
   for (const n of state.nodes) {
     if (n.owner === 'neutral') continue;
@@ -259,25 +262,43 @@ function checkVictory() {
     else {
       const c = (enemyCount.get(n.owner) || 0) + 1;
       enemyCount.set(n.owner, c);
-      if (c > topEnemy) topEnemy = c;
+      if (c > topEnemy) { topEnemy = c; topEnemyOwner = n.owner; }
     }
   }
   if (total === 0) return;
 
-  // Domination — a side holding ≥ DOM_FRAC of the map, sustained DOM_HOLD_S, but
-  // only once at least DOM_MIN_CLAIMED of the whole map is claimed (no early win
-  // off a handful of grabbed nodes). _domSide/_domSince track the held lead.
-  if (total >= state.nodes.length * DOM_MIN_CLAIMED) {
-    const yoursFrac = yours / total, enemyFrac = topEnemy / total;
-    const side = yoursFrac >= DOM_FRAC ? 'you' : enemyFrac >= DOM_FRAC ? 'enemy' : null;
-    if (side && state._domSide === side) {
-      if (state.elapsed - state._domSince >= DOM_HOLD_S) {
-        if (side === 'you') endGame(true,  `Sector domination — you hold ${Math.round(yoursFrac * 100)}% of the map.`);
-        else                endGame(false, `A rival faction has seized ${Math.round(enemyFrac * 100)}% of the sector.`);
-        return;
-      }
-    } else { state._domSide = side; state._domSince = state.elapsed; }
-  } else { state._domSide = null; }
+  // ---- Victory Meter (tug-of-war / 拔河) ----
+  // A signed rope in [-1,+1]: pulled toward whichever side holds the bigger share
+  // of the OWNED map, FASTER the bigger that share (holdTime curve: ~10 min at a
+  // bare 50%, ~5 min at 70%, a quick finish near 100%); it DRAINS back toward the
+  // middle when no side holds a majority (so a 51/49 see-saw keeps swinging and
+  // nobody wins on a hair-thin edge); and a time-urgency multiplier ramps the rate
+  // (2× @20min, 3× @40min) so a deadlock still tightens to a finish. Only judged
+  // once VICTORY_MIN_CLAIMED of the whole map is claimed. Replaces the old flat
+  // 25-second domination that ended games the instant you edged ahead.
+  const vdt = Math.max(0, state.elapsed - (state._victoryLastT ?? state.elapsed));
+  state._victoryLastT = state.elapsed;
+  const claimedFrac = total / state.nodes.length;
+  const yf = yours / total, ef = topEnemy / total;
+  const engaged = claimedFrac >= VICTORY_MIN_CLAIMED;
+  const urgency = 1 + state.elapsed / VICTORY_URGENCY_RAMP;
+  const holdTime = (f) => VICTORY_HOLD_MIN +
+    (VICTORY_HOLD_BASE - VICTORY_HOLD_MIN) * Math.pow(Math.max(0, (1 - f) / 0.5), VICTORY_HOLD_EXP);
+  let M = state._victoryMeter || 0;
+  let leader = null, rate = 0;
+  if (engaged && yf >= 0.5 && yf > ef)      { rate = urgency / holdTime(yf); M += vdt * rate; leader = 'you'; }
+  else if (engaged && ef >= 0.5 && ef > yf) { rate = urgency / holdTime(ef); M -= vdt * rate; leader = 'enemy'; }
+  else { M -= Math.sign(M) * Math.min(Math.abs(M), vdt * VICTORY_DRAIN); }   // no majority → recenter
+  M = Math.max(-1, Math.min(1, M));
+  state._victoryMeter = M;
+  // Live countdown from the current rate (accelerates as urgency ramps → 緊迫感).
+  let countdown = Infinity;
+  if (leader === 'you'   && rate > 0) countdown = (1 - M) / rate;
+  else if (leader === 'enemy' && rate > 0) countdown = (1 + M) / rate;
+  state._victoryInfo = { engaged, yourShare: yf, enemyShare: ef, meter: M,
+                         leader, countdown, enemyOwner: topEnemyOwner };
+  if (M >= 1) { endGame(true,  `Sector domination — you held the line (${Math.round(yf * 100)}%).`); return; }
+  if (M <= -1) { endGame(false, 'A rival faction held the sector long enough to win.'); return; }
 
   // Time-cap backstop — at the hard limit the larger side takes it.
   if (state.elapsed >= MAX_SKIRMISH_TIME) {

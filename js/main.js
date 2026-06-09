@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
+  DOM_FRAC, DOM_HOLD_S, DOM_MIN_CLAIMED, MAX_SKIRMISH_TIME,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -118,6 +119,7 @@ export function newGame() {
   document.body.classList.remove('tut-active');
   state.startTime = performance.now();
   state.elapsed = 0;
+  state._domSide = null; state._domSince = 0;   // skirmish domination-lead tracker
   // Reset Mars weather alongside the clock — lastChangeT is measured against
   // state.elapsed, so leaving it stale would freeze the weather machine (and
   // any in-progress sandstorm) for minutes into the new game.
@@ -202,25 +204,57 @@ window.newGame = newGame;
 
 function checkVictory() {
   if (state.gameOver) return;
-  // During the tutorial the lesson owns its own ending (finishTutorial) — the
-  // normal Victory/Defeat modal must NOT fire (e.g. if a drone wave clips the
-  // base, or capturing the enemy HQ eliminates them).
+  // During the tutorial/campaign the level owns its own ending (campaignTick) —
+  // the normal Victory/Defeat modal must NOT fire here.
   if (state.tutorial) return;
-  const owners = new Set(state.nodes.map(n => n.owner));
-  for (const f of state.fleets) owners.add(f.owner);
-  owners.delete('neutral');
-  // "Your side" = any owner allied with the player (player + Lieutenant
-  // are on the same side). Defeat only triggers when NO ally of yours
-  // owns a node or in-flight fleet — delegating every base to the
-  // Lieutenant must NOT end the game.
-  let yoursAlive = false;
-  let enemyAlive = false;
-  for (const o of owners) {
-    if (isAlly(o, 'player')) yoursAlive = true;
-    else                     enemyAlive = true;
+
+  // "Your side" = any owner allied with the player (player + Lieutenant share an
+  // army). Alive = owns a node OR an in-flight fleet, so delegating every base to
+  // the Lieutenant (or being mid-assault with no bases) doesn't end the game.
+  const owners = new Set();
+  for (const n of state.nodes) if (n.owner !== 'neutral') owners.add(n.owner);
+  for (const f of state.fleets) if (f.owner !== 'neutral') owners.add(f.owner);
+  let yoursAlive = false, enemyAlive = false;
+  for (const o of owners) { if (isAlly(o, 'player')) yoursAlive = true; else enemyAlive = true; }
+  if (!yoursAlive)      { endGame(false, 'Your forces have been wiped out.'); return; }
+  if (!enemyAlive)      { endGame(true,  `Total domination in ${formatTime(state.elapsed)}.`); return; }
+
+  // ---- Resolution so an 800-node free-for-all can't stalemate forever ----
+  // Territory tally over OWNED nodes: your side vs the single strongest rival.
+  let total = 0, yours = 0, topEnemy = 0;
+  const enemyCount = new Map();
+  for (const n of state.nodes) {
+    if (n.owner === 'neutral') continue;
+    total++;
+    if (isAlly(n.owner, 'player')) yours++;
+    else {
+      const c = (enemyCount.get(n.owner) || 0) + 1;
+      enemyCount.set(n.owner, c);
+      if (c > topEnemy) topEnemy = c;
+    }
   }
-  if (!yoursAlive)      endGame(false, 'Your forces have been wiped out.');
-  else if (!enemyAlive) endGame(true,  `Total domination in ${formatTime(state.elapsed)}.`);
+  if (total === 0) return;
+
+  // Domination — a side holding ≥ DOM_FRAC of the map, sustained DOM_HOLD_S, but
+  // only once at least DOM_MIN_CLAIMED of the whole map is claimed (no early win
+  // off a handful of grabbed nodes). _domSide/_domSince track the held lead.
+  if (total >= state.nodes.length * DOM_MIN_CLAIMED) {
+    const yoursFrac = yours / total, enemyFrac = topEnemy / total;
+    const side = yoursFrac >= DOM_FRAC ? 'you' : enemyFrac >= DOM_FRAC ? 'enemy' : null;
+    if (side && state._domSide === side) {
+      if (state.elapsed - state._domSince >= DOM_HOLD_S) {
+        if (side === 'you') endGame(true,  `Sector domination — you hold ${Math.round(yoursFrac * 100)}% of the map.`);
+        else                endGame(false, `A rival faction has seized ${Math.round(enemyFrac * 100)}% of the sector.`);
+        return;
+      }
+    } else { state._domSide = side; state._domSince = state.elapsed; }
+  } else { state._domSide = null; }
+
+  // Time-cap backstop — at the hard limit the larger side takes it.
+  if (state.elapsed >= MAX_SKIRMISH_TIME) {
+    if (yours >= topEnemy) endGame(true,  `Time limit — you held the most ground (${yours} bases).`);
+    else                   endGame(false, 'Time limit — a rival faction held more ground.');
+  }
 }
 
 function endGame(win, sub) {

@@ -261,15 +261,23 @@ export function engineerArrivedAtNetEdge(f) {
   if (!edge) return { consumed: true };
   if (edge.wrecks && edge.wrecks.length > 0) {
     const n = Math.min(NET_ENG_WRECK_CLEAR, edge.wrecks.length);
-    edge.wrecks.splice(0, n);    // remove the n oldest piles
+    edge.wrecks.splice(0, n);    // shove the n oldest piles aside
     flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#ffd066');
-    return { consumed: true };
+    // The engineer SURVIVES — clearing pushes wreckage aside, it doesn't consume
+    // the engineer. Keep working: stay on THIS edge while it's still clogged,
+    // else move to the next road that needs it. Only vanish when nothing's left.
+    const more = (edge.wrecks.length > 0)
+      ? { a: f.targetEdgeA, b: f.targetEdgeB }
+      : findNetWorkRedirect(f.owner, f.x, f.y);
+    return more ? { consumed: false, redirect: more } : { consumed: true };
   }
   if (edge.netLevel < NET_LEVEL_MAX) {
     edge.netLevel += 1;
     edge.netCharges = NET_CHARGES_LEVEL[edge.netLevel];
     flashEdgeWork(f.targetEdgeA, f.targetEdgeB, '#e8d6a8');
-    return { consumed: true };
+    // Likewise survive a net-raise and roll on to the next job if there is one.
+    const more = findNetWorkRedirect(f.owner, f.x, f.y);
+    return more ? { consumed: false, redirect: more } : { consumed: true };
   }
   const redirect = findNetWorkRedirect(f.owner, f.x, f.y);
   if (!redirect) return { consumed: true };

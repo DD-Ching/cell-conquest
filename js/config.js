@@ -78,6 +78,18 @@ export const TERRITORY_FADE_FULL  = 0.85;
 export const TERRITORY_NODE_R_MUL = 0.55;  // disc radius = medLen·this (+ node.size)
 export const TERRITORY_EDGE_W_MUL = 0.60;  // connector width = medLen·this
 
+// ---- Skirmish resolution (so a big map can't stalemate forever) ----
+// The campaign owns its own win/loss (capture DDCHING HQ). A free-for-all
+// skirmish previously only ended on total wipeout — which on an 800-node map
+// basically never happens — so these give it a real finish: a decisive sustained
+// lead wins outright, and a hard game-time cap awards the territory leader.
+// Domination is only judged once at least half the map is claimed, so an early
+// "I own 4 of the 6 grabbed nodes" can't trigger a premature victory.
+export const DOM_FRAC = 0.6;            // a side holding ≥ this share of OWNED nodes…
+export const DOM_HOLD_S = 25;           // …sustained this many game-seconds = domination win
+export const DOM_MIN_CLAIMED = 0.5;     // …but only after this fraction of the whole map is claimed
+export const MAX_SKIRMISH_TIME = 3600;  // game-seconds hard cap → larger side wins (backstop)
+
 // ---- Time / speed presets ----
 // 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME
 // per-frame sim budget as 20× — the sub-step loop in main.js is capped at 10

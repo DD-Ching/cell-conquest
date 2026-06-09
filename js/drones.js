@@ -401,6 +401,12 @@ function droneHit(drone) {
  *  active drone net — if so, the net intercepts the drone instead of the
  *  fleet taking damage. Returns true if the fleet was hit (no net). */
 function droneHitFleet(drone, fleet) {
+  // Never friendly-fire. The WASM hunt scan (unlike the JS fallback) packs ALL
+  // ground fleets regardless of owner, so a drone can lock onto — and dive at —
+  // its own side's engineer/convoy. Mirror droneHit()'s guard as the final line
+  // of defence: abort the hit (drone still detonates harmlessly) so an enemy
+  // drone can never blow up its own engineer.
+  if (isAlly(fleet.owner, drone.owner)) return false;
   let edge = null;
   if (fleet.path && fleet.segIdx < fleet.path.length - 1) {
     edge = getEdge(fleet.path[fleet.segIdx], fleet.path[fleet.segIdx + 1]);
@@ -540,7 +546,12 @@ export function updateDrones(dt) {
       const gIdx = wasmHuntIdx[f._huntSlot];
       if (gIdx >= 0) {
         const g = huntGrounds[gIdx];
-        if (g && !g._dead) {
+        // huntGrounds is packed without an owner filter (the JS fallback below
+        // checks isAlly per-bucket; the wasm scan can't, since one ground list
+        // is shared across drones of every faction). Re-check here so a drone
+        // never locks onto a friendly fleet — the source of "enemy drone bombs
+        // its own engineer".
+        if (g && !g._dead && !isAlly(g.owner, f.owner)) {
           const dx = g.x - f.x, dy = g.y - f.y;
           huntD2 = dx * dx + dy * dy;
           huntFleet = g;

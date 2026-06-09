@@ -141,27 +141,29 @@ export function drawNodes(ctx, zoom, now) {
     return;
   }
 
-  // Visible set — 2.4× halo margin to keep the glow gradient inside the cull.
+  // Visible set — 1.6× halo margin to keep the glow gradient inside the cull.
   const visible = [];
   for (const n of state.nodes) {
-    const halo = n.size * 2.4;
+    const halo = n.size * 1.6;
     if (n.x + halo < vL || n.x - halo > vR || n.y + halo < vT || n.y - halo > vB) continue;
     visible.push(n);
   }
 
-  // Pass 1 — glow halos (alpha baked into gradient stops).
+  // Pass 1 — tight glow halos. Just a soft rim that lifts the node body off the
+  // ground; the faction's *area* is now carried by drawTerritory's turf fill, so
+  // this no longer needs the fat 2.4× aura that read as an ugly ring/blob.
   for (const n of visible) {
     const glow = GLOW[n.owner] || GLOW.neutral || 'rgba(160,135,116,0.3)';
     if (!GLOW[n.owner] && !_warnedOwners.has(n.owner)) {
       console.warn('[render] no GLOW for owner', n.owner, '— check rollFactions');
       _warnedOwners.add(n.owner);
     }
-    const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.5, n.x, n.y, n.size * 2.4);
+    const grad = ctx.createRadialGradient(n.x, n.y, n.size * 0.6, n.x, n.y, n.size * 1.45);
     grad.addColorStop(0, glow);
     grad.addColorStop(1, 'transparent');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(n.x, n.y, n.size * 2.4, 0, Math.PI * 2);
+    ctx.arc(n.x, n.y, n.size * 1.45, 0, Math.PI * 2);
     ctx.fill();
   }
 

@@ -1,146 +1,134 @@
 // =====================================================
-// Territory floor tint — late-game turf shading.
+// Territory turf — geometric area fill.
 //
-// Paints a soft, faction-coloured wash on the GROUND beneath connected
-// friendly nodes so an established empire reads as owned turf (the "領土"
-// feel). Sits at the very bottom of the world layers (just above terrain,
-// below the hex grid / roads / units) so it tints the floor without ever
-// covering gameplay elements.
+// Paints each faction's holdings as a SOLID GEOMETRIC AREA: triangulate the
+// faction's owned nodes (Delaunay), drop the long, stretched triangles that
+// would bridge far-apart clusters (an alpha-shape), and fill what remains in
+// the faction colour. The enclosed land reads as turf — "圍起來的地方就是藍色".
 //
-// Cheap by construction:
-//   • Baked once into a small FIXED-size offscreen buffer (≤ TERRITORY_TEX_MAX
-//     on the long side). Memory is independent of WORLD size — the 12000×9000
-//     theatre costs the same few MB as a tiny arena. Re-baked ONLY when
-//     ownership changes (a cheap per-frame owners-hash detects this).
-//   • Per frame we just blit that buffer, upscaled, under one globalAlpha.
-//     The bilinear upscale is what turns the low-res node blobs into a soft
-//     territory wash. When the wash is invisible (early/mid game) we early-out
-//     after a single O(nodes) hash pass.
+// This replaces the old disc + capsule "wash" (a node got a fat translucent
+// halo and same-owner edges got fat capsules between them) which, with only a
+// couple of nodes, drew as a lumpy dog-bone blob. The triangle mesh gives a
+// crisp frontier instead.
 //
-// "後期漸漸的安定之後才會變" — the wash is gated on how settled the game is:
-// the fade is driven by the fraction of the map that's been claimed
-// (TERRITORY_FADE_START → FULL). Early/mid game shows nothing; as neutrals get
-// eaten and the board stabilises, each faction's turf fades in. The proxy
-// self-calibrates to any game length or speed.
+// Three layers, bottom→top:
+//   • fill      — the union of kept triangles, one flat colour (one Path2D
+//                 fill ⇒ overlaps don't double-darken).
+//   • internal  — faint same-colour mesh lines between interior nodes (the
+//                 "圍成一堆三角形" read; LOD'd out at deep overview).
+//   • boundary  — brighter frontier stroke on edges owned by ONE triangle.
+//
+// Cheap by construction: the triangulation is rebuilt only when ownership
+// changes (a cheap per-frame owners-hash detects this) and is debounced so a
+// burst of captures can't thrash it. Per frame we just fill a cached Path2D
+// and stroke two cached segment lists.
 //
 // Worker-safe: render.js calls drawTerritory() in BOTH the main thread and the
-// render worker. Both have state.nodes / state.adj and a populated COLOR map
-// (the worker mirrors it from the snapshot), and the offscreen buffer uses
-// OffscreenCanvas when `document` is absent (worker) or a detached <canvas>
-// otherwise.
+// render worker. Both have state.nodes and a populated COLOR map (the worker
+// mirrors it from the snapshot); delaunay() + Path2D are pure / available in a
+// worker context.
 // =====================================================
 import { state } from './state.js';
 import { COLOR } from './factions.js';
-import { dist } from './util.js';
-import { darken } from './tactical-theme.js';
-import {
-  WORLD_W, WORLD_H, TERRITORY_TEX_MAX, TERRITORY_MAX_ALPHA,
-  TERRITORY_FADE_START, TERRITORY_FADE_FULL,
-  TERRITORY_NODE_R_MUL, TERRITORY_EDGE_W_MUL,
-} from './config.js';
+import { delaunay } from './util.js';
+import { TERRITORY_MAX_ALPHA } from './config.js';
 
-let buf = null, bufCtx = null;   // offscreen bake buffer + its 2D context
-let bufW = 0, bufH = 0, scale = 1;
-let lastSig = -1;                // owners-hash of the last bake (re-bake trigger)
+// ---- Tuning (render-side, not gameplay) ----
+const FILL_ALPHA      = Math.max(0.24, TERRITORY_MAX_ALPHA); // turf body opacity (≥0.24 so warm factions still read over the rust ground)
+const BOUNDARY_ALPHA  = 0.62;                // frontier outline opacity
+const INTERNAL_ALPHA  = 0.10;                // interior mesh-line opacity
+const ALPHA_SHAPE_FAC = 2.2;                 // drop a triangle whose longest edge
+                                             //   exceeds this × the faction's median
+                                             //   triangle-edge length (carves concavities,
+                                             //   stops far clusters bridging across the map)
+const REBAKE_MIN_DT   = 0.4;                 // s of game time between rebuilds (debounce)
+const INTERNAL_MIN_ZOOM = 0.22;             // hide interior mesh below this zoom (overview)
 
-function makeCanvas(w, h) {
-  if (typeof document !== 'undefined') {
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h; return c;
-  }
-  return new OffscreenCanvas(w, h);
-}
+// Cache: one entry per faction with ≥3 owned nodes worth drawing.
+let factions = [];           // [{ color, fill:Path2D, boundary:[x1,y1,x2,y2,…], internal:[…] }]
+let lastSig = -1, lastBakeT = -1;
 
-/** (Re)create the bake buffer sized to the current world, capped on the long
- *  side so memory stays independent of WORLD dims. Forces a re-bake when the
- *  buffer is rebuilt (e.g. a preset changed the world between games). */
-function ensureBuffer() {
-  scale = TERRITORY_TEX_MAX / Math.max(WORLD_W, WORLD_H);
-  const w = Math.max(1, Math.round(WORLD_W * scale));
-  const h = Math.max(1, Math.round(WORLD_H * scale));
-  if (buf && bufW === w && bufH === h) return;
-  buf = makeCanvas(w, h);
-  bufCtx = buf.getContext('2d');
-  bufW = w; bufH = h;
-  lastSig = -1;
-}
+const elen = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-/** Paint each faction's turf into the low-res buffer at FULL opacity (the
- *  per-frame blit applies the fade). Thick connectors along same-owner
- *  adjacency edges + a disc at every owned node → a solid blob the upscale
- *  softens into territory. */
-function bake() {
-  bufCtx.clearRect(0, 0, bufW, bufH);
-  bufCtx.lineCap = 'round';
-  bufCtx.lineJoin = 'round';
-
-  // Self-calibrate footprint size off the median same-owner edge length so the
-  // wash fills inter-node gaps at any density. (adj is shipped to the worker;
-  // state.roads is not — iterate adjacency, each undirected edge once.)
-  let sumLen = 0, nLen = 0;
-  for (const [id, nbrs] of state.adj) {
-    const a = state.nodes[id];
-    if (!a || a.owner === 'neutral') continue;
-    for (const nb of nbrs) {
-      if (nb <= id) continue;
-      const b = state.nodes[nb];
-      if (!b || b.owner !== a.owner) continue;
-      sumLen += dist(a, b); nLen++;
-    }
-  }
-  const medLen = nLen ? sumLen / nLen : 400;
-
-  // Per-owner SECTOR pass: draw a bright, slightly-larger border, then overpaint
-  // a darker, smaller fill. Within a faction the fills cover internal seams,
-  // leaving colour only on the OUTER frontline → a controlled sector with a
-  // glowing border (the upscale softens it into a frontline) instead of a soft
-  // uniform blob.
-  const edgeW  = Math.max(2, medLen * TERRITORY_EDGE_W_MUL * scale);
-  const border = Math.max(2, edgeW * 0.22);
-  const owners = new Set();
-  for (const n of state.nodes) if (n && n.owner !== 'neutral' && COLOR[n.owner]) owners.add(n.owner);
-
-  for (const owner of owners) {
-    const col = COLOR[owner];
-    const dk  = darken(col, 0.55);
-    for (let pass = 0; pass < 2; pass++) {
-      const isBorder = pass === 0;
-      bufCtx.strokeStyle = bufCtx.fillStyle = isBorder ? col : dk;
-      bufCtx.lineWidth = isBorder ? edgeW + border * 2 : edgeW;
-      for (const [id, nbrs] of state.adj) {           // connectors
-        const a = state.nodes[id];
-        if (!a || a.owner !== owner) continue;
-        for (const nb of nbrs) {
-          if (nb <= id) continue;
-          const b = state.nodes[nb];
-          if (!b || b.owner !== owner) continue;
-          bufCtx.beginPath();
-          bufCtx.moveTo(a.x * scale, a.y * scale);
-          bufCtx.lineTo(b.x * scale, b.y * scale);
-          bufCtx.stroke();
-        }
-      }
-      const grow = isBorder ? border : 0;             // discs
-      for (const n of state.nodes) {
-        if (!n || n.owner !== owner) continue;
-        bufCtx.beginPath();
-        bufCtx.arc(n.x * scale, n.y * scale,
-                   Math.max(1, (medLen * TERRITORY_NODE_R_MUL + n.size) * scale + grow),
-                   0, Math.PI * 2);
-        bufCtx.fill();
-      }
-    }
-  }
-}
-
-/** Bottom-layer territory wash. Call in WORLD space (after the camera
- *  transform), just above terrain. Near-free until the late game. */
-export function drawTerritory(ctx) {
+/** Recompute the per-faction triangle territory from current ownership. */
+function rebuild() {
+  factions = [];
   const nodes = state.nodes;
-  if (!nodes || nodes.length === 0 || !state.adj) return;
 
-  // One O(nodes) pass: claimed fraction (fade driver) + owners hash (re-bake
-  // trigger). Neutrals don't count as claimed.
+  // Group owned nodes by faction.
+  const byOwner = new Map();
+  for (const n of nodes) {
+    if (!n || n.owner === 'neutral' || !COLOR[n.owner]) continue;
+    let arr = byOwner.get(n.owner);
+    if (!arr) { arr = []; byOwner.set(n.owner, arr); }
+    arr.push(n);
+  }
+
+  for (const [owner, ns] of byOwner) {
+    if (ns.length < 3) continue;                 // no area to enclose yet
+    const tris = delaunay(ns);
+    if (!tris.length) continue;
+
+    // Alpha-shape threshold off this faction's own median edge length. With ≤2
+    // triangles there's nothing to carve, so keep them all (a fresh 3-node hold
+    // always shows its patch even if a touch stretched).
+    const applyAlpha = tris.length > 2;
+    let maxEdge = Infinity;
+    if (applyAlpha) {
+      const lens = [];
+      for (const t of tris) {
+        lens.push(elen(ns[t[0]], ns[t[1]]), elen(ns[t[1]], ns[t[2]]), elen(ns[t[2]], ns[t[0]]));
+      }
+      lens.sort((a, b) => a - b);
+      maxEdge = (lens[lens.length >> 1] || 1) * ALPHA_SHAPE_FAC;
+    }
+
+    const fill = new Path2D();
+    const edgeCount = new Map();                  // packed edge key → #kept triangles
+    let kept = 0;
+    for (const t of tris) {
+      const a = ns[t[0]], b = ns[t[1]], c = ns[t[2]];
+      if (applyAlpha && Math.max(elen(a, b), elen(b, c), elen(c, a)) > maxEdge) continue;
+      kept++;
+      fill.moveTo(a.x, a.y); fill.lineTo(b.x, b.y); fill.lineTo(c.x, c.y); fill.closePath();
+      bumpEdge(edgeCount, t[0], t[1]);
+      bumpEdge(edgeCount, t[1], t[2]);
+      bumpEdge(edgeCount, t[2], t[0]);
+    }
+    if (!kept) continue;
+
+    // An edge on exactly one kept triangle is on the frontier; on two it's
+    // interior mesh.
+    const boundary = [], internal = [];
+    for (const [key, c] of edgeCount) {
+      const A = ns[Math.floor(key / 1e7)], B = ns[key % 1e7];
+      (c === 1 ? boundary : internal).push(A.x, A.y, B.x, B.y);
+    }
+    factions.push({ color: COLOR[owner], fill, boundary, internal });
+  }
+}
+
+function bumpEdge(map, i, j) {
+  const key = (i < j ? i : j) * 1e7 + (i < j ? j : i);
+  map.set(key, (map.get(key) || 0) + 1);
+}
+
+function strokeSegs(ctx, segs) {
+  ctx.beginPath();
+  for (let i = 0; i < segs.length; i += 4) {
+    ctx.moveTo(segs[i], segs[i + 1]);
+    ctx.lineTo(segs[i + 2], segs[i + 3]);
+  }
+  ctx.stroke();
+}
+
+/** Territory turf fill. Call in WORLD space (after the camera transform),
+ *  just above terrain. */
+export function drawTerritory(ctx, zoom = 1) {
+  const nodes = state.nodes;
+  if (!nodes || nodes.length === 0) return;
+
+  // One O(nodes) pass: count claimed + owners hash (rebuild trigger).
   let owned = 0, sig = 0;
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
@@ -151,17 +139,35 @@ export function drawTerritory(ctx) {
     for (let k = 0; k < o.length; k++) oc = (oc + o.charCodeAt(k)) | 0;
     sig = (sig * 31 + oc + i) | 0;
   }
-  const t = (owned / nodes.length - TERRITORY_FADE_START)
-          / (TERRITORY_FADE_FULL - TERRITORY_FADE_START);
-  const fade = t <= 0 ? 0 : t >= 1 ? 1 : t;
-  if (fade <= 0.001) return;            // early/mid game — nothing to draw
+  if (owned < 3) { lastSig = sig; factions = []; return; }   // nobody holds a patch yet
 
-  ensureBuffer();
-  if (sig !== lastSig) { bake(); lastSig = sig; }
+  const nowT = state.elapsed || 0;
+  if (sig !== lastSig && (lastBakeT < 0 || nowT - lastBakeT >= REBAKE_MIN_DT)) {
+    rebuild(); lastSig = sig; lastBakeT = nowT;
+  }
+  if (!factions.length) return;
 
   ctx.save();
-  ctx.globalAlpha = fade * TERRITORY_MAX_ALPHA;
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(buf, 0, 0, WORLD_W, WORLD_H);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const showInternal = zoom >= INTERNAL_MIN_ZOOM;
+  for (const f of factions) {
+    ctx.globalAlpha = FILL_ALPHA;
+    ctx.fillStyle = f.color;
+    ctx.fill(f.fill);
+
+    if (showInternal && f.internal.length) {
+      ctx.globalAlpha = INTERNAL_ALPHA;
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 1 / zoom;
+      strokeSegs(ctx, f.internal);
+    }
+    if (f.boundary.length) {
+      ctx.globalAlpha = BOUNDARY_ALPHA;
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 2.4 / zoom;
+      strokeSegs(ctx, f.boundary);
+    }
+  }
   ctx.restore();
 }

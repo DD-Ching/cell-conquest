@@ -91,7 +91,7 @@ export function render() {
 
   drawTerrain(ctx, zoom);
   drawProcgen(ctx, zoom);              // procgen tactical ground: dark wash + region zones + craters + barriers + sector labels
-  drawTerritory(ctx);                  // faction turf wash on top of the dark field
+  drawTerritory(ctx, zoom);            // faction turf — geometric area fill on the dark field
   drawHexGrid(ctx, zoom);              // faint tactical-map watermark over terrain
   drawScorches(ctx, zoom, now);
   drawWeatherHaze(ctx, zoom);         // full-screen rust murk before units recede in

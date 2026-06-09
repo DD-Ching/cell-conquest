@@ -2,7 +2,7 @@
 
 **Direction (user-confirmed 2026-06-09):** NO unit caps — unlimited drones/units IS the point (過癮). The only way to get "unlimited AND smooth" is to move the high-count simulation onto the **GPU via WebGPU compute**. This **supersedes** the earlier "cap the swarm / cap the snowball" ideas — those are rejected (caps kill the feel).
 
-Status: **blueprint only — NOT building yet** (start after the user's /compact). Locked decisions:
+Status: **P0 DONE ✅ (2026-06-10) — building.** Foundation landed + verified in-browser (Chrome, 128MB storage limit): device init, compute round-trip self-test PASS, drone SoA buffers, CPU→GPU packer verified against live game data, clean CPU fallback. Behind `?gpu=1`, zero sim change. Next: P1 (movement + instanced render on GPU). Locked decisions:
 - **GPU scope:** high-count units (drones; tanks/troops if needed) + the combat damage *against* them. Nodes / AI / economy stay on CPU.
 - **Rollout:** behind `?gpu=1` with the current CPU sim kept as fallback; default ON where WebGPU is supported.
 - **Caps vs merge:** NO caps (unlimited is the point). BUT **merging units into commandable "strike groups" IS wanted** — that's not a limit, it's how you command mass. See the Command-layer section.
@@ -31,7 +31,7 @@ Sim is the bottleneck, not render (render ≈ 2.4 ms). At ~3,600 fleets / ~1,200
 ## Phased build — behind `?gpu=1`, with the current CPU path kept as fallback
 (Matches this codebase's opt-in-experiment discipline: WASM Shift+W, AI worker Y, render worker U — lazy, fail-safe, default off until proven.)
 
-- **P0 — Foundation.** WebGPU device init + feature-detect + clean fallback to the existing CPU sim. Define the drone buffers as **struct-of-arrays** (x, y, heading, owner, targetKind, targetId, hp, flags) in GPU storage buffers. Very-large / growable capacity (no cap).
+- **P0 — Foundation. ✅ DONE (2026-06-10).** Landed as `js/gpu/gpu-device.js` (device init, feature-detect, fail-safe fallback, `?gpu=1` gate, compute round-trip **self-test**) + `js/gpu/drone-buffers.js` (drone **struct-of-arrays** GPU buffers: posX, posY, heading, hp, spawnT, tgtX, tgtY, owner, targetKind, targetId, flags, id — 12 SoA buffers, growable ×1.5, NO cap; `syncDronesToGPU()` CPU→GPU packer; `readbackField()`/`verifyRoundTrip()` diagnostics). Wired in `main.js` after `loadWasm()`; `window.__gpu` diag hook under `?gpu=1`. **Verified in-browser:** device ready (128MB max storage buffer), self-test PASS, and a live-data round-trip (inject 5 drones + 1 tank → packer filters to 5, all posX read back identical). No-flag path logs `[gpu] disabled` and the game is untouched. Mirrors the Shift+W / Y / U opt-in-experiment discipline.
 - **P1 — Movement + render on GPU.** Port the `steerDrone` banking model to a WGSL compute pass; draw drones **instanced straight from the buffer** (bypass per-drone JS render). Targeting still CPU-assigned at first (batched writes into the buffer).
 - **P2 — Hunt / targeting on GPU.** Build a GPU spatial grid; per-drone nearest-enemy scan as a compute shader (replaces the WASM hunt + the per-drone JS decision). **← this is what removes the H-salvo spike.**
 - **P3 — Combat vs drones on GPU.** AA / tank / artillery damage over the drone buffer as compute; read back only a compact **kill-events** append buffer.

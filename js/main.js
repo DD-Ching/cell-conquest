@@ -33,6 +33,8 @@ import {
 } from './render.js';
 import { loadAssets } from './sprites.js';
 import { loadWasm } from './wasm-bridge.js';
+import { loadGPU, isGpuReady, gpuRequested } from './gpu/gpu-device.js';
+import { syncDronesToGPU, gpuDroneCount, verifyRoundTrip } from './gpu/drone-buffers.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
 import { initAudio, updateAudio, sfxVictory, sfxDefeat } from './audio.js';
@@ -577,6 +579,7 @@ attachInput();
 initAudio();            // arm Web Audio (context starts on first click/key — autoplay policy)
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
 loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS until ready
+loadGPU();              // P0: lazy WebGPU init behind ?gpu=1 (foundation only — no sim passes yet; CPU path unchanged)
 newGame();              // rolls factions, builds HUD, generates world
 initLobby();            // show the start screen over the frozen game (sim gated on state.inLobby)
 loop();
@@ -589,4 +592,19 @@ nnLoad();
 if (new URLSearchParams(location.search).has('perf')) {
   window.__state = state;
   state._perfPhaseOn = true;     // start the phase counters so the live split logs
+}
+
+// GPU P0 diagnostic hook (opt-in via ?gpu=1). Exposes a tiny console API so the
+// CPU→GPU drone-buffer boundary can be exercised against LIVE game data:
+//   __gpu.ready()   → is the GPU path armed?
+//   __gpu.sync()    → pack current drones into the SoA buffers; returns count
+//   __gpu.verify()  → pack + read posX back + confirm it matches the JS fleets
+// P0 changes nothing in the sim; this is purely a verification surface.
+if (gpuRequested()) {
+  window.__gpu = {
+    ready: () => isGpuReady(),
+    sync: () => syncDronesToGPU(),
+    count: () => gpuDroneCount(),
+    verify: () => verifyRoundTrip(),
+  };
 }

@@ -1048,14 +1048,17 @@ function launchGpuSwarmStrike(fixedTarget) {
     const banked = (t._gpuStrikeStock || 0) + (t._gpuBank || 0);
     const N = GPU_SWARM_FLOOR + Math.round(banked * GPU_SWARM_PER_BANK);
     for (let i = 0; i < N; i++) {
-      // golden-angle muster ring around the factory; each drone aims at the node
-      // from ITS OWN position (not the factory's) so the stream converges and
-      // dives in to detonate, instead of flying past at a lateral offset.
-      const a = i * 2.39996323, r = 50 + 150 * Math.sqrt((i % 421) / 421);
+      // golden-angle muster ring around the factory (a touch wider so the launch
+      // isn't a fat clump). Each drone aims at a slightly DIFFERENT point spread
+      // across the node's area — so the swarm arrives as a CLOUD of distinct
+      // drones raining over the target, not a solid blob collapsed onto one pixel.
+      const a = i * 2.39996323, r = 50 + 210 * Math.sqrt((i % 421) / 421);
       const x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r;
+      const ja = i * 1.61803399, jr = 130 * Math.sqrt((i % 263) / 263);
+      const txj = node.x + Math.cos(ja) * jr, tyj = node.y + Math.sin(ja) * jr;
       list.push({
-        x, y, tgtX: node.x, tgtY: node.y, targetId: node.id, owner: 'player',
-        heading: Math.atan2(node.y - y, node.x - x),
+        x, y, tgtX: txj, tgtY: tyj, targetId: node.id, owner: 'player',
+        heading: Math.atan2(tyj - y, txj - x),
       });
     }
     t._gpuBank = 0;

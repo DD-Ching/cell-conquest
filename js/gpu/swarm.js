@@ -246,10 +246,14 @@ export function stepSwarm(dt) {
   const dev = getDevice();
   initMove(dev);
   ensureHits(Math.max(1, nodeCount));
-  // Clamp the per-step dt so a 40× hitch frame can't teleport drones through a
-  // half-turn; matches the sim's MAX_SUBDT bound. (One step/frame is plenty
-  // smooth for the swarm; sub-stepping can come later if needed.)
-  const sdt = Math.min(dt, 0.1);
+  // Advance the FULL game-dt this frame, SUB-STEPPED so each step stays ≤0.1s
+  // (banking + the frown runaway need a small step) — at 40× that's many steps,
+  // so the swarm flies at the real game speed instead of crawling at a fixed
+  // 0.1s/frame (the old clamp made 40× look like 1×). Capped at 40 steps as a
+  // safety bound, mirroring the sim's MAX_SUBDT discipline.
+  const totalDt = Math.max(0, dt);
+  const steps = Math.max(1, Math.min(40, Math.ceil(totalDt / 0.1)));
+  const sdt = totalDt / steps;
   dev.queue.writeBuffer(simBuf, 0, new Float32Array([sdt, DRONE_SPEED, DRONE_TURN_RADIUS, 0, ARRIVE_R, 0, 0, 0]));
   dev.queue.writeBuffer(simBuf, 12, new Uint32Array([count]));        // count (u32 slot)
   dev.queue.writeBuffer(simBuf, 20, new Uint32Array([nodeCount]));    // hitsCount (u32 slot)
@@ -269,11 +273,15 @@ export function stepSwarm(dt) {
   });
   const enc = dev.createCommandEncoder();
   enc.clearBuffer(hitsBuf);             // zero the per-node tally for THIS frame
-  const pass = enc.beginComputePass();
-  pass.setPipeline(movePipeline);
-  pass.setBindGroup(0, bind);
-  pass.dispatchWorkgroups(Math.ceil(count / 64));
-  pass.end();
+  // Each sub-step is its own compute pass (a pass boundary syncs the storage
+  // writes), so step N+1 sees step N's moved positions + cleared dead flags.
+  for (let st = 0; st < steps; st++) {
+    const pass = enc.beginComputePass();
+    pass.setPipeline(movePipeline);
+    pass.setBindGroup(0, bind);
+    pass.dispatchWorkgroups(Math.ceil(count / 64));
+    pass.end();
+  }
   // Copy this frame's hits to a readback buffer (same submit → ordered after the
   // compute), then map it async and apply damage on the CPU. Capture the node
   // count AND the generation at submit time — the callback must not read the live

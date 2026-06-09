@@ -58,6 +58,7 @@ struct Cam {
 @group(0) @binding(3) var<storage, read> heading : array<f32>;
 @group(0) @binding(4) var<storage, read> owner   : array<u32>;
 @group(0) @binding(5) var<storage, read> colors  : array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> flags   : array<u32>;
 
 struct VsOut {
   @builtin(position) pos : vec4<f32>,
@@ -66,6 +67,14 @@ struct VsOut {
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VsOut {
+  var out : VsOut;
+  // Dead/detonated drones (ALIVE bit clear) collapse off-screen — clipped, not
+  // drawn. Lets the GPU-resident pool keep dead slots without them lingering.
+  if ((flags[ii] & 1u) == 0u) {
+    out.pos = vec4<f32>(100.0, 100.0, 100.0, 1.0);
+    out.col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    return out;
+  }
   // Local delta-wing in world px (x = forward, y = lateral).
   var local : vec2<f32>;
   if (vi == 0u)      { local = vec2<f32>( 14.0,  0.0); }   // nose
@@ -81,7 +90,6 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VsO
   let clip = vec2<f32>(screen.x / cam.view.x * 2.0 - 1.0,
                        1.0 - screen.y / cam.view.y * 2.0);
 
-  var out : VsOut;
   out.pos = vec4<f32>(clip, 0.0, 1.0);
   let o = owner[ii];
   out.col = select(vec4<f32>(1.0, 1.0, 1.0, 1.0), colors[o], o < arrayLength(&colors));
@@ -215,6 +223,7 @@ export function renderGPUDrones(swarms) {
         { binding: 3, resource: { buffer: b.heading } },
         { binding: 4, resource: { buffer: b.owner } },
         { binding: 5, resource: { buffer: colorBuf } },
+        { binding: 6, resource: { buffer: b.flags } },
       ],
     });
     pass.setBindGroup(0, bind);

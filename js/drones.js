@@ -20,6 +20,8 @@ import {
 } from './config.js';
 import { dist, inboundKey } from './util.js';
 import { addWreckBlockage, spawnBigExplosion, spawnScorch, getEdge } from './engineering.js';
+import { isGpuReady } from './gpu/gpu-device.js';
+import { spawnSwarm } from './gpu/swarm.js';
 
 // Pre-squared distances — comparisons use dx²+dy² < r² to avoid sqrt in the
 // hottest per-tick loops (drone hunt scan runs once per drone per sub-step).
@@ -839,6 +841,7 @@ export function runFactoryProduction(dt) {
       if (t.dronesReady > FACTORY_MAX_STOCKPILE) {
         t.dronesReady = FACTORY_MAX_STOCKPILE;
         spawnHeldDrone(t);                 // excess → airborne, joins the ring
+        t._gpuBank = (t._gpuBank || 0) + 1;  // GPU swarm grows while you hold (?gpu=1): bigger wall on release
       }
       continue;
     }
@@ -1003,6 +1006,51 @@ function resolveSalvoTarget(s, salvoOwner, respectValue = true) {
   return null;
 }
 
+// ---- GPU swarm amplifier (?gpu=1) -------------------------------------------
+// Drones-per-factory in a GPU swarm strike. UNCAPPED by design (the GPU pool
+// grows ×1.5, never caps) — this is just the per-press magnitude, scaled by the
+// factory's banked stockpile so a longer hold = a bigger wall (越聚越大).
+const GPU_SWARM_BASE_PER_FACTORY = 1500;
+
+function nearestEnemyNode(x, y) {
+  let best = null, bd = Infinity;
+  for (const n of state.nodes) {
+    if (n.owner === 'neutral' || isAlly(n.owner, 'player')) continue;
+    const dx = n.x - x, dy = n.y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = n; }
+  }
+  return best;
+}
+
+/** Unleash an uncapped GPU-resident swarm from every player factory — flown and
+ *  detonated entirely on the GPU (PERF_ROADMAP.md P1). Each drone carries a node
+ *  id so the GPU can tally detonations per node (applied as CPU damage). Targets
+ *  the clicked salvo node if any, else each factory's nearest enemy node. The
+ *  banked stockpile is folded into the count so holding fire builds a bigger wall. */
+function launchGpuSwarmStrike(fixedTarget) {
+  const list = [];
+  for (const t of state.turrets) {
+    if (t.owner !== 'player' || t.type !== 'factory') continue;
+    let node = (fixedTarget && fixedTarget.kind === 'node') ? state.nodes[fixedTarget.id] : null;
+    if (!node) node = nearestEnemyNode(t.x, t.y);
+    if (!node) continue;
+    const N = GPU_SWARM_BASE_PER_FACTORY + Math.round((t._gpuBank || 0) * 200);
+    for (let i = 0; i < N; i++) {
+      // golden-angle muster ring around the factory; each drone aims at the node
+      // from ITS OWN position (not the factory's) so the stream converges and
+      // dives in to detonate, instead of flying past at a lateral offset.
+      const a = i * 2.39996323, r = 50 + 150 * Math.sqrt((i % 421) / 421);
+      const x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r;
+      list.push({
+        x, y, tgtX: node.x, tgtY: node.y, targetId: node.id, owner: 'player',
+        heading: Math.atan2(node.y - y, node.x - x),
+      });
+    }
+    t._gpuBank = 0;
+  }
+  if (list.length) spawnSwarm(list);
+}
+
 /** Player-facing alpha-strike — driven by the second H press. Launches the
  *  ENTIRE stockpile across every player factory at once (no anti-waste budget):
  *  the player held fire to amass a wall and wants ALL of it airborne. Each drone
@@ -1042,6 +1090,10 @@ export function releasePlayerStockpile() {
       f.tx = fixedTarget.x; f.ty = fixedTarget.y;
     }
   }
+  // GPU amplifier (?gpu=1): also unleash an UNCAPPED GPU-resident swarm — flown
+  // and detonated entirely on the GPU. The CPU salvo above still flies (rendered
+  // on GPU too); this is the unlimited wall on top (萬箭齊發, no cap).
+  if (isGpuReady()) launchGpuSwarmStrike(fixedTarget);
   state.salvoTarget = null;
   return launched;
 }

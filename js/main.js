@@ -5,7 +5,7 @@
 import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
-  DOM_FRAC, DOM_HOLD_S, DOM_MIN_CLAIMED, MAX_SKIRMISH_TIME,
+  DOM_FRAC, DOM_HOLD_S, DOM_MIN_CLAIMED, MAX_SKIRMISH_TIME, DRONE_DAMAGE,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -38,6 +38,7 @@ import { syncDronesToGPU, gpuDroneCount, verifyRoundTrip, gpuBuffers } from './g
 import { renderGPUDrones } from './gpu/drone-render.js';
 import {
   stepSwarm, spawnSwarm, setSwarmTarget, swarmBuffers, swarmCount, resetSwarm,
+  setSwarmNodeCount, setSwarmHitHandler,
 } from './gpu/swarm.js';
 import { applyPreset } from './game-presets.js';
 import { generateWorld, pickRegionStarts, ensureNodeName } from './worldgen.js';
@@ -204,10 +205,29 @@ export function newGame() {
   }
 
   resetEngineering();
+  setSwarmNodeCount(state.nodes.length);   // size the GPU swarm's per-node hit buffer (?gpu=1)
   state.lastTime = performance.now();
 }
 // Expose for HTML button (Play Again)
 window.newGame = newGame;
+
+// GPU-resident swarm damage applier (?gpu=1). The GPU tallies, per enemy node,
+// how many drones detonated this frame; we apply that as node-unit damage on the
+// CPU (authoritative for node state). Same math as drones.js droneHit (a drone
+// chips units by DRONE_DAMAGE*0.3). Skips own/neutral nodes so a node captured
+// mid-flight is never friendly-fired. Registered once at boot.
+function applySwarmHits(hits, n) {
+  const nodes = state.nodes;
+  const lim = Math.min(n, nodes.length);
+  for (let i = 0; i < lim; i++) {
+    const c = hits[i];
+    if (!c) continue;
+    const node = nodes[i];
+    if (!node || node.owner === 'neutral' || isAlly(node.owner, 'player')) continue;
+    node.units = Math.max(0, node.units - c * DRONE_DAMAGE * 0.3);
+    node.flash = 1;                        // brief hit flash (decayed in simulate)
+  }
+}
 
 function checkVictory() {
   if (state.gameOver) return;
@@ -599,6 +619,7 @@ initAudio();            // arm Web Audio (context starts on first click/key — 
 loadAssets();           // try to load PNGs from assets/; sprites fall back to primitives
 loadWasm();             // lazy-load Rust hot loops; drones.js falls back to JS until ready
 loadGPU();              // P0: lazy WebGPU init behind ?gpu=1 (foundation only — no sim passes yet; CPU path unchanged)
+setSwarmHitHandler(applySwarmHits);   // P1c: GPU swarm node-detonations → CPU node damage (?gpu=1)
 newGame();              // rolls factions, builds HUD, generates world
 initLobby();            // show the start screen over the frozen game (sim gated on state.inLobby)
 loop();
@@ -629,12 +650,16 @@ if (gpuRequested()) {
     const spread = opts.spread ?? 1400;
     const tx = opts.tx ?? cx, ty = opts.ty ?? cy;
     const owner = opts.owner ?? 'player';
+    const targetId = opts.targetId;          // optional: detonate on this node id
     const list = new Array(n);
     for (let i = 0; i < n; i++) {
       // deterministic golden-angle scatter (no RNG) so the ring reads cleanly
       const a = i * 2.39996323, r = spread * Math.sqrt((i % 997) / 997);
       const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-      list[i] = { x, y, tgtX: tx, tgtY: ty, owner, heading: a + Math.PI / 2 };
+      // Combat (targetId set) → head straight at the target like a real strike.
+      // Pure demo → tangential launch so the swarm forms the orbiting vortex.
+      const heading = (targetId != null) ? Math.atan2(ty - y, tx - x) : a + Math.PI / 2;
+      list[i] = { x, y, tgtX: tx, tgtY: ty, owner, targetId, heading };
     }
     return spawnSwarm(list);
   };

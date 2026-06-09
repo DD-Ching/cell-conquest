@@ -377,6 +377,7 @@
     <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
     <div>URL <code>?theme=mars</code> (default) / <code>?theme=ice-mars</code> / <code>?theme=alien-biome</code> reskins enemy factions — palette, name pool, glow. Player + Lieutenant colour stay the same. Reload to switch.</div>
     <div>URL flag <code>?preset=skirmish</code> / <code>?preset=long</code> / <code>?preset=kingofthehill</code> picks a game-mode preset that resizes the world + node count at boot. Default (no flag) is the standard 12000×9000 / 700–900-node theatre. Console logs the applied preset.</div>
+    <div>URL flag <code>?gpu=1</code> — fly &amp; render the drone swarm on the <strong>GPU</strong> (WebGPU). Drones become <strong>UNLIMITED</strong>: the whole swarm runs in one compute pass + one instanced draw, so it barely touches the CPU (200k+ at 60fps). Press <kbd>H</kbd> to hold-fire, <kbd>H</kbd> again to unleash an uncapped GPU swarm at the enemy. Auto-falls-back to the CPU path where WebGPU is unsupported. Chrome/Edge.</div>
   </div>
 </div>
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>

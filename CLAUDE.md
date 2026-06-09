@@ -151,6 +151,15 @@ list):
 - G key — delegate the hovered (or all selected) base(s) to the
   Lieutenant; press again to revoke.
 - H key — Hold-Fire drone stockpile; second press launches the salvo.
+  Under `?gpu=1` the second press ALSO unleashes an uncapped GPU swarm.
+- URL `?gpu=1` — fly + render the drone swarm on the GPU via WebGPU
+  (see `PERF_ROADMAP.md`; P1 done). Drones become UNLIMITED — the whole
+  swarm is one compute pass + one instanced draw (verified 200k @ 60fps),
+  so it barely touches the CPU. Lives entirely in `js/gpu/` (`gpu-device.js`,
+  `drone-buffers.js`, `swarm.js`, `drone-render.js`); the CPU drone path is
+  the untouched fallback (default OFF until the P2/P3 chores in the roadmap
+  land). `window.__gpu.swarm(n)` spawns a test vortex; `?gpu=1&perf=1`
+  exposes `window.__state`. Chrome/Edge only.
 
 Rust / wasm toolchain (only needed when changing wasm code):
 

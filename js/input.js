@@ -368,11 +368,14 @@ export function attachInput() {
       }
     }
     // Enter turret-placement mode: Q=Anti-Air, F=Factory, N=Net, T=Tank, C=Cannon (artillery).
-    // Gated during the tutorial until the "build" lesson unlocks it.
-    if ((k === 'q' || k === 'f' || k === 'n' || k === 't' || k === 'c') && tutAllows('build')) {
+    // Gated PER UNIT TYPE during the campaign — each level unlocks its own
+    // toolset (L1 none, L2 +antiair/factory/net, L3 +tank, L4 +artillery), so
+    // the token is the unit-type name. Outside a campaign tutAllows is always
+    // true, so normal play is unrestricted.
+    if (k === 'q' || k === 'f' || k === 'n' || k === 't' || k === 'c') {
       const type = (k === 'q') ? 'antiair' : (k === 'f') ? 'factory'
                  : (k === 'n') ? 'net'     : (k === 't') ? 'tank' : 'artillery';
-      state.placeMode = { type, byOwner: 'player' };
+      if (tutAllows(type)) state.placeMode = { type, byOwner: 'player' };
     }
     // Hold-Fire toggle: H stockpiles drones at your factories; pressing again
     // launches the entire stockpile as one saturation salvo.

@@ -3,7 +3,7 @@
 // road graph (k-NN + connectivity), pathfinding.
 // =====================================================
 import { state } from './state.js';
-import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX } from './config.js';
+import { WORLD_W, WORLD_H, N_NODES_MIN, N_NODES_MAX, VICTORY_BALL_BUFF } from './config.js';
 import { dist, pointToSegment } from './util.js';
 import { isAlly } from './alliance.js';
 
@@ -316,7 +316,15 @@ export function catchUpRegen(n) {
   if (n.units >= n.capacity) { n.lastRegenT = state.elapsed; return; }
   const dt = state.elapsed - (n.lastRegenT || 0);
   if (dt <= 0) return;
-  n.units = Math.min(n.capacity, n.units + n.regenRate * dt);
+  // Victory-balance momentum buff: the side the ball last fell toward grows
+  // faster (see victory-balance.js). The time-gate short-circuits to a single
+  // comparison whenever no buff is active (the usual case), so the hot regen
+  // path pays nothing until the late-game swing fires.
+  let rate = n.regenRate;
+  if (state.elapsed < state.growthBuffUntil && isAlly(n.owner, state.growthBuffOwner)) {
+    rate *= VICTORY_BALL_BUFF;
+  }
+  n.units = Math.min(n.capacity, n.units + rate * dt);
   n.lastRegenT = state.elapsed;
 }
 

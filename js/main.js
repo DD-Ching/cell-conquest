@@ -7,7 +7,6 @@ import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
   MAX_SKIRMISH_TIME, DRONE_DAMAGE,
   VICTORY_APPEAR_MIN, VICTORY_SMILE_MIN, VICTORY_FLAT_MIN,
-  VICTORY_CURVE_K, VICTORY_TILT_GAIN, VICTORY_BALL_DAMP,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -24,10 +23,12 @@ import {
 import { updateAntiAir, updateArtillery, updateShells } from './combat.js';
 import { updateDrones, runFactoryProduction } from './drones.js';
 import { updateGroundTanks, runTankProduction } from './tanks.js';
+import { relievePlayerSaturation } from './player-logistics.js';
 import { aiTick } from './ai.js';
 import * as aiBridge from './ai-worker-bridge.js';
 import * as renderBridge from './render-worker-bridge.js';
 import { ensureLieutenantRegistered } from './subordinate.js';
+import { updateBalanceBall } from './victory-balance.js';
 import { nnLoad, nnResetGame } from './nn.js';
 import {
   buildHUD, updateHUD, render,
@@ -131,6 +132,8 @@ export function newGame() {
   state.elapsed = 0;
   state._domSide = null; state._domSince = 0;   // skirmish domination-lead tracker (legacy)
   state._ballX = 0; state._ballV = 0; state._victoryInfo = null; state._victoryLastT = 0;   // victory balance (ball)
+  state._ballFallen = 0; state._ballRespawnAt = 0;                 // ball momentum-swing state
+  state.growthBuffOwner = null; state.growthBuffUntil = 0;         // ×BUFF growth reward to the ball-winning side
   state._vizTilt = 0; state._vizCurve = 0;      // smoothed HUD display values
   // Reset Mars weather alongside the clock — lastChangeT is measured against
   // state.elapsed, so leaving it stale would freeze the weather machine (and
@@ -271,9 +274,12 @@ function checkVictory() {
   // ---- Victory Balance — a ball rolling on a morphing beam (天秤) ----
   // Appears only in the late game (VICTORY_APPEAR_MIN). The beam's CURVATURE morphs
   // over match-time: smile (∪, ball settles centre → deadlock) → flat (any lead
-  // slides it off → decisive) → frown (∩, unstable → sudden death). The territory
-  // lead (your owned-share − rival's) is a sideways TILT force; the ball rolls under
-  // tilt + curvature; whichever END it falls off (|x|≥1) decides the match.
+  // slides it off) → frown (∩, unstable → sudden swing). The territory lead (your
+  // owned-share − rival's) is a sideways TILT force; the ball rolls under tilt +
+  // curvature. Whichever END it falls off (|x|≥1) grants THAT side a ×BUFF growth
+  // boost for a spell, then the ball respawns at centre — a recurring momentum
+  // swing, not an instant win (see victory-balance.js). The match still ends only
+  // by elimination (alive checks above) or the time-cap backstop below.
   const vdt = Math.max(0, state.elapsed - (state._victoryLastT ?? state.elapsed));
   state._victoryLastT = state.elapsed;
   const yf = yours / total, ef = topEnemy / total;
@@ -283,26 +289,14 @@ function checkVictory() {
     let kv = (VICTORY_FLAT_MIN - tmin) / (VICTORY_FLAT_MIN - VICTORY_SMILE_MIN);
     kv = Math.max(-1, Math.min(1, kv));
     const lead = yf - ef;                       // your side positive
-    const tilt = -VICTORY_TILT_GAIN * lead;     // you lead → ball rolls to YOUR (left, −x) end
-    const kPhys = VICTORY_CURVE_K * kv;         // >0 restoring (smile), <0 runaway (frown)
-    let bx = state._ballX || 0, bv = state._ballV || 0;
-    // sub-step the integration so a fast-forward frame (big vdt) stays stable
-    let rem = vdt;
-    while (rem > 1e-4) {
-      const h = Math.min(0.05, rem); rem -= h;
-      const accel = -2 * kPhys * bx + tilt - VICTORY_BALL_DAMP * bv;
-      bv += accel * h;
-      bx += bv * h;
-      if (bx > 1.25) { bx = 1.25; bv = 0; } else if (bx < -1.25) { bx = -1.25; bv = 0; }
-    }
-    state._ballX = bx; state._ballV = bv;
-    const phase = kv > 0.25 ? 'deadlock' : kv < -0.25 ? 'suddendeath' : 'decisive';
-    state._victoryInfo = { active: true, yourShare: yf, enemyShare: ef, ballX: bx, ballV: bv,
-                           curvature: kv, lead, phase, enemyOwner: topEnemyOwner };
-    if (bx <= -1) { endGame(true,  `Sector won — the balance tipped your way (${Math.round(yf * 100)}%).`); return; }
-    if (bx >= 1)  { endGame(false, 'The balance tipped to a rival faction.'); return; }
+    // Ball physics + the growth-buff momentum swing live in victory-balance.js.
+    // A fall-off no longer ends the match — it grants the winning side a ×BUFF
+    // growth boost, then the ball respawns at centre. The game still ends only
+    // by elimination (the alive checks above).
+    state._victoryInfo = updateBalanceBall({ vdt, kv, lead, yf, ef, topEnemyOwner });
   } else {
     state._ballX = 0; state._ballV = 0;
+    state._ballFallen = 0; state.growthBuffOwner = null; state.growthBuffUntil = 0;
     state._victoryInfo = { active: false };
   }
 
@@ -558,6 +552,11 @@ function loop() {
     // Tank factories roll out mobile tanks here too — same once-per-frame,
     // game-time-rate cadence as drone production (see tanks.runTankProduction).
     runTankProduction(gameDt);
+    // Player's own over-stuffed nodes auto-disperse their surplus (expand /
+    // capture / feed) so a manual whole-army dump never rots idle. Gated to
+    // genuinely over-capacity player nodes; see player-logistics.js. Touches
+    // node garrisons only — the H hold-fire drone stockpile is untouched.
+    relievePlayerSaturation(gameDt);
     state._perfSimMs[state._perfIdx] = performance.now() - simT0;
     state.elapsed += gameDt;
     checkVictory();

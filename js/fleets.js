@@ -379,7 +379,13 @@ function arriveAt(fleet, target) {
   catchUpRegen(target);
   if (isAlly(target.owner, fleet.owner)) {
     // Same side (own or allied lieutenant) — reinforce instead of fight.
-    target.units = Math.min(target.capacity * 1.5, target.units + fleet.units);
+    // NO overflow discard: every arriving unit lands (was Math.min(cap*1.5,…),
+    // which silently deleted the surplus of a manual whole-army dump). A node
+    // packed past its ceiling is bled back out by relieveSaturation — for AI/
+    // Lieutenant nodes every tick, and for player-owned stuffed nodes via
+    // relievePlayerSaturation (see player-logistics.js). Concentrate-then-
+    // disperse, zero waste. See capacity.js for the ceiling rationale.
+    target.units += fleet.units;
     target.flash = 0.5;
   } else {
     if (fleet.units > target.units) {

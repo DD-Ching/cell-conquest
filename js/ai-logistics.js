@@ -49,12 +49,22 @@ import { ekey } from './engineering.js';
 
 export function relieveSaturation(ctx) {
   const { owner, myNodes, attackerAvail, turretThreatTo, fleetsByTarget, sendFleet } = ctx;
-  if (myNodes.length < 2) return;
+  // Need at least one node to act on. (Was <2 — but a lone full node should still
+  // EXPAND into an adjacent enemy/neutral rather than idle; the FEED fallback,
+  // which is the only path that needs a 2-node front gradient, self-skips a front
+  // node via its distToFront===0 guard, so 1 node is safe.)
+  if (myNodes.length < 1) return;
 
   // Collect full nodes first; bail cheaply if nothing is saturated (the common
   // case once expansion keeps things flowing — keeps this pass near-free then).
+  // "Full" threshold: AI nodes relieve at 0.85× (aggressive anti-idle head
+  // start); the player path passes a higher value (≈1.0×) via ctx.reliefThreshold
+  // so a player's deliberate sub-capacity garrison is left under their control
+  // and only genuinely over-stuffed nodes auto-disperse. Default preserves the
+  // AI's long-standing behaviour exactly.
+  const fullAt = ctx.reliefThreshold ?? 0.85;
   const full = [];
-  for (const my of myNodes) if (my.units >= my.capacity * 0.85) full.push(my);
+  for (const my of myNodes) if (my.units >= my.capacity * fullAt) full.push(my);
   if (full.length === 0) return;
   full.sort((a, b) => (b.units / b.capacity) - (a.units / a.capacity));
 

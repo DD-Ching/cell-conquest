@@ -18,6 +18,7 @@
 import { state } from './state.js';
 import { dist } from './util.js';
 import { isAlly } from './alliance.js';
+import { roomLeft } from './capacity.js';
 import { FLEET_SPEED, TANK_RADIUS } from './config.js';
 // Side effects (sendFleet, assaultTurret) come through ctx — see ai-effects.js.
 
@@ -61,7 +62,9 @@ export function tryDefend(ctx) {
       Math.ceil(minGarrison - my.units),
       Math.ceil(adjEnemyStockpile * 0.45 - my.units),
     );
-    const send = Math.min(Math.floor(donorScore), Math.max(5, need));
+    // Don't over-pack: cap by the room left at `my` (accounting for friendly
+    // fleets already inbound) so we never ship units that just over-stuff it.
+    const send = Math.min(Math.floor(donorScore), Math.max(5, need), Math.floor(roomLeft(my, inc.friendly)));
     if (send >= 5) { sendFleet(donor, my, send); return true; }
   }
   return false;
@@ -251,7 +254,7 @@ export function tryCoordinatedAttack(ctx) {
 /** Phase 3: cap-aware reinforce frontline. Rear-hub regen flows to the
  *  front continuously so the front never runs dry mid-attack. */
 export function tryReinforceFrontline(ctx) {
-  const { owner, myNodes, saturationRatio, sendFleet } = ctx;
+  const { owner, myNodes, saturationRatio, fleetsByTarget, sendFleet } = ctx;
   const dumpThresh = saturationRatio > 0.4 ? 0.55 : 0.65;
   for (const my of myNodes) {
     if (my.units < my.capacity * dumpThresh) continue;
@@ -270,8 +273,12 @@ export function tryReinforceFrontline(ctx) {
       if (frontness > bestRecipScore) { bestRecipScore = frontness; bestRecip = nb; }
     }
     if (bestRecip && bestRecipScore > 0) {
-      const room = Math.max(0, bestRecip.capacity * 1.4 - bestRecip.units);
-      const send = Math.min(Math.floor(my.units * 0.7), Math.floor(room));
+      // Room at the real overfill ceiling, minus allied fleets already inbound
+      // (so two rear hubs don't both fill the same gap and spill the surplus).
+      let inbound = 0;
+      const fb = fleetsByTarget.get(bestRecip.id);
+      if (fb) for (const f of fb) if (isAlly(f.owner, owner)) inbound += f.units;
+      const send = Math.min(Math.floor(my.units * 0.7), Math.floor(roomLeft(bestRecip, inbound)));
       if (send >= 5) { sendFleet(my, bestRecip, send); return true; }
     }
   }
@@ -298,7 +305,11 @@ export function tryOverflowDump(ctx) {
       if (frontness > bestFront) { bestFront = frontness; target = nb; }
     }
     if (target) {
-      const send = Math.floor((my.units - 8) * 0.6);
+      // Drain down to ~0.8× cap in ONE action (restarts regen immediately)
+      // rather than the old 60% nibble that left the node over-full for several
+      // more ticks. Surplus lands on the front neighbour (no-discard) and that
+      // node's own relief pass spreads it onward.
+      const send = Math.floor(my.units - Math.max(8, my.capacity * 0.8));
       if (send >= 5) { sendFleet(my, target, send); return true; }
     }
   }

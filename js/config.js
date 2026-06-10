@@ -99,16 +99,23 @@ export const MAX_SKIRMISH_TIME = 6600;  // game-seconds hard cap (110 min) → l
 //   • FLAT mid         — any territory lead slides the ball off → DECISIVE,
 //   • FROWN (∩) super-late — unstable centre, the ball bolts off the slightest lean → SUDDEN DEATH.
 // A ball rolls on the beam: the territory lead (your share − rival's) is a sideways
-// "tilt" force; whichever END the ball falls off = that side wins. The morph is a
-// smooth interpolation over match time, never a sudden switch. render-victory.js
-// draws the curved beam + rolling ball; checkVictory integrates the physics.
-export const VICTORY_APPEAR_MIN = 40;    // game-minutes before the balance appears + can decide the match
+// "tilt" force. Whichever END the ball falls off = a MOMENTUM WIN for that side:
+// that faction's growth (regen) is boosted ×VICTORY_BALL_BUFF for a spell, then
+// the ball respawns in the centre and the contest restarts. It no longer ends the
+// match outright — it's a recurring economy swing that lets the leader press the
+// advantage (and snowball toward an elimination win) while the trailing side can
+// still take the next ball. The morph is a smooth interpolation over match time.
+// render-victory.js draws the curved beam + rolling ball; victory-balance.js
+// integrates the physics + drives the buff swing.
+export const VICTORY_APPEAR_MIN = 25;    // game-minutes before the balance appears
 export const VICTORY_SMILE_MIN  = 60;    // waypoint: full smile (∪) — deadlock
 export const VICTORY_FLAT_MIN   = 80;    // waypoint: flat beam — decisive
-export const VICTORY_FROWN_MIN  = 100;   // waypoint: full frown (∩) — sudden death
+export const VICTORY_FROWN_MIN  = 100;   // waypoint: full frown (∩) — sudden swing
 export const VICTORY_CURVE_K    = 0.05;  // beam curvature strength (ball restoring force on smile / runaway on frown, /s²)
 export const VICTORY_TILT_GAIN  = 0.06;  // territory lead → sideways roll force on the ball (/s²)
 export const VICTORY_BALL_DAMP  = 0.85;  // ball velocity damping (/s) — keeps the roll smooth, not jittery
+export const VICTORY_BALL_BUFF    = 1.25; // growth (regen) multiplier granted to the side the ball falls toward
+export const VICTORY_BALL_RESPAWN = 15;   // game-seconds the ball stays fallen (buff active) before respawning at centre
 
 // ---- Time / speed presets ----
 // 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME

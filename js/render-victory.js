@@ -110,9 +110,22 @@ export function drawVictoryBalance(ctx, W, H, now) {
   ctx.fillStyle = playerColor; ctx.fillText(`YOU ${Math.round(info.yourShare * 100)}%`, pts[0].x, PIVOT_Y + 92);
   ctx.fillStyle = enemyColor;  ctx.fillText(`${enemyName.toUpperCase()} ${Math.round(info.enemyShare * 100)}%`, pts[pts.length - 1].x, PIVOT_Y + 92);
 
-  // phase banner — escalates with the beam mood
-  const phase = info.phase === 'deadlock' ? { t: '⚖  DEADLOCKED', c: 'rgba(160,200,210,0.9)', s: 0.004 }
-              : info.phase === 'suddendeath' ? { t: '☠  SUDDEN DEATH', c: '#ff5a4a', s: 0.02 }
+  // momentum buff badge — the side the ball fell to grows ×1.25 until respawn.
+  if (info.buffActive) {
+    const buffEnd = info.buffSide < 0 ? pts[0] : pts[pts.length - 1];
+    const buffCol = info.buffSide < 0 ? playerColor : enemyColor;
+    ctx.save();
+    ctx.shadowColor = buffCol; ctx.shadowBlur = 10 + 8 * Math.sin(now * 0.012);
+    ctx.fillStyle = buffCol; ctx.font = '800 12px ui-monospace, monospace';
+    ctx.fillText('⚡ +25% GROWTH', buffEnd.x, PIVOT_Y + 108);
+    ctx.restore();
+  }
+
+  // phase banner — momentum swing while a side is buffed, else the beam mood
+  const phase = info.buffActive
+              ? { t: `MOMENTUM ${info.buffSide < 0 ? 'YOURS' : 'RIVAL'} · ${Math.ceil(info.respawnIn)}s`, c: info.buffSide < 0 ? playerColor : enemyColor, s: 0.02 }
+              : info.phase === 'deadlock' ? { t: '⚖  DEADLOCKED', c: 'rgba(160,200,210,0.9)', s: 0.004 }
+              : info.phase === 'suddendeath' ? { t: '☠  SUDDEN SWING', c: '#ff5a4a', s: 0.02 }
               : { t: '⚔  CONTESTED', c: '#ffd066', s: 0.01 };
   ctx.globalAlpha = 0.7 + 0.3 * Math.sin(now * phase.s);
   ctx.fillStyle = phase.c; ctx.font = '700 13px ui-monospace, monospace';

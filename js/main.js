@@ -6,7 +6,7 @@ import { state } from './state.js';
 import {
   WORLD_W, WORLD_H, PAN_SPEED, EDGE_PAN_SPEED, EDGE_PAN_MARGIN,
   MAX_SKIRMISH_TIME, DRONE_DAMAGE,
-  VICTORY_APPEAR_MIN, VICTORY_SMILE_MIN, VICTORY_FLAT_MIN,
+  VICTORY_APPEAR_MIN,
 } from './config.js';
 import { AIS, COLOR, rollFactions, factionStats } from './factions.js';
 import { dist, formatTime, inboundKey } from './util.js';
@@ -271,29 +271,26 @@ function checkVictory() {
   }
   if (total === 0) return;
 
-  // ---- Victory Balance — a ball rolling on a morphing beam (天秤) ----
-  // Appears only in the late game (VICTORY_APPEAR_MIN). The beam's CURVATURE morphs
-  // over match-time: smile (∪, ball settles centre → deadlock) → flat (any lead
-  // slides it off) → frown (∩, unstable → sudden swing). The territory lead (your
-  // owned-share − rival's) is a sideways TILT force; the ball rolls under tilt +
-  // curvature. Whichever END it falls off (|x|≥1) grants THAT side a ×BUFF growth
-  // boost for a spell, then the ball respawns at centre — a recurring momentum
-  // swing, not an instant win (see victory-balance.js). The match still ends only
-  // by elimination (alive checks above) or the time-cap backstop below.
+  // ---- Victory Balance — a ball on a FLAT, level beam (天秤) ----
+  // Appears only in the late game (VICTORY_APPEAR_MIN). The beam stays perfectly
+  // level; each end's WEIGHT = that side's territory share, and the imbalance is a
+  // sideways PUSH on the ball ∝ the territory lead (your owned-share − rival's). The
+  // ball rolls with momentum + friction; the lever arm shrinks over time so it tips
+  // off sooner late. Whichever END it rolls off (|x|≥1) grants THAT (leading) side a
+  // ×BUFF growth boost for a spell, then the ball respawns at centre — a recurring
+  // momentum swing, not an instant win (see victory-balance.js). The match still
+  // ends only by elimination (alive checks above) or the time-cap backstop below.
   const vdt = Math.max(0, state.elapsed - (state._victoryLastT ?? state.elapsed));
   state._victoryLastT = state.elapsed;
   const yf = yours / total, ef = topEnemy / total;
   const tmin = state.elapsed / 60;
   if (tmin >= VICTORY_APPEAR_MIN) {
-    // curvature kv ∈ [-1,+1]: +1 full smile (@SMILE_MIN), 0 flat (@FLAT_MIN), -1 frown (@FROWN_MIN)
-    let kv = (VICTORY_FLAT_MIN - tmin) / (VICTORY_FLAT_MIN - VICTORY_SMILE_MIN);
-    kv = Math.max(-1, Math.min(1, kv));
-    const lead = yf - ef;                       // your side positive
-    // Ball physics + the growth-buff momentum swing live in victory-balance.js.
-    // A fall-off no longer ends the match — it grants the winning side a ×BUFF
+    const lead = yf - ef;                       // your side positive → ball pushed to YOUR end
+    // Push physics + the growth-buff momentum swing live in victory-balance.js.
+    // A roll-off no longer ends the match — it grants the leading side a ×BUFF
     // growth boost, then the ball respawns at centre. The game still ends only
     // by elimination (the alive checks above).
-    state._victoryInfo = updateBalanceBall({ vdt, kv, lead, yf, ef, topEnemyOwner });
+    state._victoryInfo = updateBalanceBall({ vdt, lead, yf, ef, topEnemyOwner });
   } else {
     state._ballX = 0; state._ballV = 0;
     state._ballFallen = 0; state.growthBuffOwner = null; state.growthBuffUntil = 0;

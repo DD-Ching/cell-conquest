@@ -397,7 +397,9 @@ function droneHit(drone) {
   if (drone.targetKind === 'turret') {
     target.hp -= dmg;
   } else {
-    target.units = Math.max(0, target.units - dmg * 0.3);
+    // Node chip per drone — bumped 0.3 → 0.4 so a MASSED strike adds up to a real
+    // dent instead of a token nibble (concentration pays off; tune here).
+    target.units = Math.max(0, target.units - dmg * 0.4);
     if (target.engineers > 0 && Math.random() < 0.3) target.engineers--;
   }
   return true;
@@ -880,7 +882,9 @@ function pickDroneTargetsFor(t) {
   // lets drones reach DEEPER, higher-value targets instead of overkilling the
   // bombed-flat outer ring. Also stops the old "drone black hole": A and B
   // dumping their whole stockpile on a dying C's leftovers.
-  const TARGET_DRONE_CAP = 4;
+  // Raised 4 → 8: a deliberately MASSED strike now actually pays off — more drones
+  // can focus-fire one high-value target before the surplus spills to deeper ones.
+  const TARGET_DRONE_CAP = 8;
   const inbound = state.inboundDronesByTarget;
 
   // ---- Turrets: the enemy's AA wall + drone economy. High intrinsic value,

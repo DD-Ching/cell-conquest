@@ -91,31 +91,38 @@ export const DOM_MIN_CLAIMED = 0.5;     // …but only after this fraction of th
 export const MAX_SKIRMISH_TIME = 6600;  // game-seconds hard cap (110 min) → larger side wins. Backstop only:
                                         // the frown beam (~100 min) forces a decision well before this.
 
-// ---- Late-game "Victory Balance" — a ball rolling on a morphing beam (天秤) ---
+// ---- Late-game "Victory Balance" — a ball on a FLAT beam (天秤) ----------------
 // Supersedes the flat DOM_FRAC/DOM_HOLD_S win (which ended games the instant you
-// edged ahead — "才正要開始轟炸就贏了"). The balance only APPEARS in the late game,
-// then its beam progressively morphs to make the finish ever more decisive:
-//   • SMILE (∪) early  — the ball settles in the middle, hard to dislodge → DEADLOCK,
-//   • FLAT mid         — any territory lead slides the ball off → DECISIVE,
-//   • FROWN (∩) super-late — unstable centre, the ball bolts off the slightest lean → SUDDEN DEATH.
-// A ball rolls on the beam: the territory lead (your share − rival's) is a sideways
-// "tilt" force. Whichever END the ball falls off = a MOMENTUM WIN for that side:
-// that faction's growth (regen) is boosted ×VICTORY_BALL_BUFF for a spell, then
-// the ball respawns in the centre and the contest restarts. It no longer ends the
-// match outright — it's a recurring economy swing that lets the leader press the
-// advantage (and snowball toward an elimination win) while the trailing side can
-// still take the next ball. The morph is a smooth interpolation over match time.
-// render-victory.js draws the curved beam + rolling ball; victory-balance.js
-// integrates the physics + drives the buff swing.
-export const VICTORY_APPEAR_MIN = 25;    // game-minutes before the balance appears
-export const VICTORY_SMILE_MIN  = 60;    // waypoint: full smile (∪) — deadlock
-export const VICTORY_FLAT_MIN   = 80;    // waypoint: flat beam — decisive
-export const VICTORY_FROWN_MIN  = 100;   // waypoint: full frown (∩) — sudden swing
-export const VICTORY_CURVE_K    = 0.05;  // beam curvature strength (ball restoring force on smile / runaway on frown, /s²)
-export const VICTORY_TILT_GAIN  = 0.06;  // territory lead → sideways roll force on the ball (/s²)
-export const VICTORY_BALL_DAMP  = 0.85;  // ball velocity damping (/s) — keeps the roll smooth, not jittery
-export const VICTORY_BALL_BUFF    = 1.25; // growth (regen) multiplier granted to the side the ball falls toward
-export const VICTORY_BALL_RESPAWN = 15;   // game-seconds the ball stays fallen (buff active) before respawning at centre
+// edged ahead — "才正要開始轟炸就贏了"). A real, physical see-saw read-out:
+//   • The beam stays PERFECTLY LEVEL the whole match (no tilt, no curvature morph).
+//   • Each end carries a WEIGHT = that side's territory share (you / strongest rival).
+//     The weight IMBALANCE is a sideways PUSH on the ball ∝ the lead (your share −
+//     rival's): you lead → the ball is shoved toward YOUR (left) end.
+//   • The ball rolls with real momentum + rolling friction (no restoring force — a
+//     flat surface holds the ball wherever friction stops it).
+//   • The LEVER ARM (beam half-length) SHRINKS over match-time, so the ball's track
+//     gets shorter → the same lead tips it off the end sooner → the finish turns
+//     ever more decisive the longer the game runs.
+//   • Whichever END the ball rolls off = a MOMENTUM WIN for that side: that faction's
+//     growth (regen) is boosted ×VICTORY_BALL_BUFF for a spell, then the ball respawns
+//     at centre and the contest restarts. It never ends the match outright — the
+//     leader (the ball falls to the LEADING side) presses the advantage and snowballs
+//     toward an elimination win, while the trailing side can still take the next ball.
+// render-victory.js draws the level beam + weights + rolling ball; victory-balance.js
+// integrates the push physics + drives the buff swing.
+export const VICTORY_APPEAR_MIN = 25;     // game-minutes before the balance appears
+// Lever arm (beam half-length, screen px): longest when it appears, shrinking to
+// the minimum by ARM_LATE_MIN — a shorter track tips the ball off sooner (decisive).
+export const VICTORY_ARM_MAX      = 200;  // half-length when it first appears
+export const VICTORY_ARM_MIN      = 92;   // shortest half-length (late game — twitchy)
+export const VICTORY_ARM_LATE_MIN = 85;   // game-minute the arm finishes shrinking
+// Ball-on-flat-beam push physics. accel(u) = −PUSH_GAIN·lead·(ARM_MAX/arm) − FRICTION·v,
+// in normalized track units u∈[−1,1] (±1 = rolls off that end). The (ARM_MAX/arm)
+// term is the shrink amplifier: a shorter beam pushes the ball across faster.
+export const VICTORY_PUSH_GAIN     = 0.65; // territory lead → ball push accel (/s² at full arm)
+export const VICTORY_BALL_FRICTION = 0.9;  // rolling friction (/s) — momentum, not an instant stop
+export const VICTORY_BALL_BUFF     = 1.25; // growth (regen) multiplier granted to the side the ball falls toward
+export const VICTORY_BALL_RESPAWN  = 15;   // game-seconds the ball stays fallen (buff active) before respawning at centre
 
 // ---- Time / speed presets ----
 // 30× / 40× are fast-forward gears for late-game grinds. They cost the SAME

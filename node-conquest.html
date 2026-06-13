@@ -117,6 +117,7 @@
   body.hud-hidden #topright,
   body.hud-hidden #help,
   body.hud-hidden #nn-badge,
+  body.hud-hidden #counters,
   body.hud-hidden #minimap { opacity: 0 !important; pointer-events: none !important; }
   /* Minimap collapse — `M` toggles. Fades out + disables interaction
      without removing it from layout so the next M restores instantly. */
@@ -301,6 +302,33 @@
     backdrop-filter: blur(6px);
   }
   #nn-badge.loading { color: var(--text-faint); }
+
+  /* ---- Counter triangle (兵種克制 / rock-paper-scissors doctrine) ----
+     Static legend showing who beats who: 防空炮 ▸ 無人機 ▸ 大砲 ▸ (cycle).
+     防空炮 shoots 無人機 out of the sky · 無人機 suicide-dive 大砲 (immune to
+     shells) · 大砲 shells 防空炮 from beyond its drone-only range. Shown during
+     play, hidden in the lobby, K toggles it, Tab hides it with the rest of the
+     chrome, and it fades when the cursor comes near (HUD_FADE_IDS in input.js). */
+  #counters {
+    position: fixed; top: 138px; right: 12px; width: 198px;
+    padding: 9px 12px 8px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-warm);
+    border-radius: 8px;
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    box-shadow: 0 1px 0 rgba(255, 200, 140, 0.06) inset, 0 8px 24px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+  }
+  #counters .ctr-head { font-size: 11px; letter-spacing: 0.2em; color: var(--text-faint);
+    text-transform: uppercase; text-align: center; margin-bottom: 1px; }
+  #counters svg { display: block; width: 100%; height: auto; }
+  #counters .ctr-cap { margin-top: 2px; text-align: center; font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.02em; }
+  #counters .ctr-cap b { color: var(--accent); font-weight: 700; }
+  /* Hidden in the lobby (gameplay-only) and when toggled off with K. */
+  body.in-lobby #counters, body.counters-off #counters { display: none !important; }
+
   /* ---- Lobby (start screen / training-ground menu) ---- */
   #lobby { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
     background: radial-gradient(circle at 50% 34%, rgba(40,18,8,.55), rgba(8,4,2,.93));
@@ -371,7 +399,7 @@
     <div>Press <kbd>Q</kbd>/<kbd>T</kbd>/<kbd>F</kbd>/<kbd>C</kbd> then click to place a building (Anti-Air / Tank Factory → mobile tanks / Drone Factory / Cannon-Artillery), or <kbd>N</kbd> + click a road for engineer net work. <strong>Drag to paint a whole row of them in one motion.</strong> Hold <kbd>Shift</kbd> at release to stay in place-mode for the next row. Press <kbd>H</kbd> for hold-fire stockpile; click an enemy while held to lock the salvo target; <kbd>H</kbd> again launches. <kbd>Esc</kbd> cancels.</div>
     <div><kbd>Drag</kbd> from own node onto an enemy turret = assault — troops road-travel then off-road suicide-attack to destroy it.</div>
     <div><kbd>G</kbd> = hand the base under the cursor (or every selected base) to your Lieutenant 🤖 — an allied NPC that uses the full enemy AI brain. Press G on a Lieutenant base to take it back. Box-select first to delegate many at once.</div>
-    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>?</kbd> toggle this help</div>
+    <div><kbd>Space</kbd> pause / resume &middot; <kbd>Tab</kbd> hide all HUD chrome &middot; <kbd>?</kbd> toggle this help &middot; <kbd>K</kbd> 兵種克制 counter triangle (無人機 ▸ 大砲 ▸ 防空炮)</div>
     <div><kbd>M</kbd> = mute / unmute sound. Drone buzz pans left/right and grows louder as you zoom in close; AA machine-guns, explosions + captures are positional. Custom sounds (later): list names in <code>assets/sfx-manifest.json</code>, drop files in <code>assets/sfx/</code>.</div>
     <div><kbd>Y</kbd> = run enemy AI in a Web Worker (off the main thread) — frees frame budget at high time-scale. NPC factions stay main-thread. Console logs the toggle.</div>
     <div><kbd>U</kbd> = move world rendering to an OffscreenCanvas Worker so sim and render run in parallel (huge win at late-game scale). HUD + minimap + input stay main-thread. <strong>One-way: reload to undo</strong>.</div>
@@ -380,6 +408,60 @@
     <div>URL flag <code>?gpu=1</code> — fly &amp; render the drone swarm on the <strong>GPU</strong> (WebGPU). Drones become <strong>UNLIMITED</strong>: the whole swarm runs in one compute pass + one instanced draw, so it barely touches the CPU (200k+ at 60fps). Press <kbd>H</kbd> to hold-fire, <kbd>H</kbd> again to unleash an uncapped GPU swarm at the enemy. Auto-falls-back to the CPU path where WebGPU is unsupported. Chrome/Edge.</div>
   </div>
 </div>
+<!-- 兵種克制 — rock-paper-scissors doctrine triangle (K toggles, see CSS above). -->
+<div id="counters" class="tac">
+  <div class="ctr-head">兵種克制 · COUNTERS</div>
+  <svg viewBox="0 0 200 184" aria-label="無人機 大砲 防空炮 互相克制">
+    <defs>
+      <marker id="ctr-ah" markerWidth="7" markerHeight="7" refX="5.4" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M0 0 L6 3 L0 6 Z" fill="#ffb343"/>
+      </marker>
+    </defs>
+    <!-- Counter arrows drawn first so the node chips tuck over their ends.
+         AA → 無人機 → 大砲 → AA  (each arrow = "克制 / beats"). -->
+    <g stroke="#ffb343" stroke-width="2" opacity="0.92" stroke-linecap="round" marker-end="url(#ctr-ah)">
+      <line x1="49.7" y1="112.3" x2="86.3" y2="59.7"/>
+      <line x1="113.7" y1="59.7" x2="150.3" y2="112.3"/>
+      <line x1="140" y1="132" x2="60" y2="132"/>
+    </g>
+    <!-- 無人機 (drone / quadcopter) — top, cyan -->
+    <circle cx="100" cy="40" r="20" fill="rgba(20,10,4,.55)" stroke="rgba(111,214,224,.7)" stroke-width="1.2"/>
+    <g transform="translate(100,40)" stroke="#6fd6e0" fill="none" stroke-width="1.8" stroke-linecap="round">
+      <line x1="-9" y1="-6" x2="9" y2="6"/>
+      <line x1="9" y1="-6" x2="-9" y2="6"/>
+      <circle cx="-9" cy="-6" r="4.2" fill="rgba(111,214,224,.18)"/>
+      <circle cx="9"  cy="-6" r="4.2" fill="rgba(111,214,224,.18)"/>
+      <circle cx="-9" cy="6"  r="4.2" fill="rgba(111,214,224,.18)"/>
+      <circle cx="9"  cy="6"  r="4.2" fill="rgba(111,214,224,.18)"/>
+      <rect x="-4.5" y="-3.5" width="9" height="7" rx="2.5" fill="#6fd6e0" stroke="none"/>
+    </g>
+    <!-- 防空炮 (anti-air / twin flak) — bottom-left, amber -->
+    <circle cx="36" cy="132" r="20" fill="rgba(20,10,4,.55)" stroke="rgba(255,207,92,.7)" stroke-width="1.2"/>
+    <g transform="translate(36,132)" stroke="#ffcf5c" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M-9 9 L9 9 L6 3 L-6 3 Z" fill="rgba(255,207,92,.16)"/>
+      <circle cx="0" cy="3" r="2.8" fill="#ffcf5c" stroke="none"/>
+      <line x1="0" y1="2" x2="12" y2="-10"/>
+      <line x1="-3" y1="1" x2="9" y2="-11"/>
+      <circle cx="12" cy="-10" r="1.5" fill="#fff2c2" stroke="none"/>
+      <circle cx="9"  cy="-11" r="1.5" fill="#fff2c2" stroke="none"/>
+    </g>
+    <!-- 大砲 (artillery / howitzer) — bottom-right, orange -->
+    <circle cx="164" cy="132" r="20" fill="rgba(20,10,4,.55)" stroke="rgba(255,138,92,.7)" stroke-width="1.2"/>
+    <g transform="translate(164,132)" stroke="#ff8a5c" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 9 L-4 5"/>
+      <circle cx="2" cy="6" r="5" fill="rgba(255,138,92,.16)"/>
+      <circle cx="2" cy="6" r="1.4" fill="#ff8a5c" stroke="none"/>
+      <line x1="2" y1="4" x2="-12" y2="-9" stroke-width="2.6"/>
+      <circle cx="-12" cy="-9" r="1.5" fill="#ffd0b0" stroke="none"/>
+    </g>
+    <!-- Labels -->
+    <text x="100" y="13" text-anchor="middle" font-size="11" fill="#e6d4b6" font-weight="600">無人機</text>
+    <text x="34"  y="171" text-anchor="middle" font-size="11" fill="#e6d4b6" font-weight="600">防空炮</text>
+    <text x="166" y="171" text-anchor="middle" font-size="11" fill="#e6d4b6" font-weight="600">大砲</text>
+  </svg>
+  <div class="ctr-cap">順箭頭 <b>克制</b> · arrow beats target</div>
+</div>
+
 <div id="message"><h1 id="msg-title"></h1><p id="msg-sub"></p><button onclick="newGame()">Play Again</button></div>
 
 <div id="lobby">
@@ -388,7 +470,11 @@
     <div class="tagline">Crimson Sector · Tactical Command</div>
     <div class="btns">
       <button id="lobby-start">▶ START</button>
-      <button id="lobby-tutorial" class="ghost">🎓 CAMPAIGN</button>
+      <!-- CAMPAIGN (the lobby training tutorial) temporarily removed per request.
+           The button is only hidden — campaign.js + all level logic stay intact,
+           and lobby.js tolerates the missing button (optional-chained handlers),
+           so dropping this one line back in fully restores it. -->
+      <!-- <button id="lobby-tutorial" class="ghost">🎓 CAMPAIGN</button> -->
     </div>
     <div class="keys">
       <b>Drag</b><span>from your base to a town — send troops &amp; capture</span>

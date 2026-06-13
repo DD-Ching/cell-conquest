@@ -42,7 +42,7 @@ import { startTutorial } from './lobby.js';
 // where the cursor naturally hovers during play, so they need to clear out
 // of the way fastest. CSS .hud-faded handles the transition.
 // =====================================================
-const HUD_FADE_IDS = ['title-strip', 'hud', 'topright', 'help', 'nn-badge'];
+const HUD_FADE_IDS = ['title-strip', 'hud', 'topright', 'help', 'nn-badge', 'counters'];
 const HUD_TRIGGER_PAD = 80;       // px buffer — start fading BEFORE the cursor
                                   // actually touches the panel
 export function updateHudFade(mx, my) {
@@ -319,6 +319,9 @@ export function attachInput() {
       const m = toggleMute();
       console.log('[audio] ' + (m ? 'muted' : 'unmuted'));
     }
+    // K — show / hide the 兵種克制 counter-triangle legend (無人機/大砲/防空炮).
+    // Purely a doctrine readout; default ON during play, OFF in the lobby (CSS).
+    if (k === 'k') document.body.classList.toggle('counters-off');
     // V — cycle the cartographic view mode (cinematic → strategic → detailed →
     // debug → …). Cartographic modes curve roads + demote minor nodes so the
     // map reads as terrain; debug restores the literal straight-edge graph.
